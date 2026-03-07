@@ -1,0 +1,62 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/frost",
+  "crates/frost-lexer",
+  "crates/frost-parser",
+  "crates/frost-expand",
+  "crates/frost-glob",
+  "crates/frost-exec",
+  "crates/frost-zle",
+  "crates/frost-complete",
+  "crates/frost-builtins",
+  "crates/frost-options",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+authors = ["pleme-io"]
+repository = "https://github.com/pleme-io/frost"
+homepage = "https://github.com/pleme-io/frost"
+
+[workspace.dependencies]
+# Internal crates
+frost-lexer = { path = "crates/frost-lexer" }
+frost-parser = { path = "crates/frost-parser" }
+frost-expand = { path = "crates/frost-expand" }
+frost-glob = { path = "crates/frost-glob" }
+frost-exec = { path = "crates/frost-exec" }
+frost-zle = { path = "crates/frost-zle" }
+frost-complete = { path = "crates/frost-complete" }
+frost-builtins = { path = "crates/frost-builtins" }
+frost-options = { path = "crates/frost-options" }
+
+# Error handling
+thiserror = "2"
+miette = { version = "7", features = ["fancy"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Async / IO
+tokio = { version = "1", features = ["full"] }
+
+# Data structures
+indexmap = "2"
+smallvec = "1"
+compact_str = "0.8"
+bstr = "1"
+
+# OS interface
+nix = { version = "0.29", features = ["signal", "process", "fs", "term"] }
+libc = "0.2"
+
+# Testing
+pretty_assertions = "1"
+insta = { version = "1", features = ["yaml"] }
+
+# Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

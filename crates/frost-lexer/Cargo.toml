@@ -1,0 +1,18 @@
+[package]
+name = "frost-lexer"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Zsh-compatible lexer/tokenizer"
+
+[dependencies]
+thiserror = { workspace = true }
+compact_str = { workspace = true }
+bstr = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+insta = { workspace = true }

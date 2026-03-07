@@ -1,0 +1,18 @@
+[package]
+name = "frost-parser"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Zsh-compatible recursive descent parser"
+
+[dependencies]
+frost-lexer = { workspace = true }
+thiserror = { workspace = true }
+compact_str = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+insta = { workspace = true }

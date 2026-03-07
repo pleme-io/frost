@@ -1,0 +1,23 @@
+[package]
+name = "frost-exec"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Zsh-compatible command execution engine"
+
+[dependencies]
+frost-parser = { workspace = true }
+frost-builtins = { workspace = true }
+frost-options = { workspace = true }
+thiserror = { workspace = true }
+nix = { workspace = true }
+libc = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+frost-lexer = { workspace = true }
+pretty_assertions = { workspace = true }
+insta = { workspace = true }
