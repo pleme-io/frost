@@ -1,0 +1,21 @@
+[package]
+name = "frost-compat"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "zsh compatibility test runner for frost"
+
+[[bin]]
+name = "frost-compat"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
