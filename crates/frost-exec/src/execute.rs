@@ -40,6 +40,19 @@ pub enum ExecError {
 
     #[error("redirect error: {0}")]
     Redirect(#[from] redirect::RedirectError),
+
+    /// Control flow signal — not an error, but needs to propagate.
+    #[error("control flow")]
+    ControlFlow(ControlFlow),
+}
+
+/// Control flow signals for return/break/continue.
+#[derive(Debug, Clone)]
+pub enum ControlFlow {
+    Return(i32),
+    Break(u32),
+    Continue(u32),
+    Exit(i32),
 }
 
 /// Result alias for execution operations.
@@ -277,10 +290,25 @@ impl<'env> Executor<'env> {
         };
 
         let mut status = 0;
-        for word in &words {
+        'outer: for word in &words {
             self.env.set_var(&clause.var, word);
             for cmd in &clause.body {
-                status = self.execute_complete_command(cmd)?;
+                match self.execute_complete_command(cmd) {
+                    Ok(s) => status = s,
+                    Err(ExecError::ControlFlow(ControlFlow::Break(n))) => {
+                        if n > 1 {
+                            return Err(ExecError::ControlFlow(ControlFlow::Break(n - 1)));
+                        }
+                        break 'outer;
+                    }
+                    Err(ExecError::ControlFlow(ControlFlow::Continue(n))) => {
+                        if n > 1 {
+                            return Err(ExecError::ControlFlow(ControlFlow::Continue(n - 1)));
+                        }
+                        continue 'outer;
+                    }
+                    Err(e) => return Err(e),
+                }
             }
         }
         Ok(status)
@@ -288,16 +316,29 @@ impl<'env> Executor<'env> {
 
     fn execute_while(&mut self, clause: &WhileClause) -> ExecResult {
         let mut status = 0;
-        loop {
+        'outer: loop {
             let mut cond_status = 0;
             for cmd in &clause.condition {
                 cond_status = self.execute_complete_command(cmd)?;
             }
-            if cond_status != 0 {
-                break;
-            }
+            if cond_status != 0 { break; }
             for cmd in &clause.body {
-                status = self.execute_complete_command(cmd)?;
+                match self.execute_complete_command(cmd) {
+                    Ok(s) => status = s,
+                    Err(ExecError::ControlFlow(ControlFlow::Break(n))) => {
+                        if n > 1 {
+                            return Err(ExecError::ControlFlow(ControlFlow::Break(n - 1)));
+                        }
+                        break 'outer;
+                    }
+                    Err(ExecError::ControlFlow(ControlFlow::Continue(n))) => {
+                        if n > 1 {
+                            return Err(ExecError::ControlFlow(ControlFlow::Continue(n - 1)));
+                        }
+                        continue 'outer;
+                    }
+                    Err(e) => return Err(e),
+                }
             }
         }
         Ok(status)
@@ -305,19 +346,51 @@ impl<'env> Executor<'env> {
 
     fn execute_until(&mut self, clause: &UntilClause) -> ExecResult {
         let mut status = 0;
-        loop {
+        'outer: loop {
             let mut cond_status = 0;
             for cmd in &clause.condition {
                 cond_status = self.execute_complete_command(cmd)?;
             }
-            if cond_status == 0 {
-                break;
-            }
+            if cond_status == 0 { break; }
             for cmd in &clause.body {
-                status = self.execute_complete_command(cmd)?;
+                match self.execute_complete_command(cmd) {
+                    Ok(s) => status = s,
+                    Err(ExecError::ControlFlow(ControlFlow::Break(n))) => {
+                        if n > 1 {
+                            return Err(ExecError::ControlFlow(ControlFlow::Break(n - 1)));
+                        }
+                        break 'outer;
+                    }
+                    Err(ExecError::ControlFlow(ControlFlow::Continue(n))) => {
+                        if n > 1 {
+                            return Err(ExecError::ControlFlow(ControlFlow::Continue(n - 1)));
+                        }
+                        continue 'outer;
+                    }
+                    Err(e) => return Err(e),
+                }
             }
         }
         Ok(status)
+    }
+
+    // ── Eval / Source ─────────────────────────────────────────────
+
+    fn eval_string(&mut self, code: &str) -> ExecResult {
+        let tokens = crate::tokenize(code);
+        let mut parser = frost_parser::Parser::new(&tokens);
+        let program = parser.parse();
+        self.execute_program(&program)
+    }
+
+    fn source_file(&mut self, path: &str) -> ExecResult {
+        match std::fs::read_to_string(path) {
+            Ok(source) => self.eval_string(&source),
+            Err(e) => {
+                eprintln!("frost: {path}: {e}");
+                Ok(1)
+            }
+        }
     }
 
     fn execute_case(&mut self, clause: &CaseClause) -> ExecResult {
@@ -382,24 +455,62 @@ impl<'env> Executor<'env> {
 
         // Check for functions first
         if let Some(fdef) = self.env.functions.get(name).cloned() {
-            // Save and set positional params
             let saved = self.env.positional_params.clone();
             self.env.positional_params = argv[1..].to_vec();
-            let result = self.execute_command(&fdef.body);
+            let result = match self.execute_command(&fdef.body) {
+                Ok(s) => Ok(s),
+                Err(ExecError::ControlFlow(ControlFlow::Return(code))) => {
+                    self.env.exit_status = code;
+                    Ok(code)
+                }
+                Err(e) => Err(e),
+            };
             self.env.positional_params = saved;
             return result;
         }
 
         // Check builtins — if redirects are present, fork to apply them
         if self.builtins.contains(name) {
-            if cmd.redirects.is_empty() {
+            let status = if cmd.redirects.is_empty() {
                 let arg_refs: Vec<&str> = argv[1..].iter().map(|s| s.as_str()).collect();
-                let status = self.builtins.get(name).unwrap().execute(&arg_refs, self.env);
-                self.env.exit_status = status;
-                return Ok(status);
+                self.builtins.get(name).unwrap().execute(&arg_refs, self.env)
+            } else {
+                return self.fork_exec_builtin(&argv, &cmd.redirects);
+            };
+
+            // Handle special exit codes from control flow builtins
+            use frost_builtins::control::*;
+            if status == RETURN_SIGNAL {
+                let code = self.env.exit_status;
+                return Err(ExecError::ControlFlow(ControlFlow::Return(code)));
             }
-            // Builtins with redirects: fork so we can dup2 without affecting the parent
-            return self.fork_exec_builtin(&argv, &cmd.redirects);
+            if status >= BREAK_SIGNAL && status < CONTINUE_SIGNAL {
+                let levels = (status - BREAK_SIGNAL + 1) as u32;
+                return Err(ExecError::ControlFlow(ControlFlow::Break(levels)));
+            }
+            if status >= CONTINUE_SIGNAL && status < 210 {
+                let levels = (status - CONTINUE_SIGNAL + 1) as u32;
+                return Err(ExecError::ControlFlow(ControlFlow::Continue(levels)));
+            }
+
+            // Handle eval
+            if status == 211 {
+                if let Some(code) = self.env.get_var("__FROST_EVAL_CODE").map(String::from) {
+                    self.env.unset_var("__FROST_EVAL_CODE");
+                    return self.eval_string(&code);
+                }
+            }
+
+            // Handle source
+            if status == 210 {
+                if let Some(path) = self.env.get_var("__FROST_SOURCE_FILE").map(String::from) {
+                    self.env.unset_var("__FROST_SOURCE_FILE");
+                    return self.source_file(&path);
+                }
+            }
+
+            self.env.exit_status = status;
+            return Ok(status);
         }
 
         // External command: fork + exec
@@ -619,12 +730,50 @@ fn match_pattern(pattern: &[char], text: &[char]) -> bool {
     p == pattern.len()
 }
 
-/// Capture stdout from a command substitution.
+/// Capture stdout from a command substitution by forking, piping stdout,
+/// executing the program in the child, and reading the output in the parent.
 fn capture_command_sub(program: &Program, env: &ShellEnv) -> String {
-    // For command substitutions, we need to fork and capture stdout
-    // This is a simplified implementation
-    let _ = (program, env);
-    String::new()
+    // Create a pipe to capture the child's stdout
+    let pipe = match sys::pipe() {
+        Ok(p) => p,
+        Err(_) => return String::new(),
+    };
+
+    match unsafe { sys::fork() } {
+        Ok(sys::ForkOutcome::Child) => {
+            // Child: wire stdout to pipe write end, close read end
+            sys::close(pipe.read).ok();
+            sys::dup2(pipe.write, 1).ok();
+            sys::close(pipe.write).ok();
+
+            // Execute the program in a cloned environment
+            let mut child_env = env.clone();
+            let mut executor = Executor::new(&mut child_env);
+            let status = executor.execute_program(program).unwrap_or(1);
+            std::process::exit(status);
+        }
+        Ok(sys::ForkOutcome::Parent { child_pid }) => {
+            // Parent: close write end, read all output from read end
+            sys::close(pipe.write).ok();
+
+            let mut output = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = unsafe {
+                    libc::read(pipe.read, buf.as_mut_ptr().cast(), buf.len())
+                };
+                if n <= 0 { break; }
+                output.extend_from_slice(&buf[..n as usize]);
+            }
+            sys::close(pipe.read).ok();
+
+            // Wait for the child
+            let _ = sys::wait_pid(child_pid);
+
+            String::from_utf8_lossy(&output).into_owned()
+        }
+        Err(_) => String::new(),
+    }
 }
 
 /// Evaluate an arithmetic expression.
