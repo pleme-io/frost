@@ -436,9 +436,10 @@ impl<'a> Parser<'a> {
         let mut parts = Vec::new();
 
         // A Word is one or more adjacent word-like tokens with no whitespace separation.
-        // The lexer handles whitespace splitting, so each call here produces one Word.
-        // For now, we consume a single word-like token and convert it.
+        // The lexer splits on operators but not whitespace — we use span adjacency
+        // to merge tokens like FOO, =, bar into a single word FOO=bar.
         let tok = self.advance().clone();
+        let mut end_pos = tok.span.end;
         match tok.kind {
             TokenKind::Word | TokenKind::Number => {
                 parts.push(WordPart::Literal(tok.text.clone()));
@@ -542,6 +543,33 @@ impl<'a> Parser<'a> {
             _ => {
                 // Fallback: treat as literal
                 parts.push(WordPart::Literal(tok.text.clone()));
+            }
+        }
+
+        // Merge adjacent tokens (no whitespace) into the same word.
+        // This handles cases like FOO=bar where the lexer splits on =.
+        while self.pos < self.tokens.len() && self.peek().span.start == end_pos && self.at_word() {
+            let next = self.advance().clone();
+            end_pos = next.span.end;
+            match next.kind {
+                TokenKind::Word | TokenKind::Number => {
+                    parts.push(WordPart::Literal(next.text.clone()));
+                }
+                TokenKind::Equals => {
+                    parts.push(WordPart::Literal(CompactString::from("=")));
+                }
+                TokenKind::Dollar => {
+                    if self.pos < self.tokens.len() && self.peek().span.start == end_pos && self.kind() == TokenKind::Word {
+                        let name_tok = self.advance();
+                        end_pos = name_tok.span.end;
+                        parts.push(WordPart::DollarVar(name_tok.text.clone()));
+                    } else {
+                        parts.push(WordPart::Literal(CompactString::from("$")));
+                    }
+                }
+                _ => {
+                    parts.push(WordPart::Literal(next.text.clone()));
+                }
             }
         }
 
