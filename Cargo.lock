@@ -262,6 +262,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "frost-builtins",
+ "frost-compat",
  "frost-exec",
  "frost-lexer",
  "frost-options",

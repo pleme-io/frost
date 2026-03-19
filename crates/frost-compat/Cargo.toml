@@ -8,6 +8,10 @@ repository.workspace = true
 homepage.workspace = true
 description = "zsh compatibility test runner for frost"
 
+[lib]
+name = "frost_compat"
+path = "src/lib.rs"
+
 [[bin]]
 name = "frost-compat"
 path = "src/main.rs"
