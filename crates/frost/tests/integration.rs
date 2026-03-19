@@ -100,15 +100,13 @@ mod cli {
 
 // ---------------------------------------------------------------------------
 // Command execution via `frost -c "..."`.
-// All ignored: the parser's parse() is currently `todo!()`.
-// Un-ignore these as the parser is implemented.
+// Parser is now implemented — tests are live.
 // ---------------------------------------------------------------------------
 mod execution {
     use super::*;
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn true_exits_zero() {
+        fn true_exits_zero() {
         let output = Command::new(frost_bin())
             .args(["-c", "true"])
             .output()
@@ -122,8 +120,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn false_exits_one() {
+        fn false_exits_one() {
         let output = Command::new(frost_bin())
             .args(["-c", "false"])
             .output()
@@ -138,8 +135,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn echo_hello() {
+        fn echo_hello() {
         let output = Command::new(frost_bin())
             .args(["-c", "echo hello"])
             .output()
@@ -154,8 +150,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn echo_multiple_words() {
+        fn echo_multiple_words() {
         let output = Command::new(frost_bin())
             .args(["-c", "echo hello world"])
             .output()
@@ -170,8 +165,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn exit_with_code() {
+        fn exit_with_code() {
         let output = Command::new(frost_bin())
             .args(["-c", "exit 42"])
             .output()
@@ -186,8 +180,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn export_and_variable_expansion() {
+        fn export_and_variable_expansion() {
         let output = Command::new(frost_bin())
             .args(["-c", "export FOO=bar; echo $FOO"])
             .output()
@@ -202,8 +195,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn output_redirection() {
+        fn output_redirection() {
         let test_file = "/tmp/frost-test-redir.txt";
         // Clean up any previous run.
         let _ = std::fs::remove_file(test_file);
@@ -226,8 +218,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn pipeline() {
+        fn pipeline() {
         let output = Command::new(frost_bin())
             .args(["-c", "echo a | cat"])
             .output()
@@ -242,8 +233,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn and_list_success() {
+        fn and_list_success() {
         let output = Command::new(frost_bin())
             .args(["-c", "true && echo yes"])
             .output()
@@ -258,8 +248,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn or_list_fallback() {
+        fn or_list_fallback() {
         let output = Command::new(frost_bin())
             .args(["-c", "false || echo fallback"])
             .output()
@@ -274,8 +263,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn and_list_short_circuit() {
+        fn and_list_short_circuit() {
         let output = Command::new(frost_bin())
             .args(["-c", "false && echo nope"])
             .output()
@@ -301,8 +289,7 @@ mod script {
     use std::io::Write;
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn run_script_file() {
+        fn run_script_file() {
         let dir = std::env::temp_dir();
         let script_path = dir.join("frost-test-script.sh");
 
@@ -328,8 +315,7 @@ mod script {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn run_multiline_script() {
+        fn run_multiline_script() {
         let dir = std::env::temp_dir();
         let script_path = dir.join("frost-test-multiline.sh");
 
@@ -356,8 +342,7 @@ mod script {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
-    fn script_exit_code_propagates() {
+        fn script_exit_code_propagates() {
         let dir = std::env::temp_dir();
         let script_path = dir.join("frost-test-exit-code.sh");
 
