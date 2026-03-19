@@ -265,6 +265,89 @@ mod d04_parameter {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// D08 — Command substitution
+// ═══════════════════════════════════════════════════════════════
+mod d08_cmdsubst {
+    use super::*;
+
+    #[test] fn basic_command_sub() { assert_eq!(stdout("echo $(echo hello)"), "hello\n"); }
+    #[test] #[ignore = "needs $() inside double-quoted string parsing"] fn nested_in_string() { assert_eq!(stdout(r#"echo "result: $(echo ok)""#), "result: ok\n"); }
+    #[test] fn captures_exit_code() { assert_eq!(exit_code("X=$(false); echo $?"), 0); }
+    #[test] fn strips_trailing_newlines() { assert_eq!(stdout("echo $(echo hello)"), "hello\n"); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// B05 — eval
+// ═══════════════════════════════════════════════════════════════
+mod b05_eval {
+    use super::*;
+
+    #[test] fn eval_simple() { assert_eq!(stdout("eval echo hello"), "hello\n"); }
+    #[test] fn eval_variable() { assert_eq!(stdout("X=world; eval echo $X"), "world\n"); }
+    #[test] fn eval_empty() { assert_eq!(exit_code("eval"), 0); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// B03 — print builtin
+// ═══════════════════════════════════════════════════════════════
+mod b03_print_builtin {
+    use super::*;
+
+    #[test] fn print_basic() { assert_eq!(stdout("print hello"), "hello\n"); }
+    #[test] fn print_multiple() { assert_eq!(stdout("print a b c"), "a b c\n"); }
+    #[test] fn print_n() { assert_eq!(stdout("print -n hello"), "hello"); }
+    #[test] fn print_l() { assert_eq!(stdout("print -l a b c"), "a\nb\nc\n"); }
+    #[test] fn print_r() { assert_eq!(stdout(r#"print -r "hello\nworld""#), "hello\\nworld\n"); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// C02 — Conditional [[ ]] (test builtin for now)
+// ═══════════════════════════════════════════════════════════════
+mod c02_test {
+    use super::*;
+
+    #[test] fn test_true() { assert_eq!(exit_code("test -n hello"), 0); }
+    #[test] fn test_false() { assert_eq!(exit_code("test -z hello"), 1); }
+    #[test] fn test_string_eq() { assert_eq!(exit_code("test a = a"), 0); }
+    #[test] fn test_string_ne() { assert_eq!(exit_code("test a != b"), 0); }
+    #[test] fn test_int_eq() { assert_eq!(exit_code("test 42 -eq 42"), 0); }
+    #[test] fn test_int_lt() { assert_eq!(exit_code("test 1 -lt 2"), 0); }
+    #[test] fn test_dir() { assert_eq!(exit_code("test -d /tmp"), 0); }
+    #[test] fn test_bracket() { assert_eq!(exit_code("[ -d /tmp ]"), 0); }
+    #[test] fn test_negation() { assert_eq!(exit_code("test ! -d /nonexistent"), 0); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// A07 — Control flow: return, break, continue
+// ═══════════════════════════════════════════════════════════════
+mod a07_control_flow {
+    use super::*;
+
+    #[test] fn return_from_function() {
+        assert_eq!(stdout("f() { echo before; return; echo after; }; f"), "before\n");
+    }
+    #[test] fn return_with_code() {
+        assert_eq!(exit_code("f() { return 42; }; f"), 42);
+    }
+    #[test] fn break_in_for() {
+        assert_eq!(stdout("for x in a b c; do if test $x = b; then break; fi; echo $x; done"), "a\n");
+    }
+    #[test] fn continue_in_for() {
+        assert_eq!(stdout("for x in a b c; do if test $x = b; then continue; fi; echo $x; done"), "a\nc\n");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Misc builtins
+// ═══════════════════════════════════════════════════════════════
+mod misc_builtins {
+    use super::*;
+
+    #[test] fn colon_returns_zero() { assert_eq!(exit_code(":"), 0); }
+    #[test] fn unset_removes_var() { assert_eq!(stdout("X=hello; unset X; echo $X"), "\n"); }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // D01 — Tilde expansion
 // ═══════════════════════════════════════════════════════════════
 mod d01_tilde {

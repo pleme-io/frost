@@ -499,25 +499,34 @@ impl<'a> Parser<'a> {
                 });
             }
             TokenKind::DollarParen => {
-                // $(cmd) — for now, capture as CommandSub with empty program
-                // Full implementation would recursively parse the inner tokens
-                parts.push(WordPart::CommandSub(Box::new(Program {
-                    commands: vec![],
-                })));
-                // Skip to matching )
+                // $(cmd) — collect inner tokens and recursively parse
+                let mut inner_tokens = Vec::new();
                 let mut depth = 1u32;
                 while !self.at_eof() && depth > 0 {
                     if self.at(TokenKind::LeftParen) || self.at(TokenKind::DollarParen) {
                         depth += 1;
+                        inner_tokens.push(self.advance().clone());
                     } else if self.at(TokenKind::RightParen) {
                         depth -= 1;
                         if depth == 0 {
-                            self.advance();
+                            self.advance(); // consume closing )
                             break;
                         }
+                        inner_tokens.push(self.advance().clone());
+                    } else {
+                        inner_tokens.push(self.advance().clone());
                     }
-                    self.advance();
                 }
+                // Add EOF token for the sub-parser
+                inner_tokens.push(Token {
+                    kind: TokenKind::Eof,
+                    span: self.span(),
+                    text: CompactString::default(),
+                });
+                // Recursively parse the inner tokens
+                let mut sub_parser = Parser::new(&inner_tokens);
+                let sub_program = sub_parser.parse();
+                parts.push(WordPart::CommandSub(Box::new(sub_program)));
             }
             TokenKind::DollarDoubleParen => {
                 // $((expr)) — arithmetic substitution
