@@ -455,9 +455,26 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Dollar => {
                 // $VAR — the next token should be the variable name
-                if self.kind() == TokenKind::Word {
+                if self.kind() == TokenKind::Word || self.kind() == TokenKind::Number {
                     let name_tok = self.advance();
+                    end_pos = name_tok.span.end;
                     parts.push(WordPart::DollarVar(name_tok.text.clone()));
+                } else if matches!(self.kind(), TokenKind::Question | TokenKind::Bang | TokenKind::At | TokenKind::Star) {
+                    // Special parameters: $?, $!, $@, $*
+                    let special_tok = self.advance();
+                    end_pos = special_tok.span.end;
+                    let name = match special_tok.kind {
+                        TokenKind::Question => "?",
+                        TokenKind::Bang => "!",
+                        TokenKind::At => "@",
+                        TokenKind::Star => "*",
+                        _ => unreachable!(),
+                    };
+                    parts.push(WordPart::DollarVar(CompactString::from(name)));
+                } else if self.at(TokenKind::Dollar) {
+                    // $$ — PID
+                    self.advance();
+                    parts.push(WordPart::DollarVar(CompactString::from("$")));
                 } else {
                     parts.push(WordPart::Literal(CompactString::from("$")));
                 }
