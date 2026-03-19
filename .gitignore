@@ -1,1 +1,15 @@
 /target
+
+# ztst test runner artifacts (created by frost-compat tests)
+*.tmp/
+assign.tmp/
+basic.tmp/
+cdtst.tmp/
+funcdef.tmp/
+bad_syntax
+/0
+/1
+/2
+/-
+/bar
+/foo
