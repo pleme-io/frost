@@ -1,4 +1,0 @@
-echo dot
-until return 42; do
-  :
-done
