@@ -10,6 +10,8 @@ description = "Zsh-compatible word expansion engine"
 
 [dependencies]
 frost-lexer = { workspace = true }
+frost-parser = { workspace = true }
+indexmap = { workspace = true }
 thiserror = { workspace = true }
 compact_str = { workspace = true }
 

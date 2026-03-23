@@ -9,6 +9,7 @@ homepage.workspace = true
 description = "Built-in shell commands for frost"
 
 [dependencies]
+libc = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

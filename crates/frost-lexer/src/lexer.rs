@@ -14,6 +14,8 @@ pub struct Lexer<'src> {
     src: &'src [u8],
     /// Whether the next word can be a reserved word (start of command position).
     command_position: bool,
+    /// Brace nesting depth (for ${...} — suppress comment inside).
+    brace_depth: u32,
 }
 
 impl<'src> Lexer<'src> {
@@ -22,6 +24,7 @@ impl<'src> Lexer<'src> {
             cursor: Cursor::new(src),
             src,
             command_position: true,
+            brace_depth: 0,
         }
     }
 
@@ -36,7 +39,13 @@ impl<'src> Lexer<'src> {
         };
 
         let kind = match b {
-            b'#' => self.lex_comment(),
+            b'#' if self.brace_depth == 0 => self.lex_comment(),
+            b'#' => {
+                // Inside ${...}, # is not a comment — treat as word
+                self.cursor.advance();
+                self.cursor.eat_while(|b| !is_meta(b));
+                TokenKind::Word
+            }
             b'\n' => {
                 self.cursor.advance();
                 self.command_position = true;
@@ -66,6 +75,9 @@ impl<'src> Lexer<'src> {
             }
             b'}' => {
                 self.cursor.advance();
+                if self.brace_depth > 0 {
+                    self.brace_depth -= 1;
+                }
                 TokenKind::RightBrace
             }
             b'<' => self.lex_less(),
@@ -111,7 +123,15 @@ impl<'src> Lexer<'src> {
     }
 
     fn skip_whitespace(&mut self) {
-        self.cursor.eat_while(|b| b == b' ' || b == b'\t');
+        loop {
+            self.cursor.eat_while(|b| b == b' ' || b == b'\t');
+            // Backslash-newline continuation
+            if self.cursor.peek() == Some(b'\\') && self.cursor.peek_nth(1) == Some(b'\n') {
+                self.cursor.skip(2);
+            } else {
+                break;
+            }
+        }
     }
 
     fn lex_comment(&mut self) -> TokenKind {
@@ -154,6 +174,7 @@ impl<'src> Lexer<'src> {
         match self.cursor.peek() {
             Some(b'{') => {
                 self.cursor.advance();
+                self.brace_depth += 1;
                 TokenKind::DollarBrace
             }
             Some(b'(') => {
@@ -308,7 +329,22 @@ impl<'src> Lexer<'src> {
     }
 
     fn lex_word(&mut self) -> TokenKind {
-        self.cursor.eat_while(|b| !is_meta(b));
+        loop {
+            self.cursor.eat_while(|b| !is_meta(b));
+            // Handle backslash escape in words: \c makes c literal
+            if self.cursor.peek() == Some(b'\\') {
+                if self.cursor.peek_nth(1) == Some(b'\n') {
+                    // Backslash-newline: line continuation, skip both
+                    self.cursor.skip(2);
+                    continue;
+                } else if self.cursor.peek_nth(1).is_some() {
+                    // Backslash-escape: consume both chars
+                    self.cursor.skip(2);
+                    continue;
+                }
+            }
+            break;
+        }
         let was_command = self.command_position;
         self.command_position = false;
 

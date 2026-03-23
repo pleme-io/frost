@@ -128,7 +128,7 @@ impl<'a> Parser<'a> {
         // Check if it's a keyword word like Word("if")
         if self.kind() == TokenKind::Word {
             let text = self.peek().text.as_str();
-            if matches!(text, "if" | "for" | "while" | "until" | "case" | "select" | "function" | "time" | "coproc") {
+            if matches!(text, "if" | "for" | "while" | "until" | "case" | "select" | "function" | "time" | "coproc" | "[[" | "repeat") {
                 return true;
             }
         }
@@ -196,6 +196,53 @@ impl<'a> Parser<'a> {
                 | TokenKind::At
                 | TokenKind::Number
                 | TokenKind::Equals
+        )
+    }
+
+    /// Check if `{` is followed by brace expansion content rather than commands.
+    ///
+    /// Returns true for patterns like `{1..5}`, `{a,b,c}`, `{01..10}`.
+    /// These have `}` within a few tokens with no newlines/semis.
+    fn looks_like_brace_expansion(&self) -> bool {
+        // Look ahead from after the `{` for a quick `}` with content that
+        // looks like brace expansion (no newlines, semis, pipes, etc.)
+        let mut i = self.pos + 1; // skip past `{`
+        let mut saw_comma_or_dots = false;
+        let mut depth = 1u32;
+        while i < self.tokens.len() && i < self.pos + 20 {
+            let tok = &self.tokens[i];
+            match tok.kind {
+                TokenKind::LeftBrace => depth += 1,
+                TokenKind::RightBrace => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // Found closing } — it's brace expansion if we saw comma or ..
+                        return saw_comma_or_dots;
+                    }
+                }
+                TokenKind::Newline | TokenKind::Semi | TokenKind::Pipe
+                | TokenKind::AndAnd | TokenKind::OrOr | TokenKind::Eof => {
+                    return false; // Definitely a brace group
+                }
+                TokenKind::Word => {
+                    let text = tok.text.as_str();
+                    if text.contains(',') || text.contains("..") {
+                        saw_comma_or_dots = true;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// Whether the current token is a brace that could be part of brace expansion
+    /// within a word (e.g., `a{1,2}b`).
+    fn at_brace_in_word(&self) -> bool {
+        matches!(
+            self.kind(),
+            TokenKind::LeftBrace | TokenKind::RightBrace
         )
     }
 
@@ -304,6 +351,22 @@ impl<'a> Parser<'a> {
     // ── Command ────────────────────────────────────────────────
 
     fn parse_command(&mut self) -> Command {
+        // Check for [[ ... ]] conditional
+        if self.kind() == TokenKind::Word && self.peek().text.as_str() == "[[" {
+            return self.parse_cond_command();
+        }
+        // Check for (( expr )) arithmetic command
+        if self.at(TokenKind::LeftParen) && self.is_arith_cmd_ahead() {
+            return self.parse_arith_cmd();
+        }
+        // Check for C-style for: for ((
+        if self.at(TokenKind::For) && self.is_c_for_ahead() {
+            return self.parse_c_for();
+        }
+        // Check for repeat N
+        if self.kind() == TokenKind::Word && self.peek().text.as_str() == "repeat" {
+            return self.parse_repeat();
+        }
         // Check both TokenKind and Word text for keywords
         if self.at(TokenKind::LeftParen) { return self.parse_subshell(); }
         if self.at(TokenKind::LeftBrace) { return self.parse_brace_group(); }
@@ -395,13 +458,23 @@ impl<'a> Parser<'a> {
 
     fn is_assignment(&self) -> bool {
         // Pattern: Word Equals [Word] — the lexer splits FOO=bar into three tokens
+        // Also handles FOO+=bar (Word("FOO+") Equals)
+        // Also handles FOO[sub]=bar (Word("FOO[sub]") Equals or Word("FOO[sub]+") Equals)
         if self.kind() != TokenKind::Word {
             return false;
         }
         let name = &self.peek().text;
-        let is_ident = !name.is_empty()
-            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-            && !name.bytes().next().unwrap_or(b'0').is_ascii_digit();
+        // Strip trailing + for += detection
+        let check_name = name.strip_suffix('+').unwrap_or(name);
+        // Strip subscript [sub] for identifier check
+        let ident_part = if let Some(bracket) = check_name.find('[') {
+            &check_name[..bracket]
+        } else {
+            check_name
+        };
+        let is_ident = !ident_part.is_empty()
+            && ident_part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            && !ident_part.bytes().next().unwrap_or(b'0').is_ascii_digit();
         if !is_ident {
             return false;
         }
@@ -410,11 +483,56 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_assignment(&mut self) -> Assignment {
-        let name_tok = self.advance().clone(); // Word (the name)
+        let name_tok = self.advance().clone(); // Word (the name, possibly with trailing +)
         let eq_span = self.peek().span;
         self.expect(TokenKind::Equals); // =
 
-        // Value is the next word token (if present and not a separator)
+        // Determine assignment operator, extracting subscript if present
+        let raw = name_tok.text.as_str();
+        let (base, is_append) = if let Some(stripped) = raw.strip_suffix('+') {
+            (stripped, true)
+        } else {
+            (raw, false)
+        };
+
+        let (name, subscript) = if let Some(bracket) = base.find('[') {
+            let close = base.rfind(']').unwrap_or(base.len());
+            let name_part = &base[..bracket];
+            let sub_part = &base[bracket + 1..close];
+            (CompactString::from(name_part), Some(CompactString::from(sub_part)))
+        } else {
+            (CompactString::from(base), None)
+        };
+
+        let op = if is_append { AssignOp::Append } else { AssignOp::Assign };
+
+        // Check for array literal: name=(word word ...)
+        if self.at(TokenKind::LeftParen) {
+            self.advance(); // consume (
+            let mut words = Vec::new();
+            while !self.at(TokenKind::RightParen) && !self.at(TokenKind::Eof) {
+                self.skip_newlines();
+                if self.at(TokenKind::RightParen) { break; }
+                if self.at_word() {
+                    words.push(self.parse_word());
+                } else {
+                    break;
+                }
+            }
+            if self.at(TokenKind::RightParen) {
+                self.advance(); // consume )
+            }
+            return Assignment {
+                name,
+                subscript: subscript.clone(),
+                op,
+                value: None,
+                array_value: Some(words),
+                span: Span::new(name_tok.span.start, eq_span.end),
+            };
+        }
+
+        // Scalar value
         let value = if self.at_word() {
             Some(self.parse_word())
         } else {
@@ -422,9 +540,11 @@ impl<'a> Parser<'a> {
         };
 
         Assignment {
-            name: name_tok.text.clone(),
-            op: AssignOp::Assign,
+            name,
+            subscript,
+            op,
             value,
+            array_value: None,
             span: Span::new(name_tok.span.start, eq_span.end),
         }
     }
@@ -480,20 +600,27 @@ impl<'a> Parser<'a> {
                 }
             }
             TokenKind::DollarBrace => {
-                // ${...} — consume until matching }
-                let param = if self.kind() == TokenKind::Word {
-                    let t = self.advance();
-                    t.text.clone()
-                } else {
-                    CompactString::default()
-                };
-                // Skip to closing brace (simplified — doesn't handle nested braces)
-                while !self.at_eof() && !self.at(TokenKind::RightBrace) {
-                    self.advance();
+                // ${...} — collect all content between ${ and } as raw text
+                let mut raw = String::new();
+                let mut depth = 1u32;
+                while !self.at_eof() {
+                    if self.at(TokenKind::RightBrace) {
+                        depth -= 1;
+                        if depth == 0 {
+                            self.advance(); // consume }
+                            break;
+                        }
+                        raw.push('}');
+                        self.advance();
+                    } else if self.at(TokenKind::LeftBrace) || self.at(TokenKind::DollarBrace) {
+                        depth += 1;
+                        raw.push_str(&self.advance().text);
+                    } else {
+                        raw.push_str(&self.advance().text);
+                    }
                 }
-                self.eat(TokenKind::RightBrace);
                 parts.push(WordPart::DollarBrace {
-                    param,
+                    param: CompactString::from(raw.trim()),
                     operator: None,
                     arg: None,
                 });
@@ -573,8 +700,11 @@ impl<'a> Parser<'a> {
         }
 
         // Merge adjacent tokens (no whitespace) into the same word.
-        // This handles cases like FOO=bar where the lexer splits on =.
-        while self.pos < self.tokens.len() && self.peek().span.start == end_pos && self.at_word() {
+        // This handles cases like FOO=bar where the lexer splits on =,
+        // and brace expansions like a{1,2}b.
+        while self.pos < self.tokens.len() && self.peek().span.start == end_pos
+            && (self.at_word() || self.at_brace_in_word())
+        {
             let next = self.advance().clone();
             end_pos = next.span.end;
             match next.kind {
@@ -661,6 +791,54 @@ impl<'a> Parser<'a> {
 
     // ── Compound commands ──────────────────────────────────────
 
+    /// Check if we're at `((` — two consecutive LeftParen tokens.
+    fn is_arith_cmd_ahead(&self) -> bool {
+        self.at(TokenKind::LeftParen)
+            && self.tokens.get(self.pos + 1).is_some_and(|t| t.kind == TokenKind::LeftParen)
+    }
+
+    /// Parse `(( expr ))` — arithmetic evaluation command.
+    fn parse_arith_cmd(&mut self) -> Command {
+        self.expect(TokenKind::LeftParen);
+        self.expect(TokenKind::LeftParen);
+        // Collect tokens until we see `))`
+        let mut expr = String::new();
+        let mut depth = 0;
+        loop {
+            if self.at(TokenKind::Eof) {
+                break;
+            }
+            if self.at(TokenKind::RightParen) {
+                if depth == 0 {
+                    // Check if next is also RightParen → end of (( ))
+                    if self.tokens.get(self.pos + 1).is_some_and(|t| t.kind == TokenKind::RightParen) {
+                        self.advance(); // first )
+                        self.advance(); // second )
+                        break;
+                    }
+                }
+                depth -= 1;
+                expr.push(')');
+                self.advance();
+                continue;
+            }
+            if self.at(TokenKind::LeftParen) {
+                depth += 1;
+                expr.push('(');
+                self.advance();
+                continue;
+            }
+            // Collect the token's text
+            let tok = self.advance().clone();
+            expr.push_str(&tok.text);
+            // Add whitespace between tokens
+            if !self.at(TokenKind::RightParen) && !self.at(TokenKind::Eof) {
+                expr.push(' ');
+            }
+        }
+        Command::ArithCmd(CompactString::new(&expr.trim()))
+    }
+
     fn parse_subshell(&mut self) -> Command {
         self.expect(TokenKind::LeftParen);
         self.skip_newlines();
@@ -675,6 +853,20 @@ impl<'a> Parser<'a> {
         self.skip_newlines();
         let body = self.parse_compound_body(&[TokenKind::RightBrace]);
         self.expect(TokenKind::RightBrace);
+
+        // Check for `always { ... }` block
+        if self.kind() == TokenKind::Word && self.peek().text.as_str() == "always" {
+            self.advance(); // consume "always"
+            self.expect(TokenKind::LeftBrace);
+            self.skip_newlines();
+            let always_body = self.parse_compound_body(&[TokenKind::RightBrace]);
+            self.expect(TokenKind::RightBrace);
+            return Command::TryAlways(Box::new(TryAlwaysClause {
+                try_body: body,
+                always_body,
+            }));
+        }
+
         let redirects = self.parse_trailing_redirects();
         Command::BraceGroup(BraceGroup { body, redirects })
     }
@@ -733,35 +925,60 @@ impl<'a> Parser<'a> {
         };
 
         self.skip_newlines();
-        self.expect(TokenKind::Do);
-        self.skip_newlines();
-        let body = self.parse_compound_body(&[TokenKind::Done]);
-        self.expect(TokenKind::Done);
-        let redirects = self.parse_trailing_redirects();
+        // zsh allows { ... } or do ... done
+        let (body, redirects) = if self.at(TokenKind::LeftBrace) {
+            self.expect(TokenKind::LeftBrace);
+            self.skip_newlines();
+            let body = self.parse_compound_body(&[TokenKind::RightBrace]);
+            self.expect(TokenKind::RightBrace);
+            (body, self.parse_trailing_redirects())
+        } else {
+            self.expect(TokenKind::Do);
+            self.skip_newlines();
+            let body = self.parse_compound_body(&[TokenKind::Done]);
+            self.expect(TokenKind::Done);
+            (body, self.parse_trailing_redirects())
+        };
         Command::For(Box::new(ForClause { var, words, body, redirects }))
     }
 
     fn parse_while(&mut self) -> Command {
         self.expect(TokenKind::While);
         self.skip_newlines();
-        let condition = self.parse_compound_body(&[TokenKind::Do]);
-        self.expect(TokenKind::Do);
-        self.skip_newlines();
-        let body = self.parse_compound_body(&[TokenKind::Done]);
-        self.expect(TokenKind::Done);
-        let redirects = self.parse_trailing_redirects();
+        let condition = self.parse_compound_body(&[TokenKind::Do, TokenKind::LeftBrace]);
+        let (body, redirects) = if self.at(TokenKind::LeftBrace) {
+            self.expect(TokenKind::LeftBrace);
+            self.skip_newlines();
+            let body = self.parse_compound_body(&[TokenKind::RightBrace]);
+            self.expect(TokenKind::RightBrace);
+            (body, self.parse_trailing_redirects())
+        } else {
+            self.expect(TokenKind::Do);
+            self.skip_newlines();
+            let body = self.parse_compound_body(&[TokenKind::Done]);
+            self.expect(TokenKind::Done);
+            (body, self.parse_trailing_redirects())
+        };
         Command::While(Box::new(WhileClause { condition, body, redirects }))
     }
 
     fn parse_until(&mut self) -> Command {
         self.expect(TokenKind::Until);
         self.skip_newlines();
-        let condition = self.parse_compound_body(&[TokenKind::Do]);
-        self.expect(TokenKind::Do);
-        self.skip_newlines();
-        let body = self.parse_compound_body(&[TokenKind::Done]);
-        self.expect(TokenKind::Done);
-        let redirects = self.parse_trailing_redirects();
+        let condition = self.parse_compound_body(&[TokenKind::Do, TokenKind::LeftBrace]);
+        let (body, redirects) = if self.at(TokenKind::LeftBrace) {
+            self.expect(TokenKind::LeftBrace);
+            self.skip_newlines();
+            let body = self.parse_compound_body(&[TokenKind::RightBrace]);
+            self.expect(TokenKind::RightBrace);
+            (body, self.parse_trailing_redirects())
+        } else {
+            self.expect(TokenKind::Do);
+            self.skip_newlines();
+            let body = self.parse_compound_body(&[TokenKind::Done]);
+            self.expect(TokenKind::Done);
+            (body, self.parse_trailing_redirects())
+        };
         Command::Until(Box::new(UntilClause { condition, body, redirects }))
     }
 
@@ -922,9 +1139,302 @@ impl<'a> Parser<'a> {
         }
         redirects
     }
+
+    // ── [[ ]] conditional parsing ─────────────────────────────
+
+    fn parse_cond_command(&mut self) -> Command {
+        self.advance(); // consume "[["
+        let expr = self.parse_cond_or();
+        // consume "]]"
+        if self.kind() == TokenKind::Word && self.peek().text.as_str() == "]]" {
+            self.advance();
+        }
+        Command::Cond(Box::new(expr))
+    }
+
+    fn parse_cond_or(&mut self) -> CondExpr {
+        let mut left = self.parse_cond_and();
+        while self.kind() == TokenKind::OrOr {
+            self.advance();
+            let right = self.parse_cond_and();
+            left = CondExpr::Or(Box::new(left), Box::new(right));
+        }
+        left
+    }
+
+    fn parse_cond_and(&mut self) -> CondExpr {
+        let mut left = self.parse_cond_not();
+        while self.kind() == TokenKind::AndAnd {
+            self.advance();
+            let right = self.parse_cond_not();
+            left = CondExpr::And(Box::new(left), Box::new(right));
+        }
+        left
+    }
+
+    fn parse_cond_not(&mut self) -> CondExpr {
+        if self.kind() == TokenKind::Bang {
+            self.advance();
+            let expr = self.parse_cond_not();
+            return CondExpr::Not(Box::new(expr));
+        }
+        self.parse_cond_primary()
+    }
+
+    fn parse_cond_primary(&mut self) -> CondExpr {
+        // Parenthesized expression
+        if self.at(TokenKind::LeftParen) {
+            self.advance();
+            let expr = self.parse_cond_or();
+            if self.at(TokenKind::RightParen) {
+                self.advance();
+            }
+            return expr;
+        }
+
+        // Check for unary operator: -flag word
+        if self.kind() == TokenKind::Word || self.kind() == TokenKind::Number {
+            let text = self.peek().text.clone();
+            if let Some(op) = parse_unary_cond_op(text.as_str()) {
+                self.advance(); // consume operator
+                let word = self.parse_cond_word();
+                return CondExpr::Unary(op, word);
+            }
+        }
+
+        // Also handle -flag when lexer produces it differently (e.g., hyphen + word)
+        // For now, handle the common case where -flag is a single Word token
+
+        // Parse left operand for binary expression
+        let left = self.parse_cond_word();
+
+        // Check for binary operator
+        if self.at_cond_end() {
+            // Implicit -n test: [[ word ]] → [[ -n word ]]
+            return CondExpr::Unary(CondOp::StrNonEmpty, left);
+        }
+
+        // Check for == and = (Equals tokens)
+        if self.kind() == TokenKind::Equals {
+            self.advance();
+            // == (double equals)
+            if self.kind() == TokenKind::Equals {
+                self.advance();
+            }
+            let right = self.parse_cond_word();
+            return CondExpr::Binary(left, CondOp::StrEq, right);
+        }
+
+        // Check for != (Bang followed by Equals)
+        if self.kind() == TokenKind::Bang {
+            if self.tokens.get(self.pos + 1).is_some_and(|t| t.kind == TokenKind::Equals) {
+                self.advance(); // !
+                self.advance(); // =
+                let right = self.parse_cond_word();
+                return CondExpr::Binary(left, CondOp::StrNeq, right);
+            }
+        }
+
+        // Check < and > (redirection tokens used as string comparison)
+        if self.kind() == TokenKind::Less {
+            self.advance();
+            let right = self.parse_cond_word();
+            return CondExpr::Binary(left, CondOp::StrLt, right);
+        }
+        if self.kind() == TokenKind::Greater {
+            self.advance();
+            let right = self.parse_cond_word();
+            return CondExpr::Binary(left, CondOp::StrGt, right);
+        }
+
+        // Check for word-based binary operators (-eq, -ne, -lt, etc.)
+        let text = self.peek().text.clone();
+        if let Some(op) = parse_binary_cond_op(text.as_str()) {
+            self.advance(); // consume operator
+            let right = self.parse_cond_word();
+            return CondExpr::Binary(left, op, right);
+        }
+
+        // Fallback: implicit -n test
+        CondExpr::Unary(CondOp::StrNonEmpty, left)
+    }
+
+    /// Check if we're at the end of a [[ ]] conditional.
+    fn at_cond_end(&self) -> bool {
+        (self.kind() == TokenKind::Word && self.peek().text.as_str() == "]]")
+            || self.at(TokenKind::AndAnd)
+            || self.at(TokenKind::OrOr)
+            || self.at(TokenKind::RightParen)
+            || self.at_eof()
+    }
+
+    /// Parse a word inside [[ ]] — no globbing or word splitting.
+    fn parse_cond_word(&mut self) -> Word {
+        if self.at_word() || self.kind() == TokenKind::Bang {
+            self.parse_word()
+        } else {
+            Word {
+                parts: vec![WordPart::Literal(CompactString::default())],
+                span: self.span(),
+            }
+        }
+    }
+
+    // ── C-style for loop ──────────────────────────────────────
+
+    fn is_c_for_ahead(&self) -> bool {
+        // for (( — check if next two tokens are ( (
+        if let Some(next) = self.tokens.get(self.pos + 1) {
+            if next.kind == TokenKind::LeftParen {
+                if let Some(after) = self.tokens.get(self.pos + 2) {
+                    return after.kind == TokenKind::LeftParen;
+                }
+            }
+        }
+        false
+    }
+
+    fn parse_c_for(&mut self) -> Command {
+        self.expect(TokenKind::For); // consume 'for'
+        self.expect(TokenKind::LeftParen); // consume first (
+        self.expect(TokenKind::LeftParen); // consume second (
+
+        // Collect three expressions separated by ;
+        let mut exprs = [String::new(), String::new(), String::new()];
+        let mut idx = 0;
+        loop {
+            if self.at_eof() { break; }
+            if self.at(TokenKind::RightParen) {
+                if self.tokens.get(self.pos + 1).is_some_and(|t| t.kind == TokenKind::RightParen) {
+                    self.advance(); // first )
+                    self.advance(); // second )
+                    break;
+                }
+                exprs[idx.min(2)].push(')');
+                self.advance();
+                continue;
+            }
+            if self.at(TokenKind::LeftParen) {
+                exprs[idx.min(2)].push('(');
+                self.advance();
+                continue;
+            }
+            if self.at(TokenKind::Semi) {
+                self.advance();
+                if idx < 2 { idx += 1; }
+                continue;
+            }
+            let tok = self.advance().clone();
+            if !exprs[idx.min(2)].is_empty() {
+                exprs[idx.min(2)].push(' ');
+            }
+            exprs[idx.min(2)].push_str(&tok.text);
+        }
+
+        self.skip_newlines();
+        // Body can be { ... } or do ... done
+        let (body, redirects) = if self.at(TokenKind::LeftBrace) {
+            self.expect(TokenKind::LeftBrace);
+            self.skip_newlines();
+            let body = self.parse_compound_body(&[TokenKind::RightBrace]);
+            self.expect(TokenKind::RightBrace);
+            (body, self.parse_trailing_redirects())
+        } else {
+            self.expect(TokenKind::Do);
+            self.skip_newlines();
+            let body = self.parse_compound_body(&[TokenKind::Done]);
+            self.expect(TokenKind::Done);
+            (body, self.parse_trailing_redirects())
+        };
+
+        Command::CFor(Box::new(CForClause {
+            init: CompactString::new(&exprs[0]),
+            condition: CompactString::new(&exprs[1]),
+            step: CompactString::new(&exprs[2]),
+            body,
+            redirects,
+        }))
+    }
+
+    // ── repeat N ──────────────────────────────────────────────
+
+    fn parse_repeat(&mut self) -> Command {
+        self.advance(); // consume "repeat"
+        let count = self.parse_word();
+        self.skip_newlines();
+        // Body can be { ... } or do ... done or a single command
+        let (body, redirects) = if self.at(TokenKind::LeftBrace) {
+            self.expect(TokenKind::LeftBrace);
+            self.skip_newlines();
+            let body = self.parse_compound_body(&[TokenKind::RightBrace]);
+            self.expect(TokenKind::RightBrace);
+            (body, self.parse_trailing_redirects())
+        } else if self.at(TokenKind::Do) {
+            self.expect(TokenKind::Do);
+            self.skip_newlines();
+            let body = self.parse_compound_body(&[TokenKind::Done]);
+            self.expect(TokenKind::Done);
+            (body, self.parse_trailing_redirects())
+        } else {
+            let cmd = self.parse_complete_command();
+            (vec![cmd], vec![])
+        };
+        Command::Repeat(Box::new(RepeatClause { count, body, redirects }))
+    }
 }
 
 // ── Helper functions ───────────────────────────────────────────
+
+/// Parse a unary condition operator (e.g., `-f`, `-d`, `-z`).
+fn parse_unary_cond_op(s: &str) -> Option<CondOp> {
+    Some(match s {
+        "-e" | "-a" => CondOp::FileExists,
+        "-f" => CondOp::IsFile,
+        "-d" => CondOp::IsDir,
+        "-L" | "-h" => CondOp::IsSymlink,
+        "-r" => CondOp::IsReadable,
+        "-w" => CondOp::IsWritable,
+        "-x" => CondOp::IsExecutable,
+        "-s" => CondOp::IsNonEmpty,
+        "-b" => CondOp::IsBlockDev,
+        "-c" => CondOp::IsCharDev,
+        "-p" => CondOp::IsFifo,
+        "-S" => CondOp::IsSocket,
+        "-u" => CondOp::IsSetuid,
+        "-g" => CondOp::IsSetgid,
+        "-k" => CondOp::IsSticky,
+        "-O" => CondOp::OwnedByUser,
+        "-G" => CondOp::OwnedByGroup,
+        "-N" => CondOp::ModifiedSinceRead,
+        "-t" => CondOp::IsTty,
+        "-o" => CondOp::OptionSet,
+        "-v" => CondOp::VarIsSet,
+        "-z" => CondOp::StrEmpty,
+        "-n" => CondOp::StrNonEmpty,
+        _ => return None,
+    })
+}
+
+/// Parse a binary condition operator.
+fn parse_binary_cond_op(s: &str) -> Option<CondOp> {
+    Some(match s {
+        "==" | "=" => CondOp::StrEq,
+        "!=" => CondOp::StrNeq,
+        "<" => CondOp::StrLt,
+        ">" => CondOp::StrGt,
+        "=~" => CondOp::StrMatch,
+        "-eq" => CondOp::IntEq,
+        "-ne" => CondOp::IntNe,
+        "-lt" => CondOp::IntLt,
+        "-le" => CondOp::IntLe,
+        "-gt" => CondOp::IntGt,
+        "-ge" => CondOp::IntGe,
+        "-nt" => CondOp::NewerThan,
+        "-ot" => CondOp::OlderThan,
+        "-ef" => CondOp::SameFile,
+        _ => return None,
+    })
+}
 
 fn strip_quotes(text: &str, quote: char) -> CompactString {
     let s = text.strip_prefix(quote).unwrap_or(text);

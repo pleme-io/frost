@@ -9,10 +9,11 @@ use std::ffi::CString;
 use nix::unistd::Pid;
 
 use frost_builtins::BuiltinRegistry;
+use frost_expand::ExpandEnv;
 use frost_parser::ast::{
-    BraceGroup, CaseClause, Command, CompleteCommand, ForClause, IfClause, List, ListOp,
-    Pipeline, Program, SelectClause, SimpleCommand, Subshell, UntilClause, WhileClause,
-    Word, WordPart,
+    BraceGroup, CaseClause, CForClause, Command, CompleteCommand, CondExpr, CondOp,
+    ForClause, IfClause, List, ListOp, Pipeline, Program, RepeatClause, SelectClause,
+    SimpleCommand, Subshell, TryAlwaysClause, UntilClause, WhileClause, Word,
 };
 
 use crate::env::ShellEnv;
@@ -122,6 +123,8 @@ impl<'env> Executor<'env> {
 
         if cmds.len() == 1 {
             let status = self.execute_command(&cmds[0])?;
+            // Set $pipestatus for single-command pipelines
+            self.set_pipestatus(&[status]);
             return Ok(if pipeline.bang { invert(status) } else { status });
         }
 
@@ -165,16 +168,47 @@ impl<'env> Executor<'env> {
             sys::close(wr).ok();
         }
 
+        let mut statuses = Vec::with_capacity(children.len());
         let mut last_status = 0;
         for pid in children {
             match sys::wait_pid(pid).map_err(ExecError::Wait)? {
-                sys::ChildStatus::Exited(code) => last_status = code,
-                sys::ChildStatus::Signaled(code) => last_status = code,
-                _ => {}
+                sys::ChildStatus::Exited(code) => {
+                    statuses.push(code);
+                    last_status = code;
+                }
+                sys::ChildStatus::Signaled(code) => {
+                    statuses.push(code);
+                    last_status = code;
+                }
+                _ => {
+                    statuses.push(0);
+                }
             }
         }
 
+        // Set $pipestatus array
+        self.set_pipestatus(&statuses);
+
+        // Check PIPE_FAIL option: if set, return nonzero if any command failed
+        if self.env.is_option_set(frost_options::ShellOption::PipeFail) {
+            let pipe_fail_status = statuses.iter().copied()
+                .find(|&s| s != 0)
+                .unwrap_or(last_status);
+            last_status = pipe_fail_status;
+        }
+
         Ok(if pipeline.bang { invert(last_status) } else { last_status })
+    }
+
+    /// Set the `$pipestatus` array variable.
+    fn set_pipestatus(&mut self, statuses: &[i32]) {
+        use crate::env::ShellValue;
+        let arr: Vec<String> = statuses.iter().map(|s| s.to_string()).collect();
+        // Set as string first, then convert to array
+        self.env.set_var("pipestatus", "");
+        if let Some(var) = self.env.get_shell_var_mut("pipestatus") {
+            var.set_value(ShellValue::Array(arr));
+        }
     }
 
     // ── Command dispatch ─────────────────────────────────────────
@@ -194,6 +228,17 @@ impl<'env> Executor<'env> {
                 self.env.functions.insert(fdef.name.to_string(), (**fdef).clone());
                 Ok(0)
             }
+            Command::ArithCmd(expr) => {
+                // (( expr )) — evaluate and return 0 if nonzero, 1 if zero
+                let result = crate::arith::eval_arithmetic_mut(expr, self.env);
+                let status = if result != 0 { 0 } else { 1 };
+                self.env.exit_status = status;
+                Ok(status)
+            }
+            Command::Cond(expr) => self.execute_cond(expr),
+            Command::CFor(clause) => self.execute_c_for(clause),
+            Command::Repeat(clause) => self.execute_repeat(clause),
+            Command::TryAlways(clause) => self.execute_try_always(clause),
             Command::Coproc(_) => {
                 eprintln!("frost: coproc not yet supported");
                 Ok(1)
@@ -285,7 +330,7 @@ impl<'env> Executor<'env> {
 
     fn execute_for(&mut self, clause: &ForClause) -> ExecResult {
         let words = match &clause.words {
-            Some(ws) => ws.iter().map(|w| self.expand_word(w)).collect::<Vec<_>>(),
+            Some(ws) => ws.iter().flat_map(|w| self.expand_word_multi(w)).collect::<Vec<_>>(),
             None => self.env.positional_params.clone(),
         };
 
@@ -394,20 +439,45 @@ impl<'env> Executor<'env> {
     }
 
     fn execute_case(&mut self, clause: &CaseClause) -> ExecResult {
+        use frost_parser::ast::CaseTerminator;
         let word = self.expand_word(&clause.word);
-        for item in &clause.items {
-            for pattern in &item.patterns {
-                let pat = self.expand_word(pattern);
-                if simple_pattern_match(&pat, &word) {
-                    let mut status = 0;
-                    for cmd in &item.body {
-                        status = self.execute_complete_command(cmd)?;
+        let mut matched = false;
+        let mut status = 0;
+
+        for (idx, item) in clause.items.iter().enumerate() {
+            let mut item_matched = matched; // carry forward from ;& fall-through
+            if !item_matched {
+                for pattern in &item.patterns {
+                    let pat = self.expand_word(pattern);
+                    if simple_pattern_match(&pat, &word) {
+                        item_matched = true;
+                        break;
                     }
+                }
+            }
+
+            if item_matched {
+                for cmd in &item.body {
+                    status = self.execute_complete_command(cmd)?;
+                }
+                match item.terminator {
+                    CaseTerminator::DoubleSemi => return Ok(status), // ;; — stop
+                    CaseTerminator::SemiAnd => {
+                        // ;& — fall through to next body unconditionally
+                        matched = true;
+                    }
+                    CaseTerminator::SemiPipe => {
+                        // ;| — continue testing remaining patterns
+                        matched = false;
+                    }
+                }
+                // If this is the last item, we're done
+                if idx == clause.items.len() - 1 {
                     return Ok(status);
                 }
             }
         }
-        Ok(0)
+        Ok(status)
     }
 
     fn execute_select(&mut self, clause: &SelectClause) -> ExecResult {
@@ -434,28 +504,363 @@ impl<'env> Executor<'env> {
         }
     }
 
+    // ── [[ ]] conditional ────────────────────────────────────────
+
+    fn execute_cond(&mut self, expr: &CondExpr) -> ExecResult {
+        let result = self.eval_cond(expr);
+        let status = if result { 0 } else { 1 };
+        self.env.exit_status = status;
+        Ok(status)
+    }
+
+    fn eval_cond(&mut self, expr: &CondExpr) -> bool {
+        match expr {
+            CondExpr::Not(inner) => !self.eval_cond(inner),
+            CondExpr::And(left, right) => self.eval_cond(left) && self.eval_cond(right),
+            CondExpr::Or(left, right) => self.eval_cond(left) || self.eval_cond(right),
+            CondExpr::Unary(op, word) => {
+                let val = self.expand_word(word);
+                self.eval_unary_cond(op, &val)
+            }
+            CondExpr::Binary(left, op, right) => {
+                let l = self.expand_word(left);
+                let r = self.expand_word(right);
+                self.eval_binary_cond(op, &l, &r)
+            }
+        }
+    }
+
+    fn eval_unary_cond(&self, op: &CondOp, val: &str) -> bool {
+        use std::fs;
+        use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+
+        match op {
+            CondOp::FileExists => fs::symlink_metadata(val).is_ok(),
+            CondOp::IsFile => fs::metadata(val).is_ok_and(|m| m.is_file()),
+            CondOp::IsDir => fs::metadata(val).is_ok_and(|m| m.is_dir()),
+            CondOp::IsSymlink => fs::symlink_metadata(val).is_ok_and(|m| m.is_symlink()),
+            CondOp::IsReadable => fs::metadata(val).is_ok(), // simplified
+            CondOp::IsWritable => fs::metadata(val).is_ok_and(|m| m.permissions().mode() & 0o200 != 0),
+            CondOp::IsExecutable => fs::metadata(val).is_ok_and(|m| m.permissions().mode() & 0o111 != 0),
+            CondOp::IsNonEmpty => fs::metadata(val).is_ok_and(|m| m.len() > 0),
+            CondOp::IsBlockDev => fs::metadata(val).is_ok_and(|m| m.file_type().is_block_device()),
+            CondOp::IsCharDev => fs::metadata(val).is_ok_and(|m| m.file_type().is_char_device()),
+            CondOp::IsFifo => fs::metadata(val).is_ok_and(|m| m.file_type().is_fifo()),
+            CondOp::IsSocket => fs::metadata(val).is_ok_and(|m| m.file_type().is_socket()),
+            CondOp::IsSetuid => fs::metadata(val).is_ok_and(|m| m.mode() & 0o4000 != 0),
+            CondOp::IsSetgid => fs::metadata(val).is_ok_and(|m| m.mode() & 0o2000 != 0),
+            CondOp::IsSticky => fs::metadata(val).is_ok_and(|m| m.mode() & 0o1000 != 0),
+            CondOp::OwnedByUser => {
+                let uid = unsafe { libc::getuid() };
+                fs::metadata(val).is_ok_and(|m| m.uid() == uid)
+            }
+            CondOp::OwnedByGroup => {
+                let gid = unsafe { libc::getgid() };
+                fs::metadata(val).is_ok_and(|m| m.gid() == gid)
+            }
+            CondOp::ModifiedSinceRead => {
+                fs::metadata(val).is_ok_and(|m| {
+                    m.modified().ok() > m.accessed().ok()
+                })
+            }
+            CondOp::IsTty => {
+                val.parse::<i32>().ok()
+                    .is_some_and(|fd| nix::unistd::isatty(fd).unwrap_or(false))
+            }
+            CondOp::OptionSet => {
+                // [[ -o option_name ]] — check if shell option is set
+                frost_options::Options::from_name(val)
+                    .is_some_and(|opt| self.env.is_option_set(opt))
+            }
+            CondOp::VarIsSet => self.env.get_var(val).is_some(),
+            CondOp::StrEmpty => val.is_empty(),
+            CondOp::StrNonEmpty => !val.is_empty(),
+            _ => !val.is_empty(),
+        }
+    }
+
+    fn eval_binary_cond(&self, op: &CondOp, left: &str, right: &str) -> bool {
+        match op {
+            CondOp::StrEq => simple_pattern_match(right, left),
+            CondOp::StrNeq => !simple_pattern_match(right, left),
+            CondOp::StrLt => left < right,
+            CondOp::StrGt => left > right,
+            CondOp::StrMatch => {
+                // =~ regex matching
+                match fancy_regex::Regex::new(right) {
+                    Ok(re) => re.is_match(left).unwrap_or(false),
+                    Err(_) => false,
+                }
+            }
+            CondOp::IntEq => parse_int(left) == parse_int(right),
+            CondOp::IntNe => parse_int(left) != parse_int(right),
+            CondOp::IntLt => parse_int(left) < parse_int(right),
+            CondOp::IntLe => parse_int(left) <= parse_int(right),
+            CondOp::IntGt => parse_int(left) > parse_int(right),
+            CondOp::IntGe => parse_int(left) >= parse_int(right),
+            CondOp::NewerThan => {
+                let l = std::fs::metadata(left).and_then(|m| m.modified()).ok();
+                let r = std::fs::metadata(right).and_then(|m| m.modified()).ok();
+                l > r
+            }
+            CondOp::OlderThan => {
+                let l = std::fs::metadata(left).and_then(|m| m.modified()).ok();
+                let r = std::fs::metadata(right).and_then(|m| m.modified()).ok();
+                l < r
+            }
+            CondOp::SameFile => {
+                use std::os::unix::fs::MetadataExt;
+                let l = std::fs::metadata(left).ok();
+                let r = std::fs::metadata(right).ok();
+                match (l, r) {
+                    (Some(a), Some(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+                    _ => false,
+                }
+            }
+            _ => left == right,
+        }
+    }
+
+    // ── C-style for loop ────────────────────────────────────────
+
+    fn execute_c_for(&mut self, clause: &CForClause) -> ExecResult {
+        // Execute init expression
+        if !clause.init.is_empty() {
+            crate::arith::eval_arithmetic_mut(&clause.init, self.env);
+        }
+
+        let mut status = 0;
+        'outer: loop {
+            // Check condition
+            if !clause.condition.is_empty() {
+                let cond = crate::arith::eval_arithmetic_mut(&clause.condition, self.env);
+                if cond == 0 { break; }
+            }
+
+            // Execute body
+            for cmd in &clause.body {
+                match self.execute_complete_command(cmd) {
+                    Ok(s) => status = s,
+                    Err(ExecError::ControlFlow(ControlFlow::Break(n))) => {
+                        if n > 1 {
+                            return Err(ExecError::ControlFlow(ControlFlow::Break(n - 1)));
+                        }
+                        break 'outer;
+                    }
+                    Err(ExecError::ControlFlow(ControlFlow::Continue(n))) => {
+                        if n > 1 {
+                            return Err(ExecError::ControlFlow(ControlFlow::Continue(n - 1)));
+                        }
+                        // Fall through to step expression
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+
+            // Execute step expression
+            if !clause.step.is_empty() {
+                crate::arith::eval_arithmetic_mut(&clause.step, self.env);
+            }
+        }
+        Ok(status)
+    }
+
+    // ── repeat ──────────────────────────────────────────────────
+
+    fn execute_repeat(&mut self, clause: &RepeatClause) -> ExecResult {
+        let count_str = self.expand_word(&clause.count);
+        let count: i64 = count_str.parse().unwrap_or(0);
+        let mut status = 0;
+
+        'outer: for _ in 0..count {
+            for cmd in &clause.body {
+                match self.execute_complete_command(cmd) {
+                    Ok(s) => status = s,
+                    Err(ExecError::ControlFlow(ControlFlow::Break(n))) => {
+                        if n > 1 {
+                            return Err(ExecError::ControlFlow(ControlFlow::Break(n - 1)));
+                        }
+                        break 'outer;
+                    }
+                    Err(ExecError::ControlFlow(ControlFlow::Continue(n))) => {
+                        if n > 1 {
+                            return Err(ExecError::ControlFlow(ControlFlow::Continue(n - 1)));
+                        }
+                        continue 'outer;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        Ok(status)
+    }
+
+    // ── try-always ──────────────────────────────────────────────
+
+    fn execute_try_always(&mut self, clause: &TryAlwaysClause) -> ExecResult {
+        let try_result = (|| -> ExecResult {
+            let mut status = 0;
+            for cmd in &clause.try_body {
+                status = self.execute_complete_command(cmd)?;
+            }
+            Ok(status)
+        })();
+
+        // Always block runs regardless of try result
+        let mut always_status = 0;
+        for cmd in &clause.always_body {
+            always_status = self.execute_complete_command(cmd).unwrap_or(1);
+        }
+
+        // If try succeeded, return always status; if try failed, propagate
+        match try_result {
+            Ok(_) => Ok(always_status),
+            Err(e) => Err(e),
+        }
+    }
+
     // ── Simple command ───────────────────────────────────────────
 
     pub fn execute_simple(&mut self, cmd: &SimpleCommand) -> ExecResult {
+        use frost_parser::ast::AssignOp;
         for assign in &cmd.assignments {
-            let value = assign
-                .value
-                .as_ref()
-                .map(|w| self.expand_word(w))
-                .unwrap_or_default();
-            self.env.set_var(&assign.name, &value);
+            if let Some(ref arr_words) = assign.array_value {
+                // Array assignment: name=(word1 word2 ...)
+                let elements: Vec<String> = arr_words.iter()
+                    .flat_map(|w| self.expand_word_multi(w))
+                    .collect();
+                use crate::env::ShellValue;
+                match assign.op {
+                    AssignOp::Append => {
+                        // name+=(vals) — append to existing array
+                        if let Some(var) = self.env.get_shell_var_mut(&assign.name) {
+                            if let ShellValue::Array(ref mut arr) = var.value {
+                                arr.extend(elements);
+                                var.set_value(var.value.clone());
+                            } else {
+                                var.set_value(ShellValue::Array(elements));
+                            }
+                        } else {
+                            self.env.set_var(&assign.name, "");
+                            if let Some(var) = self.env.get_shell_var_mut(&assign.name) {
+                                var.set_value(ShellValue::Array(elements));
+                            }
+                        }
+                    }
+                    AssignOp::Assign => {
+                        self.env.set_var(&assign.name, "");
+                        if let Some(var) = self.env.get_shell_var_mut(&assign.name) {
+                            var.set_value(ShellValue::Array(elements));
+                        }
+                    }
+                }
+            } else if let Some(ref sub) = assign.subscript {
+                // Subscript assignment: name[sub]=value
+                let value = assign
+                    .value
+                    .as_ref()
+                    .map(|w| self.expand_word(w))
+                    .unwrap_or_default();
+                use crate::env::ShellValue;
+                // Expand the subscript (it could contain variables)
+                let sub_expanded = self.expand_subscript(sub);
+
+                // Ensure the variable exists as an array
+                if self.env.get_shell_var(&assign.name).is_none() {
+                    self.env.set_var(&assign.name, "");
+                    if let Some(var) = self.env.get_shell_var_mut(&assign.name) {
+                        var.set_value(ShellValue::Array(Vec::new()));
+                    }
+                }
+
+                if let Some(var) = self.env.get_shell_var_mut(&assign.name) {
+                    match var.value {
+                        ShellValue::Array(ref mut arr) => {
+                            if let Ok(idx) = sub_expanded.parse::<i64>() {
+                                // zsh: 1-indexed, negative from end
+                                let real_idx = if idx < 0 {
+                                    (arr.len() as i64 + idx) as usize
+                                } else if idx > 0 {
+                                    (idx - 1) as usize
+                                } else {
+                                    0
+                                };
+                                // Extend array if needed
+                                while arr.len() <= real_idx {
+                                    arr.push(String::new());
+                                }
+                                match assign.op {
+                                    AssignOp::Append => arr[real_idx].push_str(&value),
+                                    AssignOp::Assign => arr[real_idx] = value,
+                                }
+                            }
+                            var.refresh_str_cache();
+                        }
+                        ShellValue::Associative(ref mut map) => {
+                            match assign.op {
+                                AssignOp::Append => {
+                                    let entry = map.entry(sub_expanded).or_default();
+                                    entry.push_str(&value);
+                                }
+                                AssignOp::Assign => {
+                                    map.insert(sub_expanded, value);
+                                }
+                            }
+                            var.refresh_str_cache();
+                        }
+                        _ => {
+                            // Convert scalar to array for subscript assignment
+                            let existing = var.value.to_scalar_string();
+                            let mut arr = vec![existing];
+                            if let Ok(idx) = sub_expanded.parse::<i64>() {
+                                let real_idx = if idx > 0 { (idx - 1) as usize } else { 0 };
+                                while arr.len() <= real_idx {
+                                    arr.push(String::new());
+                                }
+                                match assign.op {
+                                    AssignOp::Append => arr[real_idx].push_str(&value),
+                                    AssignOp::Assign => arr[real_idx] = value,
+                                }
+                            }
+                            var.set_value(ShellValue::Array(arr));
+                        }
+                    }
+                }
+            } else {
+                let value = assign
+                    .value
+                    .as_ref()
+                    .map(|w| self.expand_word(w))
+                    .unwrap_or_default();
+                match assign.op {
+                    AssignOp::Append => {
+                        // name+=val — append to existing value
+                        let existing = self.env.get_var(&assign.name)
+                            .unwrap_or("")
+                            .to_string();
+                        self.env.set_var(&assign.name, &format!("{existing}{value}"));
+                    }
+                    AssignOp::Assign => {
+                        self.env.set_var(&assign.name, &value);
+                    }
+                }
+            }
         }
 
         if cmd.words.is_empty() {
             return Ok(0);
         }
 
-        let argv: Vec<String> = cmd.words.iter().map(|w| self.expand_word(w)).collect();
+        let argv: Vec<String> = cmd.words.iter()
+            .flat_map(|w| self.expand_word_multi(w))
+            .filter(|s| !s.is_empty() || cmd.words.len() == 1)
+            .collect();
         let name = &argv[0];
 
         // Check for functions first
         if let Some(fdef) = self.env.functions.get(name).cloned() {
-            let saved = self.env.positional_params.clone();
+            let saved_params = self.env.positional_params.clone();
+            self.env.push_scope();
             self.env.positional_params = argv[1..].to_vec();
             let result = match self.execute_command(&fdef.body) {
                 Ok(s) => Ok(s),
@@ -465,18 +870,20 @@ impl<'env> Executor<'env> {
                 }
                 Err(e) => Err(e),
             };
-            self.env.positional_params = saved;
+            self.env.pop_scope();
+            self.env.positional_params = saved_params;
             return result;
         }
 
         // Check builtins — if redirects are present, fork to apply them
         if self.builtins.contains(name) {
-            let status = if cmd.redirects.is_empty() {
-                let arg_refs: Vec<&str> = argv[1..].iter().map(|s| s.as_str()).collect();
-                self.builtins.get(name).unwrap().execute(&arg_refs, self.env)
-            } else {
+            if !cmd.redirects.is_empty() {
                 return self.fork_exec_builtin(&argv, &cmd.redirects);
-            };
+            }
+
+            let arg_refs: Vec<&str> = argv[1..].iter().map(|s| s.as_str()).collect();
+            let result = self.builtins.get(name).unwrap().execute_with_action(&arg_refs, self.env);
+            let status = result.status;
 
             // Handle special exit codes from control flow builtins
             use frost_builtins::control::*;
@@ -493,19 +900,111 @@ impl<'env> Executor<'env> {
                 return Err(ExecError::ControlFlow(ControlFlow::Continue(levels)));
             }
 
-            // Handle eval
+            // Handle structured actions from BuiltinAction
+            use frost_builtins::BuiltinAction;
+            match result.action {
+                BuiltinAction::Eval(code) => {
+                    return self.eval_string(&code);
+                }
+                BuiltinAction::Source(path) => {
+                    return self.source_file(&path);
+                }
+                BuiltinAction::Shift(n) => {
+                    if n <= self.env.positional_params.len() {
+                        self.env.positional_params.drain(..n);
+                    } else {
+                        self.env.positional_params.clear();
+                    }
+                }
+                BuiltinAction::SetPositional(params) => {
+                    self.env.positional_params = params;
+                }
+                BuiltinAction::Let(expr) => {
+                    let arith_result = crate::arith::eval_arithmetic_mut(&expr, self.env);
+                    let exit = if arith_result != 0 { 0 } else { 1 };
+                    self.env.exit_status = exit;
+                    return Ok(exit);
+                }
+                BuiltinAction::DefineAlias(aliases) => {
+                    for (name, value) in aliases {
+                        self.env.aliases.insert(name, value);
+                    }
+                }
+                BuiltinAction::RemoveAlias(names) => {
+                    for name in names {
+                        self.env.aliases.remove(&name);
+                    }
+                }
+                BuiltinAction::SetOptions(opts) => {
+                    for opt_name in opts {
+                        let negated = frost_options::Options::is_negated(&opt_name);
+                        if let Some(opt) = frost_options::Options::from_name(&opt_name) {
+                            if negated {
+                                self.env.unset_option(opt);
+                            } else {
+                                self.env.set_option(opt);
+                            }
+                        }
+                    }
+                }
+                BuiltinAction::UnsetOptions(opts) => {
+                    for opt_name in opts {
+                        let negated = frost_options::Options::is_negated(&opt_name);
+                        if let Some(opt) = frost_options::Options::from_name(&opt_name) {
+                            if negated {
+                                self.env.set_option(opt);
+                            } else {
+                                self.env.unset_option(opt);
+                            }
+                        }
+                    }
+                }
+                BuiltinAction::Exit(code) => {
+                    return Err(ExecError::ControlFlow(ControlFlow::Exit(code)));
+                }
+                BuiltinAction::None => {}
+            }
+
+            // Legacy fallback: still check __FROST_* vars for builtins that
+            // haven't been migrated yet (will be removed once all use execute_with_action)
             if status == 211 {
                 if let Some(code) = self.env.get_var("__FROST_EVAL_CODE").map(String::from) {
                     self.env.unset_var("__FROST_EVAL_CODE");
                     return self.eval_string(&code);
                 }
             }
-
-            // Handle source
             if status == 210 {
                 if let Some(path) = self.env.get_var("__FROST_SOURCE_FILE").map(String::from) {
                     self.env.unset_var("__FROST_SOURCE_FILE");
                     return self.source_file(&path);
+                }
+            }
+            if status == 212 {
+                if let Some(expr) = self.env.get_var("__FROST_LET_EXPR").map(String::from) {
+                    self.env.unset_var("__FROST_LET_EXPR");
+                    let arith_result = crate::arith::eval_arithmetic_mut(&expr, self.env);
+                    let exit = if arith_result != 0 { 0 } else { 1 };
+                    self.env.exit_status = exit;
+                    return Ok(exit);
+                }
+            }
+            if let Some(shift_str) = self.env.get_var("__FROST_SHIFT").map(String::from) {
+                self.env.unset_var("__FROST_SHIFT");
+                if let Ok(n) = shift_str.parse::<usize>() {
+                    if n <= self.env.positional_params.len() {
+                        self.env.positional_params.drain(..n);
+                    } else {
+                        self.env.positional_params.clear();
+                    }
+                }
+            }
+            if let Some(params_str) = self.env.get_var("__FROST_SET_POSITIONAL").map(String::from) {
+                self.env.unset_var("__FROST_SET_POSITIONAL");
+                if params_str.is_empty() {
+                    self.env.positional_params.clear();
+                } else {
+                    self.env.positional_params =
+                        params_str.split('\x1f').map(String::from).collect();
                 }
             }
 
@@ -589,102 +1088,116 @@ impl<'env> Executor<'env> {
 
     // ── Word expansion ───────────────────────────────────────────
 
-    /// Expand a Word AST node into a string, resolving variables, tilde, etc.
-    pub fn expand_word(&self, word: &Word) -> String {
-        let mut out = String::new();
-        for part in &word.parts {
-            self.expand_part(part, &mut out);
+    /// Expand a subscript expression string (may contain $vars).
+    fn expand_subscript(&self, sub: &str) -> String {
+        // Simple case: just a literal number or string
+        if sub.contains('$') {
+            // Contains variable reference — do basic expansion
+            let mut result = sub.to_string();
+            // Handle $var references
+            while let Some(dollar) = result.find('$') {
+                let rest = &result[dollar + 1..];
+                let end = rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                    .unwrap_or(rest.len());
+                let var_name = &rest[..end];
+                let var_val = self.env.get_var(var_name).unwrap_or("").to_string();
+                result = format!("{}{var_val}{}", &result[..dollar], &rest[end..]);
+            }
+            result
+        } else {
+            sub.to_string()
         }
-        out
     }
 
-    fn expand_part(&self, part: &WordPart, out: &mut String) {
-        match part {
-            WordPart::Literal(s) | WordPart::SingleQuoted(s) => out.push_str(s),
-            WordPart::DoubleQuoted(parts) => {
-                for inner in parts {
-                    self.expand_part(inner, out);
-                }
-            }
-            WordPart::DollarVar(name) => {
-                let val = match name.as_str() {
-                    "?" => self.env.exit_status.to_string(),
-                    "$" => self.env.pid.to_string(),
-                    "!" => String::new(), // last background PID
-                    "#" => self.env.positional_params.len().to_string(),
-                    "*" | "@" => self.env.positional_params.join(" "),
-                    "0" => "frost".to_string(),
-                    n if n.len() == 1 && n.as_bytes()[0].is_ascii_digit() => {
-                        let idx = (n.as_bytes()[0] - b'1') as usize;
-                        self.env.positional_params.get(idx).cloned().unwrap_or_default()
-                    }
-                    _ => self.env.get_var(name).unwrap_or("").to_string(),
-                };
-                out.push_str(&val);
-            }
-            WordPart::DollarBrace { param, operator, arg } => {
-                let val = self.env.get_var(param).unwrap_or("").to_string();
-                // Basic parameter expansion operators
-                match operator.as_deref() {
-                    Some(":-") => {
-                        if val.is_empty() {
-                            if let Some(a) = arg {
-                                out.push_str(&self.expand_word(a));
-                            }
-                        } else {
-                            out.push_str(&val);
-                        }
-                    }
-                    Some(":+") => {
-                        if !val.is_empty() {
-                            if let Some(a) = arg {
-                                out.push_str(&self.expand_word(a));
-                            }
-                        }
-                    }
-                    _ => out.push_str(&val),
-                }
-            }
-            WordPart::CommandSub(program) => {
-                // Execute in a subshell and capture stdout
-                let output = capture_command_sub(program, self.env);
-                // Trim trailing newlines (POSIX behavior)
-                out.push_str(output.trim_end_matches('\n'));
-            }
-            WordPart::ArithSub(expr) => {
-                let result = eval_arithmetic(expr, self.env);
-                out.push_str(&result.to_string());
-            }
-            WordPart::Tilde(user) => {
-                if user.is_empty() {
-                    if let Some(home) = self.env.get_var("HOME") {
-                        out.push_str(home);
-                    } else {
-                        out.push('~');
-                    }
-                } else {
-                    // ~user expansion
-                    out.push('~');
-                    out.push_str(user);
-                }
-            }
-            WordPart::Glob(_) => {
-                // Glob expansion happens at a higher level (after word expansion)
-                // For now, pass through as literal
-                match part {
-                    WordPart::Glob(frost_parser::ast::GlobKind::Star) => out.push('*'),
-                    WordPart::Glob(frost_parser::ast::GlobKind::Question) => out.push('?'),
-                    WordPart::Glob(frost_parser::ast::GlobKind::At) => out.push('@'),
-                    _ => {}
-                }
-            }
+    /// Expand a Word AST node into a string, resolving variables, tilde, etc.
+    /// For multi-word results (arrays, `$@`), joins with space.
+    pub fn expand_word(&self, word: &Word) -> String {
+        let bridge = ExpandBridge::new(self.env);
+        let parts = frost_expand::expand_word(word, &bridge);
+        parts.join("")
+    }
+
+    /// Expand a Word AST node into potentially multiple strings.
+    ///
+    /// Applies brace expansion after parameter/command substitution.
+    pub fn expand_word_multi(&self, word: &Word) -> Vec<String> {
+        let bridge = ExpandBridge::new(self.env);
+        let parts = frost_expand::expand_word(word, &bridge);
+        // Apply brace expansion to each resulting word
+        let mut result = Vec::new();
+        for part in parts {
+            let expanded = frost_expand::expand_braces(&part);
+            result.extend(expanded);
         }
+        result
+    }
+}
+
+// ── Bridge from ShellEnv to frost_expand::ExpandEnv ─────────────────
+
+/// Adapter that lets the expansion engine access `ShellEnv`.
+struct ExpandBridge<'a> {
+    env: &'a ShellEnv,
+}
+
+impl<'a> ExpandBridge<'a> {
+    fn new(env: &'a ShellEnv) -> Self {
+        Self { env }
+    }
+}
+
+impl ExpandEnv for ExpandBridge<'_> {
+    fn get_var(&self, name: &str) -> Option<&str> {
+        self.env.get_var(name)
+    }
+
+    fn get_var_value(&self, name: &str) -> Option<frost_expand::ExpandValue> {
+        self.env.get_value(name).map(|sv| ShellEnv::to_expand_value(sv))
+    }
+
+    fn exit_status(&self) -> i32 {
+        self.env.exit_status
+    }
+
+    fn pid(&self) -> u32 {
+        self.env.pid
+    }
+
+    fn positional_params(&self) -> &[String] {
+        &self.env.positional_params
+    }
+
+    fn capture_command_sub(&self, program: &Program) -> String {
+        capture_command_sub(program, self.env)
+    }
+
+    fn eval_arithmetic(&self, expr: &str) -> i64 {
+        eval_arithmetic(expr, self.env)
+    }
+
+    fn random(&self) -> u32 {
+        // Use a simple hash of current time for randomness
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        std::time::SystemTime::now().hash(&mut h);
+        std::thread::current().id().hash(&mut h);
+        (h.finish() & 0x7fff) as u32
+    }
+
+    fn seconds_elapsed(&self) -> u64 {
+        self.env.seconds_elapsed()
     }
 }
 
 /// Invert exit status for `!` pipelines.
 fn invert(status: i32) -> i32 {
     if status == 0 { 1 } else { 0 }
+}
+
+/// Parse a string as an integer (for -eq/-lt/etc. comparisons).
+fn parse_int(s: &str) -> i64 {
+    s.trim().parse().unwrap_or(0)
 }
 
 /// Simple glob-style pattern matching for case statements.
@@ -778,34 +1291,7 @@ fn capture_command_sub(program: &Program, env: &ShellEnv) -> String {
 
 /// Evaluate an arithmetic expression.
 fn eval_arithmetic(expr: &str, env: &ShellEnv) -> i64 {
-    let expr = expr.trim();
-    // Simple integer parsing and variable lookup
-    if let Ok(n) = expr.parse::<i64>() {
-        return n;
-    }
-    // Variable reference
-    if let Some(val) = env.get_var(expr) {
-        if let Ok(n) = val.parse::<i64>() {
-            return n;
-        }
-    }
-    // Simple binary operations
-    for (op_str, op_fn) in &[
-        ("+", (|a: i64, b: i64| a + b) as fn(i64, i64) -> i64),
-        ("-", (|a, b| a - b) as fn(i64, i64) -> i64),
-        ("*", (|a, b| a * b) as fn(i64, i64) -> i64),
-        ("/", (|a, b| if b != 0 { a / b } else { 0 }) as fn(i64, i64) -> i64),
-        ("%", (|a, b| if b != 0 { a % b } else { 0 }) as fn(i64, i64) -> i64),
-    ] {
-        if let Some(pos) = expr.rfind(op_str) {
-            if pos > 0 {
-                let left = eval_arithmetic(&expr[..pos], env);
-                let right = eval_arithmetic(&expr[pos + op_str.len()..], env);
-                return op_fn(left, right);
-            }
-        }
-    }
-    0
+    crate::arith::eval_arithmetic(expr, env)
 }
 
 #[cfg(test)]
@@ -950,8 +1436,10 @@ mod tests {
                         commands: vec![Command::Simple(SimpleCommand {
                             assignments: vec![Assignment {
                                 name: "MY_VAR".into(),
+                                subscript: None,
                                 op: AssignOp::Assign,
                                 value: Some(literal_word("hello")),
+                                array_value: None,
                                 span: Span::new(0, 12),
                             }],
                             words: vec![],

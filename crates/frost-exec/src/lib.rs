@@ -6,15 +6,18 @@
 //! Platform-specific system calls are isolated in the [`sys`] module
 //! so the rest of the engine remains portable across Unix variants.
 
+pub mod arith;
 pub mod env;
 pub mod execute;
 pub mod job;
 pub mod redirect;
 pub mod sys;
+pub mod trap;
 
 pub use env::ShellEnv;
 pub use execute::{ControlFlow, ExecError, Executor};
 pub use job::{Job, JobTable};
+pub use trap::{TrapAction, TrapTable};
 
 /// Tokenize a string into a token stream.
 pub fn tokenize(input: &str) -> Vec<frost_lexer::Token> {

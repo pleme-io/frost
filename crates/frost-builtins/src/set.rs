@@ -1,6 +1,6 @@
 //! set/unset builtins.
 
-use crate::{Builtin, ShellEnvironment};
+use crate::{Builtin, BuiltinAction, BuiltinResult, ShellEnvironment};
 
 pub struct Set;
 pub struct Unset;
@@ -22,6 +22,17 @@ impl Builtin for Set {
         }
         // set -o / set +o options (simplified)
         0
+    }
+
+    fn execute_with_action(&self, args: &[&str], _env: &mut dyn ShellEnvironment) -> BuiltinResult {
+        if args.is_empty() {
+            return BuiltinResult::ok();
+        }
+        if args[0] == "--" {
+            let params: Vec<String> = args[1..].iter().map(|s| s.to_string()).collect();
+            return BuiltinResult::with_action(0, BuiltinAction::SetPositional(params));
+        }
+        BuiltinResult::ok()
     }
 }
 

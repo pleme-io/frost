@@ -11,12 +11,15 @@ description = "Zsh-compatible command execution engine"
 [dependencies]
 frost-lexer = { workspace = true }
 frost-parser = { workspace = true }
+frost-expand = { workspace = true }
 frost-builtins = { workspace = true }
 frost-options = { workspace = true }
+indexmap = { workspace = true }
 thiserror = { workspace = true }
 nix = { workspace = true }
 libc = { workspace = true }
 tracing = { workspace = true }
+fancy-regex = { workspace = true }
 
 [dev-dependencies]
 frost-lexer = { workspace = true }
