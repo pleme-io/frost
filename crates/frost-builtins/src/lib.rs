@@ -10,8 +10,13 @@ mod echo;
 mod eval_builtin;
 mod exit;
 mod export;
+mod getopts;
+mod hash;
+mod jobs;
+mod kill;
 mod misc;
 mod print;
+mod read;
 mod set;
 mod source;
 mod test;
@@ -34,6 +39,89 @@ pub trait ShellEnvironment {
     fn set_exit_status(&mut self, status: i32);
     fn chdir(&mut self, path: &str) -> Result<(), String>;
     fn home_dir(&self) -> Option<&str>;
+
+    /// Declare a variable in the current (innermost) scope.
+    /// Used by `typeset`/`local`/`declare` (without `-g`).
+    fn declare_var(&mut self, name: &str, value: &str) {
+        self.set_var(name, value);
+    }
+
+    /// Set a variable in the global scope (`typeset -g`).
+    fn set_global_var(&mut self, name: &str, value: &str) {
+        self.set_var(name, value);
+    }
+
+    /// Mark a variable as read-only.
+    fn set_var_readonly(&mut self, _name: &str) {}
+
+    /// Set a variable's type to integer (`typeset -i`).
+    fn set_var_integer(&mut self, _name: &str) {}
+
+    /// Set a variable's type to float (`typeset -F`).
+    fn set_var_float(&mut self, _name: &str) {}
+
+    /// Set a variable's type to indexed array (`typeset -a`).
+    fn set_var_array(&mut self, _name: &str) {}
+
+    /// Set a variable's type to associative array (`typeset -A`).
+    fn set_var_associative(&mut self, _name: &str) {}
+}
+
+// ── Builtin action (replaces __FROST_* magic variables) ──────────────
+
+/// Structured actions that builtins can return alongside an exit code.
+///
+/// Replaces the fragile `__FROST_EVAL_CODE`, `__FROST_SOURCE_FILE`,
+/// `__FROST_SHIFT`, `__FROST_SET_POSITIONAL`, `__FROST_LET_EXPR`
+/// magic variables with explicit typed variants.
+#[derive(Debug, Clone)]
+pub enum BuiltinAction {
+    /// No special action — just the exit code.
+    None,
+    /// `eval` — parse and execute this code in the current shell.
+    Eval(String),
+    /// `source` / `.` — read and execute this file.
+    Source(String),
+    /// `shift N` — remove N positional parameters.
+    Shift(usize),
+    /// `set --` — replace positional parameters.
+    SetPositional(Vec<String>),
+    /// `let` — evaluate arithmetic expression.
+    Let(String),
+    /// `alias name=value` — define alias(es).
+    DefineAlias(Vec<(String, String)>),
+    /// `unalias name` — remove alias(es).
+    RemoveAlias(Vec<String>),
+    /// `setopt` — enable options by name.
+    SetOptions(Vec<String>),
+    /// `unsetopt` — disable options by name.
+    UnsetOptions(Vec<String>),
+    /// `exit N` — exit the shell.
+    Exit(i32),
+}
+
+/// Combined result from a builtin execution.
+#[derive(Debug, Clone)]
+pub struct BuiltinResult {
+    pub status: i32,
+    pub action: BuiltinAction,
+}
+
+impl BuiltinResult {
+    /// Simple success with no action.
+    pub fn ok() -> Self {
+        Self { status: 0, action: BuiltinAction::None }
+    }
+
+    /// Simple failure with no action.
+    pub fn fail(status: i32) -> Self {
+        Self { status, action: BuiltinAction::None }
+    }
+
+    /// Result with an action.
+    pub fn with_action(status: i32, action: BuiltinAction) -> Self {
+        Self { status, action }
+    }
 }
 
 // ── Builtin trait ────────────────────────────────────────────────────
@@ -47,6 +135,14 @@ pub trait Builtin: Send + Sync {
     ///
     /// Returns an exit status (0 = success).
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32;
+
+    /// Execute and return a structured result with optional actions.
+    ///
+    /// Default implementation wraps `execute()` for backward compatibility.
+    fn execute_with_action(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> BuiltinResult {
+        let status = self.execute(args, env);
+        BuiltinResult { status, action: BuiltinAction::None }
+    }
 }
 
 // ── Registry ─────────────────────────────────────────────────────────
@@ -139,6 +235,50 @@ pub fn default_builtins() -> BuiltinRegistry {
     reg.register(Box::new(misc::Integer));
     reg.register(Box::new(misc::Float));
     reg.register(Box::new(misc::Readonly));
+    reg.register(Box::new(misc::Setopt));
+    reg.register(Box::new(misc::Unsetopt));
+    reg.register(Box::new(misc::Autoload));
+    reg.register(Box::new(misc::Zmodload));
+    reg.register(Box::new(misc::Functions));
+    reg.register(Box::new(misc::Let));
+    reg.register(Box::new(misc::Printf));
+    reg.register(Box::new(read::Read));
+
+    // Option parsing / signals / hash
+    reg.register(Box::new(getopts::Getopts));
+    reg.register(Box::new(kill::Kill));
+    reg.register(Box::new(hash::Hash));
+
+    // Job control
+    reg.register(Box::new(jobs::Jobs));
+    reg.register(Box::new(jobs::Fg));
+    reg.register(Box::new(jobs::Bg));
+    reg.register(Box::new(jobs::Wait));
+    reg.register(Box::new(jobs::Disown));
+
+    // Directory stack
+    reg.register(Box::new(jobs::Pushd));
+    reg.register(Box::new(jobs::Popd));
+    reg.register(Box::new(jobs::Dirs));
+
+    // Trap / signals
+    reg.register(Box::new(misc::Trap));
+
+    // System
+    reg.register(Box::new(misc::Umask));
+    reg.register(Box::new(misc::Fc));
+    reg.register(Box::new(misc::Noglob));
+    reg.register(Box::new(misc::Emulate));
+    reg.register(Box::new(misc::Disable));
+    reg.register(Box::new(misc::Enable));
+
+    // Completion / ZLE stubs
+    reg.register(Box::new(misc::Compdef));
+    reg.register(Box::new(misc::Compctl));
+    reg.register(Box::new(misc::Zle));
+    reg.register(Box::new(misc::Bindkey));
+    reg.register(Box::new(misc::Zstyle));
+    reg.register(Box::new(misc::Which));
 
     reg
 }
@@ -156,6 +296,14 @@ mod tests {
             "set", "unset", "test", "[", ":", "shift", "type",
             "whence", "command", "builtin", "alias", "unalias",
             "typeset", "local", "declare", "integer", "float", "readonly",
+            "setopt", "unsetopt", "autoload", "zmodload", "functions",
+            "let", "printf", "read",
+            "getopts", "kill", "hash",
+            "jobs", "fg", "bg", "wait", "disown",
+            "pushd", "popd", "dirs",
+            "trap", "umask", "fc", "noglob", "emulate",
+            "disable", "enable",
+            "compdef", "compctl", "zle", "bindkey", "zstyle", "which",
         ] {
             assert!(reg.contains(name), "missing builtin: {name}");
         }

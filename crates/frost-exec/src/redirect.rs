@@ -10,6 +10,7 @@ use std::path::Path;
 use nix::fcntl::OFlag;
 use nix::sys::stat::Mode;
 
+use frost_expand::ExpandEnv;
 use frost_parser::ast::{Redirect, RedirectOp, WordPart};
 
 use crate::sys;
@@ -41,6 +42,113 @@ pub fn apply_redirects(redirects: &[Redirect]) -> Result<(), RedirectError> {
     for redir in redirects {
         apply_one(redir)?;
     }
+    Ok(())
+}
+
+/// Apply redirections with full expansion support.
+///
+/// Uses the expansion engine to resolve redirect targets (supporting
+/// `$var`, `$(cmd)`, tilde, etc. in filenames).
+pub fn apply_redirects_expanded(
+    redirects: &[Redirect],
+    env: &dyn ExpandEnv,
+) -> Result<(), RedirectError> {
+    for redir in redirects {
+        apply_one_expanded(redir, env)?;
+    }
+    Ok(())
+}
+
+fn apply_one_expanded(
+    redir: &Redirect,
+    env: &dyn ExpandEnv,
+) -> Result<(), RedirectError> {
+    let resolve = |word: &frost_parser::ast::Word| -> String {
+        frost_expand::expand_word_to_string(word, env)
+    };
+
+    match redir.op {
+        RedirectOp::Less => {
+            let target_fd = redir.fd.unwrap_or(0) as i32;
+            let path = resolve(&redir.target);
+            let fd = open_file(&path, OFlag::O_RDONLY, Mode::empty())?;
+            dup2_and_close(fd, target_fd)?;
+        }
+        RedirectOp::Greater | RedirectOp::GreaterPipe | RedirectOp::GreaterBang => {
+            let target_fd = redir.fd.unwrap_or(1) as i32;
+            let path = resolve(&redir.target);
+            let fd = open_file(
+                &path,
+                OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
+                Mode::from_bits_truncate(0o666),
+            )?;
+            dup2_and_close(fd, target_fd)?;
+        }
+        RedirectOp::DoubleGreater => {
+            let target_fd = redir.fd.unwrap_or(1) as i32;
+            let path = resolve(&redir.target);
+            let fd = open_file(
+                &path,
+                OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND,
+                Mode::from_bits_truncate(0o666),
+            )?;
+            dup2_and_close(fd, target_fd)?;
+        }
+        RedirectOp::AmpGreater => {
+            let path = resolve(&redir.target);
+            let fd = open_file(
+                &path,
+                OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
+                Mode::from_bits_truncate(0o666),
+            )?;
+            dup2_and_close(fd, 1)?;
+            sys::dup2(1, 2).map_err(RedirectError::Dup2)?;
+        }
+        RedirectOp::AmpDoubleGreater => {
+            let path = resolve(&redir.target);
+            let fd = open_file(
+                &path,
+                OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND,
+                Mode::from_bits_truncate(0o666),
+            )?;
+            dup2_and_close(fd, 1)?;
+            sys::dup2(1, 2).map_err(RedirectError::Dup2)?;
+        }
+        RedirectOp::LessGreater => {
+            let target_fd = redir.fd.unwrap_or(0) as i32;
+            let path = resolve(&redir.target);
+            let fd = open_file(
+                &path,
+                OFlag::O_RDWR | OFlag::O_CREAT,
+                Mode::from_bits_truncate(0o666),
+            )?;
+            dup2_and_close(fd, target_fd)?;
+        }
+        RedirectOp::FdDup => {
+            let target_fd = redir.fd.unwrap_or(1) as i32;
+            let src_text = resolve(&redir.target);
+            if src_text == "-" {
+                sys::close(target_fd).map_err(RedirectError::Close)?;
+            } else {
+                let src_fd: i32 = src_text
+                    .parse()
+                    .map_err(|_| RedirectError::BadFd(src_text))?;
+                sys::dup2(src_fd, target_fd).map_err(RedirectError::Dup2)?;
+            }
+        }
+        RedirectOp::DoubleLess | RedirectOp::DoubleLessDash => {
+            let target_fd = redir.fd.unwrap_or(0) as i32;
+            let body = resolve(&redir.target);
+            apply_herestring_fd(target_fd, &body)?;
+        }
+        RedirectOp::TripleLess => {
+            let target_fd = redir.fd.unwrap_or(0) as i32;
+            let mut body = resolve(&redir.target);
+            body.push('\n');
+            apply_herestring_fd(target_fd, &body)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -128,8 +236,22 @@ fn apply_one(redir: &Redirect) -> Result<(), RedirectError> {
             }
         }
 
-        // Heredoc / herestring — not yet implemented.
-        RedirectOp::DoubleLess | RedirectOp::TripleLess | RedirectOp::DoubleLessDash => {}
+        // Heredoc: << DELIM ... DELIM
+        RedirectOp::DoubleLess | RedirectOp::DoubleLessDash => {
+            let target_fd = redir.fd.unwrap_or(0) as i32;
+            let body = resolve_word(&redir.target);
+            apply_herestring_fd(target_fd, &body)?;
+        }
+
+        // Herestring: <<< word
+        RedirectOp::TripleLess => {
+            let target_fd = redir.fd.unwrap_or(0) as i32;
+            let body = resolve_word(&redir.target);
+            // Herestring appends a newline
+            let mut body_nl = body;
+            body_nl.push('\n');
+            apply_herestring_fd(target_fd, &body_nl)?;
+        }
     }
 
     Ok(())
@@ -148,6 +270,26 @@ fn open_file(path: &str, flags: OFlag, mode: Mode) -> Result<i32, RedirectError>
 /// Dup `fd` onto `target`, then close the original if they differ.
 fn dup2_and_close(fd: i32, target: i32) -> Result<(), RedirectError> {
     sys::dup2_and_close(fd, target).map_err(RedirectError::Dup2)
+}
+
+/// Feed `body` as stdin via a pipe on `target_fd`.
+fn apply_herestring_fd(target_fd: i32, body: &str) -> Result<(), RedirectError> {
+    let p = sys::pipe().map_err(|e| RedirectError::Open {
+        path: "<herestring>".into(),
+        source: e,
+    })?;
+    // Write the body to the pipe
+    let data = body.as_bytes();
+    let mut written = 0;
+    while written < data.len() {
+        match nix::unistd::write(unsafe { std::os::fd::BorrowedFd::borrow_raw(p.write) }, &data[written..]) {
+            Ok(n) => written += n,
+            Err(_) => break,
+        }
+    }
+    sys::close(p.write).ok();
+    dup2_and_close(p.read, target_fd)?;
+    Ok(())
 }
 
 /// Extract a plain string from a [`Word`].

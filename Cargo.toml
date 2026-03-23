@@ -62,6 +62,9 @@ serde_json = "1"
 pretty_assertions = "1"
 insta = { version = "1", features = ["yaml"] }
 
+# Regex
+fancy-regex = "0.14"
+
 # Tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
