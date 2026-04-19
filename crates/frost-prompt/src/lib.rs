@@ -156,6 +156,22 @@ where
             out.push_str(buf.format(env.exit_status));
         }
         '(' => render_conditional(chars, env, out),
+
+        // ── Color + attribute escapes (emit ANSI SGR) ──────────────
+        // These match zsh when the terminal supports colors; we unconditionally
+        // emit because any modern terminal does, and rendering in "plain"
+        // mode would produce something worse than the raw codes.
+        'F' => render_color(chars, out, /*background=*/ false),
+        'K' => render_color(chars, out, /*background=*/ true),
+        'f' => out.push_str("\x1b[39m"),        // default foreground
+        'k' => out.push_str("\x1b[49m"),        // default background
+        'B' => out.push_str("\x1b[1m"),         // bold on
+        'b' => out.push_str("\x1b[22m"),        // bold off
+        'U' => out.push_str("\x1b[4m"),         // underline on
+        'u' => out.push_str("\x1b[24m"),        // underline off
+        'S' => out.push_str("\x1b[7m"),         // standout on (reverse)
+        's' => out.push_str("\x1b[27m"),        // standout off
+
         other => {
             // Unknown escape — pass through literally so the user can see
             // what frost didn't understand.
@@ -163,6 +179,68 @@ where
             out.push(other);
         }
     }
+}
+
+/// Render `%F{color}` or `%K{color}`. Accepts named colors (`red`, `blue`,
+/// `cyan`, …), `black`/`white`, and numeric 256-color indices (`196`,
+/// `231`, …). Missing / malformed `{…}` reverts to the default attribute
+/// without consuming any characters past the `%F` itself.
+fn render_color<I>(chars: &mut std::iter::Peekable<I>, out: &mut String, background: bool)
+where
+    I: Iterator<Item = char>,
+{
+    // Expect `{`; otherwise pass the literal escape through.
+    if chars.peek() != Some(&'{') {
+        out.push('%');
+        out.push(if background { 'K' } else { 'F' });
+        return;
+    }
+    chars.next(); // consume '{'
+    let mut spec = String::new();
+    for c in chars.by_ref() {
+        if c == '}' { break; }
+        spec.push(c);
+    }
+    let code = match color_code(&spec, background) {
+        Some(c) => c,
+        None => return, // silently drop unknown color spec
+    };
+    out.push_str(&code);
+}
+
+fn color_code(name: &str, background: bool) -> Option<String> {
+    // Numeric 256-color index
+    if let Ok(n) = name.parse::<u16>() {
+        if n <= 255 {
+            let lead = if background { "48" } else { "38" };
+            return Some(format!("\x1b[{lead};5;{n}m"));
+        }
+        return None;
+    }
+    // Standard named colors (30–37 fg, 40–47 bg; 90–97 / 100–107 bright)
+    let (base_fg, base_bg) = match name.to_ascii_lowercase().as_str() {
+        "black"         => (30, 40),
+        "red"           => (31, 41),
+        "green"         => (32, 42),
+        "yellow"        => (33, 43),
+        "blue"          => (34, 44),
+        "magenta"       => (35, 45),
+        "cyan"          => (36, 46),
+        "white"         => (37, 47),
+        "default"       => (39, 49),
+        // zsh accepts a leading `bright` for the 90-series bright variants.
+        "bright-black"  | "brightblack"   => (90, 100),
+        "bright-red"    | "brightred"     => (91, 101),
+        "bright-green"  | "brightgreen"   => (92, 102),
+        "bright-yellow" | "brightyellow"  => (93, 103),
+        "bright-blue"   | "brightblue"    => (94, 104),
+        "bright-magenta"| "brightmagenta" => (95, 105),
+        "bright-cyan"   | "brightcyan"    => (96, 106),
+        "bright-white"  | "brightwhite"   => (97, 107),
+        _ => return None,
+    };
+    let code = if background { base_bg } else { base_fg };
+    Some(format!("\x1b[{code}m"))
 }
 
 /// `%(c.TRUE.FALSE)` — render TRUE if predicate `c` holds, else FALSE.
@@ -396,5 +474,35 @@ mod tests {
         let env = PromptEnv::default();
         // `%Z` isn't implemented yet — show the user what we didn't parse.
         assert_eq!(render("%Z", &env, false), "%Z");
+    }
+
+    #[test]
+    fn color_and_attribute_escapes() {
+        let env = PromptEnv::default();
+        // Named colors — foreground + background.
+        assert_eq!(render("%F{red}x%f", &env, false), "\x1b[31mx\x1b[39m");
+        assert_eq!(render("%K{blue}x%k", &env, false), "\x1b[44mx\x1b[49m");
+        // Numeric 256-color.
+        assert_eq!(render("%F{196}!", &env, false), "\x1b[38;5;196m!");
+        // Bright variants.
+        assert_eq!(render("%F{bright-cyan}/", &env, false), "\x1b[96m/");
+        // Attribute toggles.
+        assert_eq!(render("%B bold %b", &env, false), "\x1b[1m bold \x1b[22m");
+        assert_eq!(render("%U link %u", &env, false), "\x1b[4m link \x1b[24m");
+    }
+
+    #[test]
+    fn unknown_color_name_silently_drops() {
+        let env = PromptEnv::default();
+        // Malformed or unrecognized color is dropped — the surrounding text
+        // still renders. Better than injecting broken SGR into the prompt.
+        assert_eq!(render("%F{not-a-color}x%f", &env, false), "x\x1b[39m");
+    }
+
+    #[test]
+    fn color_without_brace_is_literal_escape() {
+        let env = PromptEnv::default();
+        // `%F` without `{...}` just passes through.
+        assert_eq!(render("%Fhi", &env, false), "%Fhi");
     }
 }
