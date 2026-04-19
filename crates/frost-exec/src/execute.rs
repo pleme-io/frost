@@ -1073,7 +1073,22 @@ impl<'env> Executor<'env> {
             return Ok(status);
         }
 
-        // External command: fork + exec
+        // External command: fork + exec. Pre-check PATH resolution
+        // so we can surface "command not found" as a structured
+        // error (the REPL then prints a "did you mean: …" hint)
+        // rather than letting the child's exec-time ENOENT through.
+        //
+        // Absolute/explicit paths (starting with `/`, `./`, `../`)
+        // bypass the lookup — fork_exec's own ENOENT handling will
+        // catch "bad path" cases there, which is semantically
+        // distinct from "PATH has no such name".
+        let name = &argv[0];
+        let looks_like_path = name.starts_with('/')
+            || name.starts_with("./")
+            || name.starts_with("../");
+        if !looks_like_path && path_lookup(&self.env, name).is_none() {
+            return Err(ExecError::CommandNotFound(name.clone()));
+        }
         self.fork_exec(&argv, &cmd.redirects)
     }
 
@@ -1348,6 +1363,31 @@ impl Drop for ProcSubFdGuard {
 ///   apply to the next word too (`alias sudo='sudo '` ⇒ `sudo ll` expands
 ///   both); implementing that precisely requires carrying a flag through
 ///   recursion and is deferred for a follow-up.
+/// PATH lookup for a bare command name. Returns the resolved
+/// absolute path on success; None when not found / not executable.
+/// Used by `execute_simple` to surface [`ExecError::CommandNotFound`]
+/// as a structured error before forking (so the REPL can
+/// "did-you-mean"-suggest rather than letting a child's ENOENT
+/// print `frost: <name>: ENOENT`).
+fn path_lookup(env: &ShellEnv, name: &str) -> Option<std::path::PathBuf> {
+    let path = env.get_var("PATH")?;
+    for dir in path.split(':').filter(|p| !p.is_empty()) {
+        let candidate = std::path::Path::new(dir).join(name);
+        if let Ok(meta) = std::fs::metadata(&candidate) {
+            if !meta.is_file() { continue; }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if meta.permissions().mode() & 0o111 == 0 {
+                    continue;
+                }
+            }
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 fn expand_aliases(mut argv: Vec<String>, aliases: &std::collections::HashMap<String, String>) -> Vec<String> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for _ in 0..16 {
