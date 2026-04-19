@@ -42,6 +42,7 @@ mod path;
 mod picker;
 mod prompt;
 mod source;
+mod theme;
 mod trap;
 
 pub use abbr::{expand_abbreviation, AbbrSpec};
@@ -58,6 +59,7 @@ pub use path::{apply_path, expand_vars, PathSpec};
 pub use picker::{is_valid_action, picker_sentinel, PickerSpec, VALID_ACTIONS};
 pub use prompt::PromptSpec;
 pub use source::SourceSpec;
+pub use theme::{merge_theme, nord_default, ThemeSpec};
 pub use trap::TrapSpec;
 
 use frost_exec::ShellEnv;
@@ -151,6 +153,12 @@ pub struct ApplySummary {
     /// echoed) before exec — like `!`-expansion. Unlike aliases
     /// (hidden), this is visible in terminal output + history.
     pub abbreviations: std::collections::HashMap<String, String>,
+
+    /// Merged theme from every `(deftheme …)` form applied, overlaid
+    /// on the built-in Nord default. Downstream consumers (frost-zle
+    /// highlighter / hinter / broken-path coloring) read from here
+    /// so color changes are a one-form edit instead of a Rust patch.
+    pub theme: ThemeSpec,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -172,7 +180,10 @@ fn apply_source_with_context(
     rc_dir: Option<&std::path::Path>,
     visited: &mut std::collections::HashSet<std::path::PathBuf>,
 ) -> LispResult<ApplySummary> {
-    let mut summary = ApplySummary::default();
+    let mut summary = ApplySummary {
+        theme: nord_default(),
+        ..Default::default()
+    };
 
     // ─── Sourced files (first — their forms fold into the outer pass) ─
     // Sourcing happens ahead of every primitive pass so that later
@@ -554,6 +565,17 @@ fn apply_source_with_context(
         summary.abbreviations.insert(a.name, a.expansion);
     }
 
+    // Theme overlays — each `(deftheme …)` form merges onto the
+    // cumulative theme (Nord base at init). Partial specs work:
+    // only the slots the user names override; everything else stays
+    // at the prior value. Multiple forms compose left-to-right in
+    // source order.
+    let themes: Vec<ThemeSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for t in themes {
+        summary.theme = merge_theme(std::mem::take(&mut summary.theme), t);
+    }
+
     Ok(summary)
 }
 
@@ -587,6 +609,11 @@ fn merge_summary(dst: &mut ApplySummary, src: ApplySummary) {
     dst.flags.extend(src.flags);
     dst.positionals.extend(src.positionals);
     dst.abbreviations.extend(src.abbreviations);
+    // Theme: overlay the sourced file's theme onto the outer one.
+    // Outer forms still win (`apply_source_with_context` runs the
+    // outer file's `deftheme` passes AFTER this merge), consistent
+    // with last-writer-wins.
+    dst.theme = theme::merge_theme(std::mem::take(&mut dst.theme), src.theme);
 }
 
 /// Resolve a `(defsource :path …)` string against the sourcing file's
@@ -989,6 +1016,46 @@ mod tests {
             apply_source(src, &mut env),
             Err(LispError::UnknownPickerAction(_))
         ));
+    }
+
+    #[test]
+    fn apply_deftheme_merges_onto_nord_default() {
+        let mut env = ShellEnv::new();
+        // r##"..."## so the embedded "#FFFFFF" doesn't close the raw
+        // string on its first `"#` sequence.
+        let src = r##"
+            (deftheme :name "my-custom"
+                      :hint "#FFFFFF"
+                      :command "#00FF00")
+        "##;
+        let s = apply_source(src, &mut env).unwrap();
+        // Overlay fields applied.
+        assert_eq!(s.theme.name.as_deref(), Some("my-custom"));
+        assert_eq!(s.theme.hint.as_deref(), Some("#FFFFFF"));
+        assert_eq!(s.theme.command.as_deref(), Some("#00FF00"));
+        // Non-overlaid fields retain Nord defaults.
+        assert_eq!(s.theme.unknown_command.as_deref(), Some("#EBCB8B"));
+        assert_eq!(s.theme.string.as_deref(), Some("#88C0D0"));
+    }
+
+    #[test]
+    fn apply_empty_rc_yields_pure_nord_theme() {
+        let mut env = ShellEnv::new();
+        let s = apply_source("", &mut env).unwrap();
+        let nord = nord_default();
+        assert_eq!(s.theme, nord);
+    }
+
+    #[test]
+    fn apply_multiple_deftheme_forms_compose_left_to_right() {
+        let mut env = ShellEnv::new();
+        let src = r##"
+            (deftheme :hint "#111111")
+            (deftheme :hint "#222222" :command "#333333")
+        "##;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.theme.hint.as_deref(), Some("#222222"));
+        assert_eq!(s.theme.command.as_deref(), Some("#333333"));
     }
 
     #[test]
