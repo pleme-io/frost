@@ -507,6 +507,7 @@ dependencies = [
 name = "frost-complete"
 version = "0.1.0"
 dependencies = [
+ "frost-lisp",
  "frost-options",
  "frost-zle",
  "insta",

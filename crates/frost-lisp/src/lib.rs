@@ -30,6 +30,7 @@
 
 mod alias;
 mod bind;
+mod compcomp;
 mod completion;
 mod env;
 mod function;
@@ -42,6 +43,7 @@ mod trap;
 
 pub use alias::AliasSpec;
 pub use bind::{bind_function_name, BindSpec};
+pub use compcomp::{FlagSpec, PositSpec, SubcmdSpec, ValueKind};
 pub use completion::CompletionSpec;
 pub use env::EnvSpec;
 pub use function::FunctionSpec;
@@ -115,6 +117,14 @@ pub struct ApplySummary {
     /// mutates `env.PATH` in place so there's no other side-channel
     /// for consumers; this field is informational only.
     pub path_ops: usize,
+
+    /// Subcommand registrations from `(defsubcmd …)` — consumed by
+    /// frost-complete to build the rich completion tree.
+    pub subcmds: Vec<SubcmdSpec>,
+    /// Flag registrations from `(defflag …)`.
+    pub flags: Vec<FlagSpec>,
+    /// Positional registrations from `(defposit …)`.
+    pub positionals: Vec<PositSpec>,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -319,6 +329,22 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
         }
         summary.completions += 1;
     }
+
+    // Rich completion tree — three flat forms that the REPL joins into
+    // a dotted-path tree. Each spec is independent: users can mix
+    // `(defcompletion …)` (flat args) with `(defsubcmd …)` /
+    // `(defflag …)` / `(defposit …)` (rich tree) in the same rc, and
+    // everything composes — frost-complete consults both the flat map
+    // and the tree, preferring tree-aware candidates when they match.
+    let subcmds: Vec<SubcmdSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    summary.subcmds = subcmds;
+    let flags: Vec<FlagSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    summary.flags = flags;
+    let positionals: Vec<PositSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    summary.positionals = positionals;
 
     // Pickers — each spec registers a reedline keybinding that fires a
     // `__frost_picker_<name>__` sentinel straight into the REPL. Unlike
@@ -714,6 +740,34 @@ mod tests {
             apply_source(src, &mut env),
             Err(LispError::UnknownPickerAction(_))
         ));
+    }
+
+    #[test]
+    fn apply_rich_completion_forms_collect_into_summary() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defsubcmd :path "git" :name "commit" :description "record changes")
+            (defsubcmd :path "git" :name "checkout" :description "switch branches")
+            (defflag   :path "git.commit" :name "-m" :takes "string"
+                       :description "commit message")
+            (defflag   :path "git.commit" :name "--amend"
+                       :description "replace last commit")
+            (defposit  :path "git.commit" :index 1 :takes "files"
+                       :description "paths to commit")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.subcmds.len(), 2);
+        assert_eq!(s.flags.len(), 2);
+        assert_eq!(s.positionals.len(), 1);
+        // Spot-check one of each.
+        let commit = s.subcmds.iter().find(|c| c.name == "commit").unwrap();
+        assert_eq!(commit.path, "git");
+        assert_eq!(commit.description.as_deref(), Some("record changes"));
+        let m = s.flags.iter().find(|f| f.name == "-m").unwrap();
+        assert_eq!(m.path, "git.commit");
+        assert_eq!(m.takes.as_deref(), Some("string"));
+        assert_eq!(s.positionals[0].index, 1);
+        assert_eq!(s.positionals[0].takes.as_deref(), Some("files"));
     }
 
     #[test]

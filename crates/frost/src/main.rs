@@ -381,6 +381,9 @@ fn interactive(
     rc_binds: Vec<(String, String)>,
     rc_descriptions: std::collections::HashMap<String, String>,
     rc_pickers: Vec<frost_lisp::PickerSpec>,
+    rc_subcmds: Vec<frost_lisp::SubcmdSpec>,
+    rc_flags: Vec<frost_lisp::FlagSpec>,
+    rc_positionals: Vec<frost_lisp::PositSpec>,
 ) {
     // Ignore SIGINT in the shell process itself; reedline handles Ctrl-C
     // by aborting the current line buffer, not killing frost.
@@ -400,7 +403,8 @@ fn interactive(
     let completer = Box::new(
         frost_complete::FrostCompleter::with_default_builtins()
             .with_arg_completions(rc_completions.clone())
-            .with_descriptions(rc_descriptions),
+            .with_descriptions(rc_descriptions)
+            .with_rich_completions(&rc_subcmds, &rc_flags, &rc_positionals),
     );
     // Highlighter's "is this a known command?" lookup needs a union of
     // builtins + rc-declared aliases/functions + rc-declared completion
@@ -596,7 +600,7 @@ fn main() {
     // functions. Missing file is not an error; parse/apply errors print
     // a warning so frost still starts even if the rc has a bug.
     let rc_path = frost_lisp::default_rc_path();
-    let (rc_completions, rc_binds, rc_descriptions, rc_pickers) =
+    let (rc_completions, rc_binds, rc_descriptions, rc_pickers, rc_subcmds, rc_flags, rc_positionals) =
         match frost_lisp::load_rc(&rc_path, &mut env) {
             Ok(summary) => {
                 if summary != frost_lisp::ApplySummary::default() {
@@ -611,6 +615,9 @@ fn main() {
                     summary.bind_map,
                     summary.completion_descriptions,
                     summary.pickers,
+                    summary.subcmds,
+                    summary.flags,
+                    summary.positionals,
                 )
             }
             Err(e) => {
@@ -619,6 +626,9 @@ fn main() {
                     std::collections::HashMap::new(),
                     Vec::new(),
                     std::collections::HashMap::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
                     Vec::new(),
                 )
             }
@@ -635,7 +645,16 @@ fn main() {
             }
         }
     } else if std::io::stdin().is_terminal() {
-        interactive(&mut env, rc_completions, rc_binds, rc_descriptions, rc_pickers);
+        interactive(
+            &mut env,
+            rc_completions,
+            rc_binds,
+            rc_descriptions,
+            rc_pickers,
+            rc_subcmds,
+            rc_flags,
+            rc_positionals,
+        );
         0
     } else {
         // Non-interactive stdin (e.g., `frost < script.sh`) — slurp it.
