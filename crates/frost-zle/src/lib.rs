@@ -30,7 +30,7 @@ use reedline::{
 use nu_ansi_term::{Color, Style};
 
 mod highlight;
-pub use highlight::FrostHighlighter;
+pub use highlight::{parse_hex_style, FrostHighlighter, Palette, PaletteSlots};
 
 // Re-export so downstream crates can write completers without adding a
 // direct `reedline` dep.
@@ -204,16 +204,18 @@ impl ZleEngine {
 
     /// Install a history-backed hinter. Fish's ghost-text UX: after
     /// you type a prefix that matches a past command, reedline shows
-    /// the remainder of that command in a dim-grey overlay. Accept
+    /// the remainder of that command in a colored overlay. Accept
     /// with → (right-arrow) or Ctrl-E.
     ///
-    /// Convenience — installs [`reedline::DefaultHinter`] with the
-    /// Nord-adjacent dim-grey styling frostmourne uses elsewhere. For
-    /// a custom hinter (e.g. completing from a frecency db or live
-    /// command registry) use [`Self::with_hinter`] directly.
-    pub fn with_history_hints(mut self) -> Self {
+    /// `hint_color` accepts a `#RRGGBB` / `#RGB` hex or `None` to use
+    /// the Nord dim-grey default. Typically fed from rc-loaded
+    /// `(deftheme :hint "...")`.
+    pub fn with_history_hints(mut self, hint_color: Option<&str>) -> Self {
+        let style = hint_color
+            .and_then(crate::highlight::parse_hex_style)
+            .unwrap_or_else(|| Style::new().fg(Color::Fixed(244))); // Nord polar-night-4
         let hinter = DefaultHinter::default()
-            .with_style(Style::new().fg(Color::Fixed(244))) // Nord polar-night-4
+            .with_style(style)
             .with_min_chars(1);
         self.inner = std::mem::replace(&mut self.inner, Reedline::create())
             .with_hinter(Box::new(hinter));
