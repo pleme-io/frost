@@ -10,6 +10,7 @@ description = "Zsh completion system"
 
 [dependencies]
 frost-zle = { workspace = true }
+frost-lisp = { workspace = true }
 frost-options = { workspace = true }
 thiserror = { workspace = true }
 reedline = "0.42"
