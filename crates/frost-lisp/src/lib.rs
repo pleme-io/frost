@@ -168,14 +168,29 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
         }
     }
 
-    // Hooks — each stored under a well-known function name the REPL checks.
+    // Hooks — each stored under a well-known function name the REPL
+    // checks. Multiple `(defhook :event "precmd" …)` forms compose —
+    // later bodies append to earlier ones separated by newlines, so
+    // frostmourne's tool-integration files can each register a chpwd
+    // hook without stepping on the base prompt-info hook.
     let hooks: Vec<HookSpec> =
         tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let mut hook_bodies: std::collections::HashMap<&'static str, String> =
+        std::collections::HashMap::new();
     for h in hooks {
         let fn_name = hook_function_name(&h.event)
             .ok_or_else(|| LispError::UnknownHook(h.event.clone()))?;
-        install_body_as_function(env, fn_name, &h.body);
+        hook_bodies
+            .entry(fn_name)
+            .and_modify(|existing| {
+                existing.push('\n');
+                existing.push_str(&h.body);
+            })
+            .or_insert_with(|| h.body.clone());
         summary.hooks += 1;
+    }
+    for (fn_name, body) in hook_bodies {
+        install_body_as_function(env, fn_name, &body);
     }
 
     // Signal traps — validate the signal name, then register the body as
@@ -404,6 +419,26 @@ mod tests {
         assert!(env.functions.contains_key(
             hook_function_name("precmd").unwrap()
         ));
+    }
+
+    #[test]
+    fn multiple_hooks_for_same_event_compose() {
+        // Two chpwd registrations (e.g. one from the base rc, one from a
+        // zoxide integration file). Both bodies should execute — not just
+        // the last-registered. frostmourne's multi-rc layout relies on
+        // this composition.
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defhook :event "chpwd" :body "echo first")
+            (defhook :event "chpwd" :body "echo second")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.hooks, 2);
+        // The stored function body should mention both.
+        let fn_def = env.functions.get("__frost_hook_chpwd").expect("chpwd registered");
+        let rendered = format!("{:?}", fn_def.body);
+        assert!(rendered.contains("first"), "first body missing: {rendered}");
+        assert!(rendered.contains("second"), "second body missing: {rendered}");
     }
 
     #[test]
