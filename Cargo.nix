@@ -2174,6 +2174,10 @@ rec {
         ];
         dependencies = [
           {
+            name = "frost-lexer";
+            packageId = "frost-lexer";
+          }
+          {
             name = "frost-options";
             packageId = "frost-options";
           }
@@ -2181,6 +2185,10 @@ rec {
             name = "nix";
             packageId = "nix";
             features = [ "signal" "process" "fs" "term" ];
+          }
+          {
+            name = "nu-ansi-term";
+            packageId = "nu-ansi-term";
           }
           {
             name = "reedline";
