@@ -127,149 +127,81 @@ enum PickerOutcome {
     Splice { text: String, submit: bool },
 }
 
-/// Run `sk` (skim) with `stdin_lines` on stdin, and return the selected
-/// line trimmed. Returns `None` on cancel (Esc/Ctrl-C), missing binary,
-/// or empty selection. Fully inline — skim draws into the bottom N% of
-/// the terminal, reedline has already exited raw mode on its way out.
+/// Spawn a pleme-io/skim-tab picker binary and return its stdout trimmed
+/// of trailing whitespace. Returns `None` when:
 ///
-/// Non-fatal everywhere: pickers that can't find input sources (no
-/// HISTFILE, no `fd`, no `rg`) just return `None` — the user gets an
-/// empty prompt back, they move on.
-fn run_skim(stdin_lines: &str, extra_args: &[&str]) -> Option<String> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
+///   * the binary isn't on `$PATH` (host lacks the skim-tab package — a
+///     bare `frost` install without `frostmourne` hits this),
+///   * the picker exited non-zero (user cancelled with Esc / Ctrl-C,
+///     which skim maps to a non-success exit),
+///   * the selection is empty / whitespace.
+///
+/// `extra_env` lets callers override the binary's environment — the
+/// history picker needs `HISTFILE` pointed at the frost history file,
+/// not `~/.zsh_history` which skim-history defaults to.
+///
+/// Every skim-tab binary honors the same protocol: stdout is the
+/// selection (plain for most, shell-quoted for path-producing ones like
+/// skim-cd). We pass through verbatim because the REPL's consumer
+/// (`inject_prefill` / `run`) treats the result as shell input — exactly
+/// what a shell-quoted path expects.
+fn run_skim_tab_picker(bin: &str, extra_env: &[(&str, String)]) -> Option<String> {
+    use std::process::Command;
 
-    // SKIM_DEFAULT_OPTIONS from rc is honored by sk automatically — we
-    // only append explicit flags the widget needs (prompt label, tiebreak).
-    let mut child = Command::new("sk")
-        .args(extra_args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .ok()?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(stdin_lines.as_bytes());
+    // stdin stays inherited — the skim-tab binaries own their data
+    // source (read HISTFILE, run fd, run rg, query zoxide, etc.) and
+    // drive the terminal directly. We just fork and wait.
+    let mut cmd = Command::new(bin);
+    for (k, v) in extra_env {
+        cmd.env(k, v);
     }
-
-    let output = child.wait_with_output().ok()?;
-    // sk exits non-zero on cancel — treat as no-op.
+    let output = cmd.output().ok()?;
     if !output.status.success() { return None; }
     let selection = String::from_utf8(output.stdout).ok()?;
     let trimmed = selection.trim();
     if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
 }
 
-/// Read `history_path`, newest first, dropping blanks and adjacent dupes —
-/// the natural order for a Ctrl-R picker.
-fn read_history_newest_first(history_path: &std::path::Path) -> Option<String> {
-    let raw = std::fs::read_to_string(history_path).ok()?;
-    let mut seen_prev: Option<&str> = None;
-    let mut out: Vec<&str> = Vec::new();
-    for line in raw.lines().rev() {
-        if line.is_empty() { continue; }
-        if Some(line) == seen_prev { continue; }
-        out.push(line);
-        seen_prev = Some(line);
-    }
-    if out.is_empty() { None } else { Some(out.join("\n")) }
-}
-
-/// History picker: fuzzy over `$HISTFILE`, replaces buffer.
+/// History picker → `skim-history`. Reads `$HISTFILE` (we override with
+/// frost's path so zsh/frost histories don't cross-pollinate) and lets
+/// the picker dedupe + present. Selection replaces the edit buffer;
+/// user reviews and hits Enter.
 fn picker_history(history_path: &std::path::Path) -> PickerOutcome {
-    let Some(lines) = read_history_newest_first(history_path) else {
-        return PickerOutcome::Nothing;
-    };
-    match run_skim(&lines, &["--no-sort", "--tiebreak=end", "--prompt=history > "]) {
+    let hist = history_path.to_string_lossy().into_owned();
+    match run_skim_tab_picker("skim-history", &[("HISTFILE", hist)]) {
         Some(sel) => PickerOutcome::Splice { text: sel, submit: false },
         None => PickerOutcome::Nothing,
     }
 }
 
-/// Files picker: fuzzy over `fd` output, appends to buffer.
-/// Falls back gracefully if `fd` is missing (returns Nothing).
+/// Files picker → `skim-files`. Runs `fd` under the hood and presents
+/// via skim with file preview. Selection appends to the edit buffer.
 fn picker_files() -> PickerOutcome {
-    use std::process::{Command, Stdio};
-    let fd_out = Command::new("fd")
-        .args(["--type", "f", "--hidden", "--follow", "--exclude", ".git"])
-        .stdout(Stdio::piped())
-        .output()
-        .ok();
-    let Some(out) = fd_out else { return PickerOutcome::Nothing; };
-    if !out.status.success() { return PickerOutcome::Nothing; }
-    let Ok(listing) = String::from_utf8(out.stdout) else {
-        return PickerOutcome::Nothing;
-    };
-    if listing.trim().is_empty() { return PickerOutcome::Nothing; }
-    match run_skim(&listing, &["--prompt=files > "]) {
+    match run_skim_tab_picker("skim-files", &[]) {
         Some(sel) => PickerOutcome::Splice { text: sel, submit: false },
         None => PickerOutcome::Nothing,
     }
 }
 
-/// cd picker: fuzzy over directories, becomes `cd <dir>` and auto-submits.
+/// cd picker → `skim-cd`. Runs `fd -t d` with eza tree preview;
+/// selection becomes `cd <dir>` and auto-submits. Output is
+/// shell-quoted by the picker so paths with spaces survive.
 fn picker_cd() -> PickerOutcome {
-    use std::process::{Command, Stdio};
-    let fd_out = Command::new("fd")
-        .args(["--type", "d", "--hidden", "--follow", "--exclude", ".git"])
-        .stdout(Stdio::piped())
-        .output()
-        .ok();
-    let Some(out) = fd_out else { return PickerOutcome::Nothing; };
-    if !out.status.success() { return PickerOutcome::Nothing; }
-    let Ok(listing) = String::from_utf8(out.stdout) else {
-        return PickerOutcome::Nothing;
-    };
-    if listing.trim().is_empty() { return PickerOutcome::Nothing; }
-    match run_skim(&listing, &["--prompt=cd > "]) {
+    match run_skim_tab_picker("skim-cd", &[]) {
         Some(sel) => PickerOutcome::Splice { text: format!("cd {sel}"), submit: true },
         None => PickerOutcome::Nothing,
     }
 }
 
-/// Content picker: pipe `rg` through `sk`. `rg`'s `--ansi`-compatible
-/// output (`path:line:col:content`) is fuzzy-matched; the selection is
-/// parsed back into `vim path +line` and auto-submitted. If `rg` isn't
-/// on PATH, the widget is a no-op.
+/// Content picker → `skim-content`. The picker emits a full
+/// `$EDITOR`-ready command on selection (path + line), which we
+/// auto-submit as-is. No post-processing here — the skim-tab binary
+/// already constructed the right command.
 fn picker_content() -> PickerOutcome {
-    use std::process::{Command, Stdio};
-    // sk's `--interactive` mode would make this a live-grep UI, but
-    // reedline has already yielded the terminal and spawning sk in
-    // interactive-mode with an executable-query is fragile cross-shell.
-    // The simpler "rg once, sk over results" is fast enough for most
-    // repos and has no surprises.
-    let rg_out = Command::new("rg")
-        .args(["--line-number", "--color=never", "--no-heading", "--with-filename", ""])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .ok();
-    let Some(out) = rg_out else { return PickerOutcome::Nothing; };
-    if !out.status.success() { return PickerOutcome::Nothing; }
-    let Ok(listing) = String::from_utf8(out.stdout) else {
-        return PickerOutcome::Nothing;
-    };
-    if listing.trim().is_empty() { return PickerOutcome::Nothing; }
-    let Some(sel) = run_skim(&listing, &["--prompt=content > "]) else {
-        return PickerOutcome::Nothing;
-    };
-    // sel is like "src/foo.rs:42:  let x = …". Pull out path + line.
-    let mut parts = sel.splitn(3, ':');
-    let path = parts.next().unwrap_or("").trim();
-    let line = parts.next().unwrap_or("").trim();
-    if path.is_empty() {
-        return PickerOutcome::Nothing;
+    match run_skim_tab_picker("skim-content", &[]) {
+        Some(sel) => PickerOutcome::Splice { text: sel, submit: true },
+        None => PickerOutcome::Nothing,
     }
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-    let cmd = if line.is_empty() {
-        format!("{editor} {path}")
-    } else {
-        // vim / nvim accept `+LINE`; most editors accept it as a positional
-        // or ignore it harmlessly. For non-vim editors, users can rebind.
-        format!("{editor} +{line} {path}")
-    };
-    PickerOutcome::Splice { text: cmd, submit: true }
 }
 
 /// Dispatch a picker sentinel. Returns `Some` if the sentinel matched,
