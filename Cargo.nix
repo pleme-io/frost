@@ -1611,6 +1611,10 @@ rec {
             name = "frost-compat";
             packageId = "frost-compat";
           }
+          {
+            name = "reedline";
+            packageId = "reedline";
+          }
         ];
 
       };

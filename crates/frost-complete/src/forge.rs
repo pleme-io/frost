@@ -51,14 +51,24 @@ pub struct ForgeOutput {
 
 impl ForgeOutput {
     /// Cheap bookkeeping: sort each vec by path+name so repeated
-    /// generations over the same input produce byte-identical output.
+    /// generations over the same input produce byte-identical
+    /// output, and dedup exact duplicates. Dedup collapses the
+    /// common fish-file pattern where a single `-n 'guard'` line
+    /// emits the same flag under multiple paths (we've already
+    /// attributed each to its guard-derived path), and also the
+    /// repeat-within-file case where the same flag is listed twice.
     pub fn sort(&mut self) {
         self.subcmds.sort_by(|a, b| (a.path.as_str(), a.name.as_str())
             .cmp(&(b.path.as_str(), b.name.as_str())));
+        self.subcmds.dedup_by(|a, b| a.path == b.path && a.name == b.name);
+
         self.flags.sort_by(|a, b| (a.path.as_str(), a.name.as_str())
             .cmp(&(b.path.as_str(), b.name.as_str())));
+        self.flags.dedup_by(|a, b| a.path == b.path && a.name == b.name);
+
         self.positionals.sort_by(|a, b| (a.path.as_str(), a.index)
             .cmp(&(b.path.as_str(), b.index)));
+        self.positionals.dedup_by(|a, b| a.path == b.path && a.index == b.index);
     }
 }
 
