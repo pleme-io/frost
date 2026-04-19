@@ -82,6 +82,27 @@
       packages = {
         default = frost;
         inherit frost;
+
+        blfrost = pkgs.writeShellScriptBin "blfrost" ''
+          export FROST_DIR=''${FROST_DIR:-${frost}/share/frost}
+          exec ${frost}/bin/frost "$@"
+        '';
+
+        frost-verify = pkgs.rustPlatform.buildRustPackage {
+          pname = "frost-verify";
+          version = "0.1.0";
+          src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = darwinBuildInputs;
+          cargoBuildFlags = [ "-p" "frost-verify" ];
+          meta = with pkgs.lib; {
+            description = "Verify shell configuration loading order and integrity";
+            homepage = "https://github.com/pleme-io/frost";
+            license = licenses.mit;
+            mainProgram = "frost-verify";
+          };
+        };
       };
 
       apps = {
@@ -113,6 +134,20 @@
           echo "=== frost: cargo fmt --check ==="
           cargo fmt --check --all 2>&1
           echo "✓ formatting ok"
+        '';
+
+        # nix run .#verify — verify shell config load order + content hashes
+        verify = mkApp "verify" ''
+          set -euo pipefail
+          if command -v frost-verify >/dev/null 2>&1; then
+            frost-verify --verbose "$@"
+          elif [ -f target/debug/frost-verify ]; then
+            target/debug/frost-verify --verbose "$@"
+          else
+            echo "building frost-verify..."
+            cargo build -p frost-verify 2>/dev/null
+            target/debug/frost-verify --verbose "$@"
+          fi
         '';
 
         # nix run .#compat — run zsh compatibility test suite
