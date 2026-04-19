@@ -8,8 +8,18 @@ use tatara_lisp::DeriveTataraDomain;
 /// the supported `%…` escapes). `prompt-subst` toggles the `PROMPT_SUBST`
 /// shell option so `$VAR` expansion in the template is also applied.
 ///
+/// `command` delegates the prompt to an external binary — the rc-load
+/// layer synthesizes a `precmd` hook that runs `$(command)` and assigns
+/// the output to `PS1` on every prompt. Clean integration point for
+/// starship / oh-my-posh / any-prompt-generator without needing a
+/// tool-specific form.
+///
 /// ```lisp
+/// ;; A literal PS1 template.
 /// (defprompt :ps1 "%F{green}%n%f@%F{blue}%m%f %~ %# " :ps2 "> " :prompt-subst #t)
+///
+/// ;; Delegate to starship.
+/// (defprompt :command "starship prompt --status=$?")
 /// ```
 #[derive(DeriveTataraDomain, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
@@ -23,4 +33,10 @@ pub struct PromptSpec {
     /// expands. Defaults to unchanged (None).
     #[serde(default)]
     pub prompt_subst: Option<bool>,
+    /// Shell command whose stdout becomes `PS1` each prompt. When set,
+    /// the rc loader synthesizes a `precmd` hook that captures the
+    /// command's output. If `ps1` is also set, the `command`-driven
+    /// hook wins (it's the later writer).
+    #[serde(default)]
+    pub command: Option<String>,
 }

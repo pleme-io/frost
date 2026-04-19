@@ -179,6 +179,18 @@ impl ZleEngine {
         self.inner = taken.with_edit_mode(boxed);
     }
 
+    /// Snapshot of the current edit buffer. Returns what the user has
+    /// typed so far — useful when an ExecuteHostCommand sentinel fires
+    /// mid-line and the caller wants to pre-seed an external picker
+    /// (e.g., `skim-history --query "$LBUFFER"`). Returns `None` when
+    /// the buffer is empty so callers can skip the `--query` flag
+    /// entirely rather than passing an empty string that some pickers
+    /// interpret as "match nothing".
+    pub fn current_buffer_contents(&self) -> Option<String> {
+        let s = self.inner.current_buffer_contents();
+        if s.is_empty() { None } else { Some(s.to_string()) }
+    }
+
     /// Clear the edit buffer and seed it with `text`. On the NEXT
     /// [`ZleEngine::read_line`] call, the user will see the prompt with
     /// `text` already inserted at the cursor, ready to edit or submit.

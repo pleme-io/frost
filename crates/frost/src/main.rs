@@ -73,30 +73,23 @@ struct Cli {
 
 // ─── Host-command sentinels (skim-backed pickers) ─────────────────────────
 //
-// rc files bind keys to `ExecuteHostCommand("__frost_picker_*__")` sentinels
-// that the REPL intercepts rather than executing as commands. Each sentinel
-// names a terminal-takeover widget (history, files, cd, content) that runs
-// `sk` (skim, the Rust fuzzy finder) and splices the selection back into
-// the edit buffer via [`ZleEngine::inject_prefill`].
+// rc files declare picker widgets with `(defpicker …)`. Each spec — name,
+// key, binary, action — becomes a reedline keybinding whose
+// `ExecuteHostCommand` payload is the sentinel `__frost_picker_<name>__`
+// (see `frost_lisp::picker_sentinel`). The REPL intercepts the sentinel
+// before parse/exec and dispatches to the binary with the selection-
+// consumption semantics the spec declared.
 //
-// This mirrors `blackmatter-shell`'s `skim-*` ZLE widgets — keeping
-// frostmourne's UX in parity with blzsh while owning the glue in Rust
-// instead of zsh. Binding names (C-r, C-t, M-c, C-f) are frostmourne
-// convention, authored in `lisp/61-tools-skim.lisp`.
-//
-// Naming: `__frost_picker_<kind>__`. Single-word (no metachars) so
-// `ExecuteHostCommand` round-trips through the shell parser cleanly.
+// Nothing about which pickers exist is hardcoded in frost — the
+// dispatch table is built from `ApplySummary::pickers` at rc-load.
+// Users can add custom pickers (`defpicker :name "tags" :binary
+// "skim-tags" …`) from `~/.frostrc.lisp` without touching Rust.
 
-/// Ctrl-R: fuzzy over `$HISTFILE`. Selection replaces the buffer.
-const PICKER_HISTORY_SENTINEL: &str = "__frost_picker_history__";
-/// Ctrl-T: fuzzy over files via `fd`. Selection appends to buffer at cursor.
-const PICKER_FILES_SENTINEL: &str = "__frost_picker_files__";
-/// Alt-C (M-c): fuzzy over directories via `fd -t d`. Selection becomes
-/// `cd <dir>` and auto-submits.
-const PICKER_CD_SENTINEL: &str = "__frost_picker_cd__";
-/// Ctrl-F: content search via `rg`. Selection becomes the command and
-/// auto-submits — useful for "find this error, run it" workflows.
-const PICKER_CONTENT_SENTINEL: &str = "__frost_picker_content__";
+/// Sentinel prefix used by `frost_lisp::picker_sentinel` — factored out
+/// here so the REPL can cheaply pre-filter "is this even a picker
+/// invocation?" before the O(N) spec lookup.
+const PICKER_SENTINEL_PREFIX: &str = "__frost_picker_";
+const PICKER_SENTINEL_SUFFIX: &str = "__";
 
 /// What to do with the picker's selection once the user hits Enter on it.
 #[derive(Debug, Clone, Copy)]
@@ -136,6 +129,12 @@ enum PickerOutcome {
 ///     which skim maps to a non-success exit),
 ///   * the selection is empty / whitespace.
 ///
+/// `query` pre-seeds the picker's search buffer when non-empty — blzsh
+/// parity: `skim-history-widget` in `blackmatter-shell` passes `LBUFFER`
+/// as `--query` so the user's typing so far narrows candidates
+/// immediately. An empty `query` is skipped entirely because some
+/// skim-tab widgets treat `--query ""` as "match nothing".
+///
 /// `extra_env` lets callers override the binary's environment — the
 /// history picker needs `HISTFILE` pointed at the frost history file,
 /// not `~/.zsh_history` which skim-history defaults to.
@@ -145,13 +144,23 @@ enum PickerOutcome {
 /// skim-cd). We pass through verbatim because the REPL's consumer
 /// (`inject_prefill` / `run`) treats the result as shell input — exactly
 /// what a shell-quoted path expects.
-fn run_skim_tab_picker(bin: &str, extra_env: &[(&str, String)]) -> Option<String> {
+fn run_skim_tab_picker(
+    bin: &str,
+    query: Option<&str>,
+    extra_env: &[(&str, String)],
+) -> Option<String> {
     use std::process::Command;
 
     // stdin stays inherited — the skim-tab binaries own their data
     // source (read HISTFILE, run fd, run rg, query zoxide, etc.) and
     // drive the terminal directly. We just fork and wait.
     let mut cmd = Command::new(bin);
+    if let Some(q) = query {
+        let q = q.trim();
+        if !q.is_empty() {
+            cmd.arg("--query").arg(q);
+        }
+    }
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -162,62 +171,68 @@ fn run_skim_tab_picker(bin: &str, extra_env: &[(&str, String)]) -> Option<String
     if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
 }
 
-/// History picker → `skim-history`. Reads `$HISTFILE` (we override with
-/// frost's path so zsh/frost histories don't cross-pollinate) and lets
-/// the picker dedupe + present. Selection replaces the edit buffer;
-/// user reviews and hits Enter.
-fn picker_history(history_path: &std::path::Path) -> PickerOutcome {
-    let hist = history_path.to_string_lossy().into_owned();
-    match run_skim_tab_picker("skim-history", &[("HISTFILE", hist)]) {
-        Some(sel) => PickerOutcome::Splice { text: sel, submit: false },
-        None => PickerOutcome::Nothing,
+impl PickerAction {
+    /// Parse the action string from a `(defpicker :action …)` spec.
+    /// frost-lisp already validates this at rc-load, but we re-parse
+    /// here so the REPL doesn't assume Lisp-side success.
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "replace"   => Some(Self::Replace),
+            "append"    => Some(Self::Append),
+            "cd-submit" => Some(Self::CdSubmit),
+            "submit"    => Some(Self::Submit),
+            _ => None,
+        }
     }
 }
 
-/// Files picker → `skim-files`. Runs `fd` under the hood and presents
-/// via skim with file preview. Selection appends to the edit buffer.
-fn picker_files() -> PickerOutcome {
-    match run_skim_tab_picker("skim-files", &[]) {
-        Some(sel) => PickerOutcome::Splice { text: sel, submit: false },
-        None => PickerOutcome::Nothing,
-    }
-}
-
-/// cd picker → `skim-cd`. Runs `fd -t d` with eza tree preview;
-/// selection becomes `cd <dir>` and auto-submits. Output is
-/// shell-quoted by the picker so paths with spaces survive.
-fn picker_cd() -> PickerOutcome {
-    match run_skim_tab_picker("skim-cd", &[]) {
-        Some(sel) => PickerOutcome::Splice { text: format!("cd {sel}"), submit: true },
-        None => PickerOutcome::Nothing,
-    }
-}
-
-/// Content picker → `skim-content`. The picker emits a full
-/// `$EDITOR`-ready command on selection (path + line), which we
-/// auto-submit as-is. No post-processing here — the skim-tab binary
-/// already constructed the right command.
-fn picker_content() -> PickerOutcome {
-    match run_skim_tab_picker("skim-content", &[]) {
-        Some(sel) => PickerOutcome::Splice { text: sel, submit: true },
-        None => PickerOutcome::Nothing,
-    }
-}
-
-/// Dispatch a picker sentinel. Returns `Some` if the sentinel matched,
-/// `None` if the input is a regular command that should continue to
-/// `!`-expansion and the executor.
+/// Dispatch a picker sentinel. Returns `Some` if `sentinel` corresponds
+/// to one of the `specs`, `None` otherwise so the REPL can fall through
+/// to normal parse/exec for regular commands.
+///
+/// Actions `replace` and `append` produce `Splice { submit: false }` so
+/// the REPL uses `inject_prefill` to pre-seed the next read_line.
+/// `cd-submit` wraps the selection in `cd <sel>`; `submit` takes the
+/// selection verbatim. Both submit-variants return `submit: true` and
+/// the REPL executes immediately.
 fn dispatch_picker_sentinel(
     sentinel: &str,
+    query: Option<&str>,
     history_path: &std::path::Path,
+    specs: &[frost_lisp::PickerSpec],
 ) -> Option<(PickerOutcome, PickerAction)> {
-    match sentinel {
-        PICKER_HISTORY_SENTINEL => Some((picker_history(history_path), PickerAction::Replace)),
-        PICKER_FILES_SENTINEL   => Some((picker_files(),                PickerAction::Append)),
-        PICKER_CD_SENTINEL      => Some((picker_cd(),                   PickerAction::CdSubmit)),
-        PICKER_CONTENT_SENTINEL => Some((picker_content(),              PickerAction::Submit)),
-        _ => None,
-    }
+    // Cheap prefix check — most REPL inputs aren't picker sentinels.
+    let name = sentinel
+        .strip_prefix(PICKER_SENTINEL_PREFIX)?
+        .strip_suffix(PICKER_SENTINEL_SUFFIX)?;
+    let spec = specs.iter().find(|s| s.name == name)?;
+    let action = PickerAction::from_str(&spec.action)?;
+
+    // History picker needs HISTFILE env pointed at frost's file so
+    // zsh/frost histories don't cross-pollinate. All other pickers
+    // inherit the process env unchanged.
+    let extra_env: Vec<(&str, String)> = if spec.binary == "skim-history" {
+        vec![("HISTFILE", history_path.to_string_lossy().into_owned())]
+    } else {
+        vec![]
+    };
+
+    let Some(sel) = run_skim_tab_picker(&spec.binary, query, &extra_env) else {
+        return Some((PickerOutcome::Nothing, action));
+    };
+
+    let outcome = match action {
+        PickerAction::Replace | PickerAction::Append => {
+            PickerOutcome::Splice { text: sel, submit: false }
+        }
+        PickerAction::CdSubmit => {
+            PickerOutcome::Splice { text: format!("cd {sel}"), submit: true }
+        }
+        PickerAction::Submit => {
+            PickerOutcome::Splice { text: sel, submit: true }
+        }
+    };
+    Some((outcome, action))
 }
 
 /// Outcome of running one chunk of input through the executor.
@@ -365,6 +380,7 @@ fn interactive(
     rc_completions: std::collections::HashMap<String, Vec<String>>,
     rc_binds: Vec<(String, String)>,
     rc_descriptions: std::collections::HashMap<String, String>,
+    rc_pickers: Vec<frost_lisp::PickerSpec>,
 ) {
     // Ignore SIGINT in the shell process itself; reedline handles Ctrl-C
     // by aborting the current line buffer, not killing frost.
@@ -454,7 +470,18 @@ fn interactive(
                 // matching skim-backed picker in the freed terminal, and
                 // either splice the selection into the next read_line or
                 // auto-execute it depending on the picker's action.
-                if let Some((outcome, action)) = dispatch_picker_sentinel(trimmed, &history_path) {
+                //
+                // The user's typed-so-far buffer is preserved by reedline
+                // across the ExecuteHostCommand suspend, so we can read
+                // it here and pass as `--query` for immediate narrowing
+                // — blzsh `skim-history-widget` parity.
+                let query = zle.current_buffer_contents();
+                if let Some((outcome, action)) = dispatch_picker_sentinel(
+                    trimmed,
+                    query.as_deref(),
+                    &history_path,
+                    &rc_pickers,
+                ) {
                     let PickerOutcome::Splice { text, submit } = outcome else {
                         continue;
                     };
@@ -463,16 +490,19 @@ fn interactive(
                             zle.inject_prefill(&text);
                         }
                         PickerAction::Append => {
-                            // Append with a separating space if the user
-                            // had already typed something before hitting
-                            // the key. We don't have direct access to the
-                            // current buffer here (reedline owned it and
-                            // returned empty on sentinel), so the first
-                            // implementation just replaces — users can
-                            // extend by prefixing the selection. A future
-                            // pass can add an EditCommand::InsertAtCursor
-                            // variant that preserves LBUFFER.
-                            zle.inject_prefill(&text);
+                            // Preserve what the user had typed before
+                            // firing the picker: `<existing> <selection>`.
+                            // Reedline keeps the buffer across the
+                            // ExecuteHostCommand suspend so `query`
+                            // above carries the live LBUFFER — blzsh
+                            // `skim-files-widget` parity.
+                            let existing = query.as_deref().unwrap_or("");
+                            let sep = if existing.is_empty() || existing.ends_with(' ') {
+                                ""
+                            } else {
+                                " "
+                            };
+                            zle.inject_prefill(&format!("{existing}{sep}{text}"));
                         }
                         PickerAction::CdSubmit | PickerAction::Submit => {
                             // Execute directly — simulate what the user
@@ -552,22 +582,33 @@ fn main() {
     // functions. Missing file is not an error; parse/apply errors print
     // a warning so frost still starts even if the rc has a bug.
     let rc_path = frost_lisp::default_rc_path();
-    let (rc_completions, rc_binds, rc_descriptions) = match frost_lisp::load_rc(&rc_path, &mut env) {
-        Ok(summary) => {
-            if summary != frost_lisp::ApplySummary::default() {
-                tracing::debug!(
-                    ?summary,
-                    rc = %rc_path.display(),
-                    "loaded frost-lisp rc file"
-                );
+    let (rc_completions, rc_binds, rc_descriptions, rc_pickers) =
+        match frost_lisp::load_rc(&rc_path, &mut env) {
+            Ok(summary) => {
+                if summary != frost_lisp::ApplySummary::default() {
+                    tracing::debug!(
+                        ?summary,
+                        rc = %rc_path.display(),
+                        "loaded frost-lisp rc file"
+                    );
+                }
+                (
+                    summary.completion_map,
+                    summary.bind_map,
+                    summary.completion_descriptions,
+                    summary.pickers,
+                )
             }
-            (summary.completion_map, summary.bind_map, summary.completion_descriptions)
-        }
-        Err(e) => {
-            eprintln!("frost: warning: failed to load {}: {e}", rc_path.display());
-            (std::collections::HashMap::new(), Vec::new(), std::collections::HashMap::new())
-        }
-    };
+            Err(e) => {
+                eprintln!("frost: warning: failed to load {}: {e}", rc_path.display());
+                (
+                    std::collections::HashMap::new(),
+                    Vec::new(),
+                    std::collections::HashMap::new(),
+                    Vec::new(),
+                )
+            }
+        };
 
     let code = if let Some(cmd) = &cli.command {
         unwrap_outcome(run(cmd, &mut env))
@@ -580,7 +621,7 @@ fn main() {
             }
         }
     } else if std::io::stdin().is_terminal() {
-        interactive(&mut env, rc_completions, rc_binds, rc_descriptions);
+        interactive(&mut env, rc_completions, rc_binds, rc_descriptions, rc_pickers);
         0
     } else {
         // Non-interactive stdin (e.g., `frost < script.sh`) — slurp it.

@@ -35,6 +35,7 @@ mod env;
 mod function;
 mod hook;
 mod option;
+mod picker;
 mod prompt;
 mod trap;
 
@@ -45,6 +46,7 @@ pub use env::EnvSpec;
 pub use function::FunctionSpec;
 pub use hook::{hook_function_name, HookSpec};
 pub use option::OptionSetSpec;
+pub use picker::{is_valid_action, picker_sentinel, PickerSpec, VALID_ACTIONS};
 pub use prompt::PromptSpec;
 pub use trap::TrapSpec;
 
@@ -65,6 +67,8 @@ pub enum LispError {
     UnknownHook(String),
     #[error("unknown signal: {0}")]
     UnknownSignal(String),
+    #[error("unknown picker action: {0} (valid: replace, append, cd-submit, submit)")]
+    UnknownPickerAction(String),
 }
 
 /// Summary of what a rc-application round actually changed. Returned by
@@ -98,6 +102,12 @@ pub struct ApplySummary {
     /// command → description string from `(defcompletion :description …)`.
     /// Shown in the completion menu at command position.
     pub completion_descriptions: std::collections::HashMap<String, String>,
+
+    /// Picker widgets from `(defpicker …)` forms. The REPL walks this
+    /// list to (a) bind keys to the picker sentinels and (b) populate
+    /// its dispatch table so hitting a key runs the right binary with
+    /// the right action semantics.
+    pub pickers: Vec<PickerSpec>,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -147,9 +157,13 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
     }
 
     // Prompts — PS1/PS2 land as regular shell vars (the interactive loop
-    // reads them each iteration) and optionally flip PROMPT_SUBST.
+    // reads them each iteration) and optionally flip PROMPT_SUBST. If
+    // `:command` is set, we also synthesize a `precmd` hook that runs
+    // the command and assigns its stdout to PS1 — clean starship /
+    // oh-my-posh / any-prompt-generator integration.
     let prompts: Vec<PromptSpec> =
         tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let mut synthetic_precmd: Option<String> = None;
     for p in prompts {
         if let Some(ps1) = &p.ps1 {
             env.set_var("PS1", ps1);
@@ -166,6 +180,18 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
                 env.unset_option(frost_options::ShellOption::PromptSubst);
             }
         }
+        if let Some(cmd) = &p.command {
+            // Compose with any existing synthetic precmd from a prior
+            // defprompt — last writer still wins at PS1 assignment time.
+            let piece = format!("PS1=\"$({cmd})\"");
+            match &mut synthetic_precmd {
+                Some(existing) => {
+                    existing.push('\n');
+                    existing.push_str(&piece);
+                }
+                None => synthetic_precmd = Some(piece),
+            }
+        }
     }
 
     // Hooks — each stored under a well-known function name the REPL
@@ -173,6 +199,12 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
     // later bodies append to earlier ones separated by newlines, so
     // frostmourne's tool-integration files can each register a chpwd
     // hook without stepping on the base prompt-info hook.
+    //
+    // Synthetic precmd from `(defprompt :command …)` joins the compose
+    // pile: it becomes another line in the composed body, so the
+    // frost-native hook that captures FROST_GIT_BRANCH/FROST_CMD_DURATION
+    // runs BEFORE starship reads them (file load order: 20-hooks before
+    // 63-tools-starship).
     let hooks: Vec<HookSpec> =
         tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
     let mut hook_bodies: std::collections::HashMap<&'static str, String> =
@@ -187,6 +219,16 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
                 existing.push_str(&h.body);
             })
             .or_insert_with(|| h.body.clone());
+        summary.hooks += 1;
+    }
+    if let Some(body) = synthetic_precmd {
+        hook_bodies
+            .entry("__frost_hook_precmd")
+            .and_modify(|existing| {
+                existing.push('\n');
+                existing.push_str(&body);
+            })
+            .or_insert(body);
         summary.hooks += 1;
     }
     for (fn_name, body) in hook_bodies {
@@ -236,6 +278,26 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
             summary.completion_descriptions.insert(c.command.clone(), desc);
         }
         summary.completions += 1;
+    }
+
+    // Pickers — each spec registers a reedline keybinding that fires a
+    // `__frost_picker_<name>__` sentinel straight into the REPL. Unlike
+    // `defbind`, we deliberately DO NOT wrap the sentinel in a shell
+    // function — the REPL must see the sentinel verbatim as the
+    // ExecuteHostCommand payload so its dispatcher can intercept
+    // before `!`-expansion and exec.
+    let pickers: Vec<PickerSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for p in pickers {
+        if !is_valid_action(&p.action) {
+            return Err(LispError::UnknownPickerAction(p.action));
+        }
+        let sentinel = picker_sentinel(&p.name);
+        // bind_map entry uses (key, sentinel) directly — reedline's
+        // ExecuteHostCommand will return `sentinel` on key press.
+        summary.bind_map.push((p.key.clone(), sentinel));
+        summary.binds += 1;
+        summary.pickers.push(p);
     }
 
     // Lisp-authored functions — same shape as the shell's own `function`
@@ -497,6 +559,55 @@ mod tests {
         assert!(stored.contains("status"));
         assert!(stored.contains("diff"));
         assert!(stored.contains("version control"));
+    }
+
+    #[test]
+    fn apply_picker_registers_direct_sentinel_binding() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defpicker :name "history" :key "C-r"
+                       :binary "skim-history" :action "replace")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.pickers.len(), 1);
+        assert_eq!(s.pickers[0].binary, "skim-history");
+        // The key binding points straight at the sentinel — NOT at a
+        // wrapper function — so the REPL's interceptor sees the exact
+        // sentinel string when the user hits C-r.
+        let (key, sentinel) = &s.bind_map[0];
+        assert_eq!(key, "C-r");
+        assert_eq!(sentinel, "__frost_picker_history__");
+        assert_eq!(s.binds, 1);
+    }
+
+    #[test]
+    fn apply_prompt_command_registers_synthetic_precmd() {
+        // `(defprompt :command …)` should synthesize a precmd hook that
+        // assigns `$(command)` to PS1 — the integration point for
+        // starship / oh-my-posh.
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defprompt :command "starship prompt --status=$?")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.hooks, 1, "synthetic precmd hook should count toward summary");
+        let fn_def = env.functions.get("__frost_hook_precmd")
+            .expect("prompt command should register a precmd hook");
+        let rendered = format!("{:?}", fn_def.body);
+        assert!(rendered.contains("starship prompt"), "starship not in body: {rendered}");
+        assert!(rendered.contains("PS1"), "PS1 assignment missing: {rendered}");
+    }
+
+    #[test]
+    fn apply_picker_rejects_unknown_action() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defpicker :name "x" :key "C-x" :binary "x" :action "nope")
+        "#;
+        assert!(matches!(
+            apply_source(src, &mut env),
+            Err(LispError::UnknownPickerAction(_))
+        ));
     }
 
     #[test]
