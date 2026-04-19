@@ -10,7 +10,10 @@ description = "Bridge between tatara-lisp and frost shell state — Lisp-authore
 
 [dependencies]
 frost-exec = { workspace = true }
+frost-lexer = { workspace = true }
+frost-parser = { workspace = true }
 frost-options = { workspace = true }
+compact_str = { workspace = true }
 tatara-lisp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

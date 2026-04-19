@@ -581,8 +581,11 @@ dependencies = [
 name = "frost-lisp"
 version = "0.1.0"
 dependencies = [
+ "compact_str",
  "frost-exec",
+ "frost-lexer",
  "frost-options",
+ "frost-parser",
  "pretty_assertions",
  "serde",
  "serde_json",
