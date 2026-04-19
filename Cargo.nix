@@ -1944,12 +1944,24 @@ rec {
         ];
         dependencies = [
           {
+            name = "compact_str";
+            packageId = "compact_str";
+          }
+          {
             name = "frost-exec";
             packageId = "frost-exec";
           }
           {
+            name = "frost-lexer";
+            packageId = "frost-lexer";
+          }
+          {
             name = "frost-options";
             packageId = "frost-options";
+          }
+          {
+            name = "frost-parser";
+            packageId = "frost-parser";
           }
           {
             name = "serde";
