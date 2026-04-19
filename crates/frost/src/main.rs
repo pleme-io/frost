@@ -399,11 +399,25 @@ fn interactive(
     };
     let completer = Box::new(
         frost_complete::FrostCompleter::with_default_builtins()
-            .with_arg_completions(rc_completions)
+            .with_arg_completions(rc_completions.clone())
             .with_descriptions(rc_descriptions),
     );
+    // Highlighter's "is this a known command?" lookup needs a union of
+    // builtins + rc-declared aliases/functions + rc-declared completion
+    // commands. rc_completions.keys() covers every command a user
+    // bothered to register a completion for — a good proxy for
+    // "commands this user expects to run often".
+    let known_commands: Vec<String> = frost_complete::default_builtin_list()
+        .iter()
+        .map(|s| s.to_string())
+        .chain(env.aliases.keys().cloned())
+        .chain(env.functions.keys().cloned())
+        .chain(rc_completions.keys().cloned())
+        .collect();
+    let highlighter = Box::new(frost_zle::FrostHighlighter::with_known(known_commands));
     let mut zle = zle_base
         .with_completer(completer)
+        .with_highlighter(highlighter)
         .with_bindings(rc_binds);
     // Separate in-process history for `!` expansion — reedline owns the
     // user-facing navigation buffer, frost-history owns the expansion
