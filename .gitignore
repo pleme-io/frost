@@ -79,3 +79,4 @@ crates/frost/regex_test.sh
 crates/frost/rod*
 crates/frost/emufunctest
 crates/frost/zdotdir/
+result
