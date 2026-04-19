@@ -22,9 +22,9 @@ use std::path::{Path, PathBuf};
 
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    Completer, EditMode, Emacs, FileBackedHistory, KeyCode, KeyModifiers, Keybindings, Prompt,
-    PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline, ReedlineEvent,
-    ReedlineMenu, Signal, Vi,
+    Completer, EditCommand, EditMode, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
+    Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
+    ReedlineEvent, ReedlineMenu, Signal, Vi,
 };
 
 // Re-export so downstream crates can write completers without adding a
@@ -179,6 +179,23 @@ impl ZleEngine {
         self.inner = taken.with_edit_mode(boxed);
     }
 
+    /// Clear the edit buffer and seed it with `text`. On the NEXT
+    /// [`ZleEngine::read_line`] call, the user will see the prompt with
+    /// `text` already inserted at the cursor, ready to edit or submit.
+    ///
+    /// This is the splice-from-picker hook: bind a key to
+    /// `ReedlineEvent::ExecuteHostCommand("__sentinel__")`, catch the
+    /// sentinel in the REPL, run an external picker (fzf, skim, …), and
+    /// call `inject_prefill(&selection)` before looping back to
+    /// `read_line`. Reedline's `suspended_state` restores the painter so
+    /// the injection lands in the right visual spot.
+    pub fn inject_prefill(&mut self, text: &str) {
+        self.inner.run_edit_commands(&[
+            EditCommand::Clear,
+            EditCommand::InsertString(text.to_string()),
+        ]);
+    }
+
     /// Read one logical command line. `is_complete` is called after each
     /// physical line read; returning [`InputStatus::Incomplete`] causes the
     /// engine to re-prompt with PS2 and concatenate the next line.
@@ -232,7 +249,7 @@ pub enum EditModeKind {
 /// — a rc file that predates a key-name addition should still load).
 pub fn parse_chord(s: &str) -> Option<(KeyModifiers, KeyCode)> {
     let mut modifier = KeyModifiers::NONE;
-    let mut parts = s.split(|c: char| c == '-' || c == '+').peekable();
+    let parts = s.split(|c: char| c == '-' || c == '+');
     // Every part except the last is a modifier token.
     let mut collected: Vec<String> = parts.map(|p| p.to_string()).collect();
     let key_tok = collected.pop()?;
@@ -339,6 +356,16 @@ mod tests {
     #[test]
     fn in_memory_engine_constructs() {
         let _ = ZleEngine::in_memory();
+    }
+
+    #[test]
+    fn inject_prefill_does_not_panic_on_in_memory_engine() {
+        // We can't easily inspect reedline's buffer from outside, but we
+        // can confirm the call path compiles and doesn't panic — that's
+        // the public-API contract we owe consumers.
+        let mut zle = ZleEngine::in_memory();
+        zle.inject_prefill("echo hello");
+        zle.inject_prefill("");
     }
 
     #[test]
