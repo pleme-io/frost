@@ -3,241 +3,28 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    crate2nix.url = "github:nix-community/crate2nix";
     flake-utils.url = "github:numtide/flake-utils";
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     substrate = {
       url = "github:pleme-io/substrate";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.fenix.follows = "fenix";
-    };
-    devenv = {
-      url = "github:cachix/devenv";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { nixpkgs, flake-utils, substrate, devenv, ... }:
-    flake-utils.lib.eachDefaultSystem (system: let
-      pkgs = import nixpkgs {
-        inherit system;
-        overlays = [ substrate.rustOverlays.${system}.rust ];
-      };
-
-      darwinBuildInputs = (import "${substrate}/lib/darwin.nix").mkDarwinBuildInputs pkgs;
-
-      cargoDeps = pkgs.rustPlatform.importCargoLock {
-        lockFile = ./Cargo.lock;
-      };
-
-      frost = pkgs.rustPlatform.buildRustPackage {
-        pname = "frost";
-        version = "0.1.0";
-        src = ./.;
-        cargoLock.lockFile = ./Cargo.lock;
-        nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = darwinBuildInputs;
-        meta = with pkgs.lib; {
-          description = "A zsh-compatible shell written in Rust";
-          homepage = "https://github.com/pleme-io/frost";
-          license = licenses.mit;
-          mainProgram = "frost";
-        };
-      };
-
-      zshSrc = pkgs.fetchFromGitHub {
-        owner = "zsh-users";
-        repo = "zsh";
-        rev = "zsh-5.9";
-        hash = "sha256-EbScbk8W4l+HVtWrQ6l01F/QnTBkVudeqG9KI578oCk=";
-      };
-
-      # Shared builder for cargo-based check derivations
-      rustCheckDrv = { name, buildPhase, extraNativeBuildInputs ? [] }:
-        pkgs.stdenv.mkDerivation {
-          inherit name;
-          src = ./.;
-          inherit cargoDeps;
-          nativeBuildInputs = with pkgs; [
-            rustPlatform.rust.cargo
-            rustPlatform.rust.rustc
-            rustPlatform.cargoSetupHook
-            pkg-config
-          ] ++ extraNativeBuildInputs;
-          buildInputs = darwinBuildInputs;
-          inherit buildPhase;
-          installPhase = "touch $out";
-          doCheck = false;
-        };
-
-      # Script wrappers for `nix run .#<name>` apps
-      mkApp = name: script: {
-        type = "app";
-        program = toString (pkgs.writeShellScript "frost-${name}" script);
-      };
-
-    in {
-      packages = {
-        default = frost;
-        inherit frost;
-
-        blfrost = pkgs.writeShellScriptBin "blfrost" ''
-          export FROST_DIR=''${FROST_DIR:-${frost}/share/frost}
-          exec ${frost}/bin/frost "$@"
-        '';
-
-        frost-verify = pkgs.rustPlatform.buildRustPackage {
-          pname = "frost-verify";
-          version = "0.1.0";
-          src = ./.;
-          cargoLock.lockFile = ./Cargo.lock;
-          nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = darwinBuildInputs;
-          cargoBuildFlags = [ "-p" "frost-verify" ];
-          meta = with pkgs.lib; {
-            description = "Verify shell configuration loading order and integrity";
-            homepage = "https://github.com/pleme-io/frost";
-            license = licenses.mit;
-            mainProgram = "frost-verify";
-          };
-        };
-      };
-
-      apps = {
-        # nix run — launch frost shell
-        default = {
-          type = "app";
-          program = "${frost}/bin/frost";
-        };
-
-        # nix run .#test — run cargo test
-        test = mkApp "test" ''
-          set -euo pipefail
-          echo "=== frost: cargo test ==="
-          cargo test --workspace 2>&1
-          echo "✓ all tests passed"
-        '';
-
-        # nix run .#clippy — run cargo clippy
-        clippy = mkApp "clippy" ''
-          set -euo pipefail
-          echo "=== frost: cargo clippy ==="
-          cargo clippy --workspace -- -D warnings 2>&1
-          echo "✓ clippy clean"
-        '';
-
-        # nix run .#fmt — run cargo fmt --check
-        fmt = mkApp "fmt" ''
-          set -euo pipefail
-          echo "=== frost: cargo fmt --check ==="
-          cargo fmt --check --all 2>&1
-          echo "✓ formatting ok"
-        '';
-
-        # nix run .#verify — verify shell config load order + content hashes
-        verify = mkApp "verify" ''
-          set -euo pipefail
-          if command -v frost-verify >/dev/null 2>&1; then
-            frost-verify --verbose "$@"
-          elif [ -f target/debug/frost-verify ]; then
-            target/debug/frost-verify --verbose "$@"
-          else
-            echo "building frost-verify..."
-            cargo build -p frost-verify 2>/dev/null
-            target/debug/frost-verify --verbose "$@"
-          fi
-        '';
-
-        # nix run .#compat — run zsh compatibility test suite
-        compat = mkApp "compat" ''
-          set -euo pipefail
-          echo "=== frost: zsh compat tests ==="
-          echo "zsh test suite: ${zshSrc}/Test"
-          if command -v frost-compat >/dev/null 2>&1; then
-            frost-compat --frost ${frost}/bin/frost --verbose "${zshSrc}/Test"
-          elif [ -f target/debug/frost-compat ]; then
-            target/debug/frost-compat --frost ${frost}/bin/frost --verbose "${zshSrc}/Test"
-          else
-            echo "building frost-compat..."
-            cargo build -p frost-compat 2>/dev/null
-            target/debug/frost-compat --frost ${frost}/bin/frost --verbose "${zshSrc}/Test"
-          fi
-        '';
-
-        # nix run .#ci — run all checks sequentially (test + clippy + fmt + attest)
-        ci = mkApp "ci" ''
-          set -euo pipefail
-          echo "╔════════════════════════════════╗"
-          echo "║     frost CI pipeline          ║"
-          echo "╚════════════════════════════════╝"
-          echo ""
-
-          echo "── [1/4] cargo test ──"
-          cargo test --workspace 2>&1
-          echo ""
-
-          echo "── [2/4] cargo clippy ──"
-          cargo clippy --workspace -- -D warnings 2>&1
-          echo ""
-
-          echo "── [3/4] cargo fmt --check ──"
-          cargo fmt --check --all 2>&1
-          echo ""
-
-          echo "── [4/4] frost-verify attestation ──"
-          if [ -f "$PWD/manifest.json" ]; then
-            cargo build -p frost-verify --quiet 2>&1
-            root=$(target/debug/frost-verify --manifest "$PWD/manifest.json" --root)
-            echo "manifest root: $root"
-          else
-            echo "(no manifest.json — skipping attestation)"
-          fi
-          echo ""
-
-          echo "✓ all checks passed"
-        '';
-      };
-
-      # nix flake check — pure nix-sandbox checks
-      checks = {
-        build = frost;
-
-        test = rustCheckDrv {
-          name = "frost-test";
-          buildPhase = "cargo test --workspace";
-        };
-
-        clippy = rustCheckDrv {
-          name = "frost-clippy";
-          extraNativeBuildInputs = [ pkgs.clippy ];
-          buildPhase = "cargo clippy --workspace -- -D warnings 2>&1";
-        };
-
-        fmt = rustCheckDrv {
-          name = "frost-fmt";
-          extraNativeBuildInputs = [ pkgs.rustfmt ];
-          buildPhase = "cargo fmt --check --all 2>&1";
-        };
-      };
-
-      devShells.default = devenv.lib.mkShell {
-        inherit pkgs;
-        inputs.nixpkgs = nixpkgs;
-        modules = [
-          ({ pkgs, ... }: {
-            languages.rust = {
-              enable = true;
-              channel = "stable";
-            };
-            packages = with pkgs; [
-              pkg-config
-              cargo-watch
-              cargo-nextest
-            ] ++ darwinBuildInputs;
-          })
-        ];
-      };
-    });
+  # substrate's rust-workspace-release builder wraps crate2nix + eachSystem +
+  # overlays so we don't hand-maintain cargoLock hashes, importCargoLock
+  # outputHashes, or per-target `buildRustPackage` invocations. git deps
+  # (eg. tatara-lisp) are vendored automatically via Cargo.nix generation.
+  #
+  # See `substrate/lib/build/rust/workspace-release-flake.nix` for the
+  # contract. Other consumers of the same pattern: pleme-io/mamorigami.
+  outputs = { self, nixpkgs, crate2nix, flake-utils, substrate, ... }:
+    (import "${substrate}/lib/rust-workspace-release-flake.nix" {
+      inherit nixpkgs crate2nix flake-utils;
+    }) {
+      toolName = "frost";
+      packageName = "frost";
+      src = self;
+      repo = "pleme-io/frost";
+    };
 }
