@@ -133,6 +133,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "frost-lisp" = rec {
+      packageId = "frost-lisp";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "frost-lisp";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "frost-options" = rec {
       packageId = "frost-options";
       build = internal.buildRustCrateWithFeatures {
@@ -1558,6 +1568,10 @@ rec {
             packageId = "frost-lexer";
           }
           {
+            name = "frost-lisp";
+            packageId = "frost-lisp";
+          }
+          {
             name = "frost-options";
             packageId = "frost-options";
           }
@@ -1912,6 +1926,50 @@ rec {
             packageId = "insta";
             features = [ "yaml" ];
           }
+          {
+            name = "pretty_assertions";
+            packageId = "pretty_assertions";
+          }
+        ];
+
+      };
+      "frost-lisp" = rec {
+        crateName = "frost-lisp";
+        version = "0.1.0";
+        edition = "2024";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/frost-lisp; };
+        libName = "frost_lisp";
+        authors = [
+          "pleme-io"
+        ];
+        dependencies = [
+          {
+            name = "frost-exec";
+            packageId = "frost-exec";
+          }
+          {
+            name = "frost-options";
+            packageId = "frost-options";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "tatara-lisp";
+            packageId = "tatara-lisp";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror";
+          }
+        ];
+        devDependencies = [
           {
             name = "pretty_assertions";
             packageId = "pretty_assertions";
