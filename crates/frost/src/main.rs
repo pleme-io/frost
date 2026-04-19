@@ -792,7 +792,18 @@ fn main() {
     };
 
     let code = if let Some(cmd) = &cli.command {
-        unwrap_outcome(run(cmd, &mut env))
+        // Apply abbreviation expansion even in -c mode so scripts
+        // that source the same rc get the same short-form behavior.
+        // Note: this expands only the first-word of the top-level
+        // command; compound commands like `gcm a; gcm b` only get
+        // the first `gcm` expanded, matching fish's line-granular
+        // abbreviation semantics.
+        let (cmd_expanded, changed) =
+            frost_lisp::expand_abbreviation(cmd, &rc_abbreviations);
+        if changed {
+            println!("{cmd_expanded}");
+        }
+        unwrap_outcome(run(&cmd_expanded, &mut env))
     } else if let Some(path) = &cli.file {
         match std::fs::read_to_string(path) {
             Ok(source) => unwrap_outcome(run(&source, &mut env)),
