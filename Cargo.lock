@@ -474,6 +474,7 @@ dependencies = [
  "frost-lexer",
  "frost-options",
  "frost-parser",
+ "frost-prompt",
  "frost-zle",
  "libc",
  "miette",
@@ -581,6 +582,16 @@ dependencies = [
  "compact_str",
  "frost-lexer",
  "insta",
+ "pretty_assertions",
+ "thiserror",
+]
+
+[[package]]
+name = "frost-prompt"
+version = "0.1.0"
+dependencies = [
+ "itoa",
+ "libc",
  "pretty_assertions",
  "thiserror",
 ]

@@ -1,0 +1,17 @@
+[package]
+name = "frost-prompt"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Zsh-compatible prompt templating (% escapes, $ expansion, conditional groups)"
+
+[dependencies]
+thiserror = { workspace = true }
+libc = { workspace = true }
+itoa = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

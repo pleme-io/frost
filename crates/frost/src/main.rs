@@ -165,17 +165,29 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
 
     loop {
         // Re-read PS1 / PS2 each iteration so variable changes mid-session
-        // take effect on the next prompt. Only a literal string today —
-        // PROMPT_SUBST (% / $ expansion) can layer on later without
-        // changing the reedline side.
-        let ps1 = env
+        // take effect on the next prompt, then run it through frost-prompt
+        // for zsh-style % and (optionally) $ substitution.
+        let ps1_raw = env
             .get_var("PS1")
             .map(|s| s.to_string())
             .unwrap_or_else(|| "frost> ".to_string());
-        let ps2 = env
+        let ps2_raw = env
             .get_var("PS2")
             .map(|s| s.to_string())
             .unwrap_or_else(|| "> ".to_string());
+        let pe = {
+            let mut pe = frost_prompt::PromptEnv::snapshot(env.exit_status);
+            // Surface common vars to $-substitution without shelling out.
+            for name in ["USER", "HOME", "PWD", "HOST", "HOSTNAME", "SHELL", "STATUS"] {
+                if let Some(v) = env.get_var(name) {
+                    pe.extra_vars.insert(name.to_string(), v.to_string());
+                }
+            }
+            pe
+        };
+        let prompt_subst = env.is_option_set(frost_options::ShellOption::PromptSubst);
+        let ps1 = frost_prompt::render(&ps1_raw, &pe, prompt_subst);
+        let ps2 = frost_prompt::render(&ps2_raw, &pe, prompt_subst);
         zle.set_prompt(ps1, ps2);
 
         let outcome = zle.read_line(|src| {

@@ -6,6 +6,7 @@ members = [
   "crates/frost-parser",
   "crates/frost-expand",
   "crates/frost-glob",
+  "crates/frost-prompt",
   "crates/frost-exec",
   "crates/frost-zle",
   "crates/frost-complete",
@@ -30,6 +31,7 @@ frost-lexer = { path = "crates/frost-lexer" }
 frost-parser = { path = "crates/frost-parser" }
 frost-expand = { path = "crates/frost-expand" }
 frost-glob = { path = "crates/frost-glob" }
+frost-prompt = { path = "crates/frost-prompt" }
 frost-exec = { path = "crates/frost-exec" }
 frost-zle = { path = "crates/frost-zle" }
 frost-complete = { path = "crates/frost-complete" }
@@ -72,6 +74,9 @@ insta = { version = "1", features = ["yaml"] }
 
 # Regex
 fancy-regex = "0.14"
+
+# Misc
+itoa = "1"
 
 # Tracing
 tracing = "0.1"
