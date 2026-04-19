@@ -24,7 +24,7 @@ nix run .#compat                    # zsh compat suite
 | `frost-exec` | Execution engine: fork/exec, pipes, redirects, env, traps | `Executor`, `ShellEnv`, `TrapTable`, `JobTable` |
 | `frost-builtins` | 53+ builtins (echo, cd, typeset, printf, trap, etc.) | `Builtin`, `BuiltinRegistry`, `BuiltinAction`, `ShellEnvironment` |
 | `frost-options` | ~113 shell options (GLOB, EXTENDED_GLOB, ERR_EXIT, ...) | `Options`, `ShellOption` |
-| `frost-glob` | Glob matching (stub — uses globset internally) | — |
+| `frost-glob` | Zsh-compatible glob matching + filesystem expansion (wired into executor) | `GlobOptions`, `match_pattern()`, `expand_pattern()` |
 | `frost-zle` | Line editor (stub — will wrap reedline) | — |
 | `frost-complete` | Completion engine (stub) | — |
 | `frost-compat` | Zsh test suite runner | — |
@@ -79,7 +79,6 @@ Brace expansion runs on expanded strings in `expand_word_multi()`.
 - `[[ ]]` conditionals with file/string/integer/regex tests
 
 ### Not Yet Implemented
-- Glob expansion (stub)
 - Process substitution `<(cmd)` / `>(cmd)` execution
 - Structured `${}` parser (uses raw-text fallback)
 - Full alias expansion in executor
