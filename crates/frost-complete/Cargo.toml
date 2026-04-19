@@ -12,8 +12,13 @@ description = "Zsh completion system"
 frost-zle = { workspace = true }
 frost-lisp = { workspace = true }
 frost-options = { workspace = true }
+clap = { workspace = true }
 thiserror = { workspace = true }
 reedline = "0.42"
+
+[[bin]]
+name = "frost-complete-forge"
+path = "src/bin/forge.rs"
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
