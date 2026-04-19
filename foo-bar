@@ -1,0 +1,1 @@
+foo-bar() { print this should run automatically; }

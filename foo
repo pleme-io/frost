@@ -1,0 +1,1 @@
+echo foo loaded; foo() { echo foo run; }

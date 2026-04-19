@@ -1,0 +1,2 @@
+
+print -P "%N:%i is where we are."

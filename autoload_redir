@@ -1,0 +1,1 @@
+autoload_redir() { print Autoloaded ksh style; } >autoload.log
