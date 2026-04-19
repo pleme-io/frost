@@ -1,0 +1,14 @@
+[package]
+name = "frost-spec"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Typed frost domain specs (BuiltinSpec, OptionSpec) authored as Lisp via tatara"
+
+[dependencies]
+tatara-lisp = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
