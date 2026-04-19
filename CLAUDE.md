@@ -26,7 +26,7 @@ nix run .#compat                    # zsh compat suite
 | `frost-options` | ~113 shell options (GLOB, EXTENDED_GLOB, ERR_EXIT, ...) | `Options`, `ShellOption` |
 | `frost-glob` | Zsh-compatible glob matching + filesystem expansion (wired into executor) | `GlobOptions`, `match_pattern()`, `expand_pattern()` |
 | `frost-zle` | Interactive line editor (reedline) + persistent history + multi-line continuation | `ZleEngine`, `FrostPrompt`, `ReadLineOutcome`, `InputStatus` |
-| `frost-complete` | Completion engine (stub) | — |
+| `frost-complete` | Tab completion (commands + filenames, reedline-backed) | `FrostCompleter`, `default_builtin_list` |
 | `frost-compat` | Zsh test suite runner | — |
 
 ## Architecture
@@ -79,7 +79,7 @@ Brace expansion runs on expanded strings in `expand_word_multi()`.
 - `[[ ]]` conditionals with file/string/integer/regex tests
 
 ### Not Yet Implemented
-- Tab completion (frost-complete still a stub)
+- Per-command argument completion (compsys `_arguments`, `compdef` specs)
 - Process substitution `<(cmd)` / `>(cmd)` execution
 - Structured `${}` parser (uses raw-text fallback)
 - Full alias expansion in executor
