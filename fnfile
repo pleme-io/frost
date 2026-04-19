@@ -1,0 +1,7 @@
+PS4="+%x:%I> "
+fn() {
+ print This is fn.
+}
+:
+fn
+
