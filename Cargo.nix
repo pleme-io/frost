@@ -1718,6 +1718,10 @@ rec {
         ];
         dependencies = [
           {
+            name = "compact_str";
+            packageId = "compact_str";
+          }
+          {
             name = "fancy-regex";
             packageId = "fancy-regex";
           }
