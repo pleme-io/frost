@@ -22,10 +22,13 @@ use std::path::{Path, PathBuf};
 
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    Completer, EditCommand, EditMode, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
+    Completer, EditCommand, EditMode, Emacs, FileBackedHistory, Highlighter, KeyCode, KeyModifiers,
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
     ReedlineEvent, ReedlineMenu, Signal, Vi,
 };
+
+mod highlight;
+pub use highlight::FrostHighlighter;
 
 // Re-export so downstream crates can write completers without adding a
 // direct `reedline` dep.
@@ -153,6 +156,17 @@ impl ZleEngine {
         self.inner = std::mem::replace(&mut self.inner, Reedline::create())
             .with_completer(completer)
             .with_menu(menu);
+        self
+    }
+
+    /// Install a syntax highlighter (typically [`FrostHighlighter`]).
+    /// reedline repaints the line on every keystroke, so the highlighter
+    /// sees every intermediate edit — keep its `highlight()` cheap. Our
+    /// lexer-driven highlighter runs ~50µs on 80-char lines, well under
+    /// the "feels instant" threshold.
+    pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
+        self.inner = std::mem::replace(&mut self.inner, Reedline::create())
+            .with_highlighter(highlighter);
         self
     }
 

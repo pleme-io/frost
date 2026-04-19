@@ -649,9 +649,11 @@ dependencies = [
 name = "frost-zle"
 version = "0.1.0"
 dependencies = [
+ "frost-lexer",
  "frost-options",
  "insta",
  "nix",
+ "nu-ansi-term",
  "pretty_assertions",
  "reedline",
  "thiserror",

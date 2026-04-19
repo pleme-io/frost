@@ -35,6 +35,7 @@ mod env;
 mod function;
 mod hook;
 mod option;
+mod path;
 mod picker;
 mod prompt;
 mod trap;
@@ -46,6 +47,7 @@ pub use env::EnvSpec;
 pub use function::FunctionSpec;
 pub use hook::{hook_function_name, HookSpec};
 pub use option::OptionSetSpec;
+pub use path::{apply_path, expand_vars, PathSpec};
 pub use picker::{is_valid_action, picker_sentinel, PickerSpec, VALID_ACTIONS};
 pub use prompt::PromptSpec;
 pub use trap::TrapSpec;
@@ -108,6 +110,11 @@ pub struct ApplySummary {
     /// its dispatch table so hitting a key runs the right binary with
     /// the right action semantics.
     pub pickers: Vec<PickerSpec>,
+
+    /// How many `(defpath …)` forms modified PATH. The apply logic
+    /// mutates `env.PATH` in place so there's no other side-channel
+    /// for consumers; this field is informational only.
+    pub path_ops: usize,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -154,6 +161,39 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
             env.export_var(&e.name);
             summary.env_exports += 1;
         }
+    }
+
+    // PATH manipulation — `(defpath …)` forms compose. Each spec is
+    // applied in source order against the current PATH, so later forms
+    // see earlier prepends/appends. `$VAR` references in paths expand
+    // against the already-set env vars above. Falls back to
+    // `std::env::var` for vars frost doesn't own internally (e.g.
+    // `HOME` set by the login session).
+    let paths: Vec<PathSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for p in paths {
+        // Build a per-form var snapshot covering everything referenced
+        // in the spec. Cheap — path specs name a handful of variables.
+        let mut refs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for s in p.prepend.iter().chain(p.append.iter()) {
+            collect_var_refs(s, &mut refs);
+        }
+        let snapshot: std::collections::HashMap<String, String> = refs
+            .into_iter()
+            .filter_map(|name| {
+                let v = env
+                    .get_var(&name)
+                    .map(|s| s.to_string())
+                    .or_else(|| std::env::var(&name).ok());
+                v.map(|val| (name, val))
+            })
+            .collect();
+        let lookup = |name: &str| snapshot.get(name).cloned();
+        let current = env.get_var("PATH").unwrap_or("").to_string();
+        let next = path::apply_path(&current, &p, &lookup);
+        env.set_var("PATH", &next);
+        env.export_var("PATH");
+        summary.path_ops += 1;
     }
 
     // Prompts — PS1/PS2 land as regular shell vars (the interactive loop
@@ -312,6 +352,46 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
     }
 
     Ok(summary)
+}
+
+/// Scan a string for `$NAME` / `${NAME}` references and add the
+/// names (without the `$` / braces) to `out`. Used by the defpath
+/// apply to build a minimal env snapshot for expansion — avoids
+/// cloning the entire ShellEnv var table per spec.
+fn collect_var_refs(s: &str, out: &mut std::collections::HashSet<String>) {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i >= bytes.len() {
+            break;
+        }
+        if bytes[i] == b'{' {
+            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'}' {
+                i += 1;
+            }
+            if i > start {
+                out.insert(String::from_utf8_lossy(&bytes[start..i]).into_owned());
+            }
+            if i < bytes.len() {
+                i += 1;
+            }
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        if i > start {
+            out.insert(String::from_utf8_lossy(&bytes[start..i]).into_owned());
+        }
+    }
 }
 
 /// Parse shell source into an AST and register it under `fn_name` in
@@ -578,6 +658,32 @@ mod tests {
         assert_eq!(key, "C-r");
         assert_eq!(sentinel, "__frost_picker_history__");
         assert_eq!(s.binds, 1);
+    }
+
+    #[test]
+    fn apply_defpath_prepends_entries_to_path() {
+        let mut env = ShellEnv::new();
+        env.set_var("PATH", "/usr/bin:/bin");
+        env.set_var("HOME", "/Users/me");
+        let src = r#"
+            (defpath :prepend ("$HOME/.local/bin" "/opt/bin"))
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.path_ops, 1);
+        assert_eq!(env.get_var("PATH"), Some("/Users/me/.local/bin:/opt/bin:/usr/bin:/bin"));
+    }
+
+    #[test]
+    fn apply_defpath_dedupes_existing_entries() {
+        let mut env = ShellEnv::new();
+        env.set_var("PATH", "/usr/bin:/usr/local/bin:/bin");
+        let src = r#"
+            (defpath :prepend ("/usr/local/bin"))
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.path_ops, 1);
+        // usr/local/bin moves to the front; only one copy kept.
+        assert_eq!(env.get_var("PATH"), Some("/usr/local/bin:/usr/bin:/bin"));
     }
 
     #[test]

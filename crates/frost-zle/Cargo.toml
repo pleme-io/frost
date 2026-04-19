@@ -9,7 +9,9 @@ homepage.workspace = true
 description = "Zsh Line Editor (ZLE)"
 
 [dependencies]
+frost-lexer = { workspace = true }
 frost-options = { workspace = true }
+nu-ansi-term = "0.50"
 thiserror = { workspace = true }
 nix = { workspace = true }
 reedline = "0.42"
