@@ -80,7 +80,7 @@ Brace expansion runs on expanded strings in `expand_word_multi()`.
 
 ### Not Yet Implemented
 - Per-command argument completion (compsys `_arguments`, `compdef` specs)
-- Process substitution `<(cmd)` / `>(cmd)` execution
+- `^str^repl^` quick substitution + `:s/…/…/` history modifiers
 - Structured `${}` parser (uses raw-text fallback)
 - Full alias expansion in executor
 - History expansion (`!!`, `!$`, `!n`) — history *storage* works, expansion doesn't
