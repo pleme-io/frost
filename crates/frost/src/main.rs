@@ -164,6 +164,20 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
     let mut zle = zle_base.with_completer(completer);
 
     loop {
+        // Re-read PS1 / PS2 each iteration so variable changes mid-session
+        // take effect on the next prompt. Only a literal string today —
+        // PROMPT_SUBST (% / $ expansion) can layer on later without
+        // changing the reedline side.
+        let ps1 = env
+            .get_var("PS1")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "frost> ".to_string());
+        let ps2 = env
+            .get_var("PS2")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "> ".to_string());
+        zle.set_prompt(ps1, ps2);
+
         let outcome = zle.read_line(|src| {
             if is_complete(src) { InputStatus::Complete } else { InputStatus::Incomplete }
         });
