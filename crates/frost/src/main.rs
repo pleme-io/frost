@@ -181,6 +181,10 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
         .unwrap_or_else(|_| frost_history::History::new());
 
     loop {
+        // `precmd` hook — runs before the next prompt is drawn. Authored
+        // via `(defhook :event "precmd" :body …)` in the rc file.
+        run_hook("__frost_hook_precmd", env);
+
         // Re-read PS1 / PS2 each iteration so variable changes mid-session
         // take effect on the next prompt, then run it through frost-prompt
         // for zsh-style % and (optionally) $ substitution.
@@ -239,6 +243,8 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
                 };
                 if expansion_failed { continue; }
                 let _ = history.push(to_run.clone());
+                // `preexec` — after input is accepted, before execution.
+                run_hook("__frost_hook_preexec", env);
                 match run(&to_run, env) {
                     RunOutcome::Completed(_) => {}
                     RunOutcome::Exit(code) => {
@@ -320,6 +326,17 @@ fn unwrap_outcome(outcome: RunOutcome) -> i32 {
     match outcome {
         RunOutcome::Completed(c) | RunOutcome::Exit(c) => c,
     }
+}
+
+/// Invoke a named shell function if present. Used for the rc-authored
+/// lifecycle hooks (`precmd`, `preexec`, `chpwd`). Errors are swallowed
+/// so a broken hook can't kill the interactive loop.
+fn run_hook(name: &str, env: &mut frost_exec::ShellEnv) {
+    if !env.functions.contains_key(name) { return; }
+    // Synthesize a call: `<name>` with no args. Cheap to re-parse each
+    // time; the function body itself is pre-parsed and cached in
+    // `env.functions`.
+    let _ = run(name, env);
 }
 
 #[cfg(test)]

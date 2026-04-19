@@ -21,3 +21,19 @@
 
 ;; Not-exported variables (visible to shell but not inherited by subprocs).
 (defenv :name "FROST_GREETING" :value "welcome to frost")
+
+;; ── Prompt ─────────────────────────────────────────────────────────
+;; ANSI colors come from frost-prompt's %F{…}/%K{…}/%B/%U escapes.
+;; Setting :prompt-subst #t lets $VAR inside the template expand too.
+(defprompt :ps1 "%F{green}%n%f@%F{blue}%m%f %~ %# "
+           :ps2 "> "
+           :prompt-subst #t)
+
+;; ── Lifecycle hooks ────────────────────────────────────────────────
+;; Body is parsed as shell source at load time and stored under a
+;; private function name; the REPL invokes it at the right point.
+(defhook :event "precmd"
+         :body "echo")                               ; blank line before prompt
+
+(defhook :event "preexec"
+         :body "echo 'running: ' $1")                ; announce each command

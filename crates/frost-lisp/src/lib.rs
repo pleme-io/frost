@@ -30,11 +30,15 @@
 
 mod alias;
 mod env;
+mod hook;
 mod option;
+mod prompt;
 
 pub use alias::AliasSpec;
 pub use env::EnvSpec;
+pub use hook::{hook_function_name, HookSpec};
 pub use option::OptionSetSpec;
+pub use prompt::PromptSpec;
 
 use frost_exec::ShellEnv;
 use std::path::Path;
@@ -49,6 +53,8 @@ pub enum LispError {
     Parse(String),
     #[error("unknown option name: {0}")]
     UnknownOption(String),
+    #[error("unknown hook event: {0} (valid: precmd, preexec, chpwd)")]
+    UnknownHook(String),
 }
 
 /// Summary of what a rc-application round actually changed. Returned by
@@ -60,6 +66,8 @@ pub struct ApplySummary {
     pub options_disabled: usize,
     pub env_vars: usize,
     pub env_exports: usize,
+    pub prompts_set: usize,
+    pub hooks: usize,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -106,6 +114,63 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
             env.export_var(&e.name);
             summary.env_exports += 1;
         }
+    }
+
+    // Prompts — PS1/PS2 land as regular shell vars (the interactive loop
+    // reads them each iteration) and optionally flip PROMPT_SUBST.
+    let prompts: Vec<PromptSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for p in prompts {
+        if let Some(ps1) = &p.ps1 {
+            env.set_var("PS1", ps1);
+            summary.prompts_set += 1;
+        }
+        if let Some(ps2) = &p.ps2 {
+            env.set_var("PS2", ps2);
+            summary.prompts_set += 1;
+        }
+        if let Some(subst) = p.prompt_subst {
+            if subst {
+                env.set_option(frost_options::ShellOption::PromptSubst);
+            } else {
+                env.unset_option(frost_options::ShellOption::PromptSubst);
+            }
+        }
+    }
+
+    // Hooks — each stored under a well-known function name the REPL checks.
+    let hooks: Vec<HookSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for h in hooks {
+        let fn_name = hook_function_name(&h.event)
+            .ok_or_else(|| LispError::UnknownHook(h.event.clone()))?;
+        // Parse the shell body into an AST so the REPL can invoke it as a
+        // regular function. The parsing happens once at load time; at
+        // runtime the executor just walks the stored AST.
+        let tokens = {
+            let mut lexer = frost_lexer::Lexer::new(h.body.as_bytes());
+            let mut toks = Vec::new();
+            loop {
+                let t = lexer.next_token();
+                let eof = t.kind == frost_lexer::TokenKind::Eof;
+                toks.push(t);
+                if eof { break; }
+            }
+            toks
+        };
+        let program = frost_parser::Parser::new(&tokens).parse();
+        env.functions.insert(
+            fn_name.to_string(),
+            frost_parser::ast::FunctionDef {
+                name: compact_str::CompactString::from(fn_name),
+                body: frost_parser::ast::Command::Subshell(frost_parser::ast::Subshell {
+                    body: program.commands,
+                    redirects: vec![],
+                }),
+                redirects: vec![],
+            },
+        );
+        summary.hooks += 1;
     }
 
     Ok(summary)
@@ -220,5 +285,41 @@ mod tests {
     #[test]
     fn default_rc_path_is_nonempty() {
         assert!(!default_rc_path().as_os_str().is_empty());
+    }
+
+    #[test]
+    fn apply_prompt_sets_ps1_and_subst() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defprompt :ps1 "%F{green}%n%f %# "
+                       :ps2 "> "
+                       :prompt-subst #t)
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.prompts_set, 2);
+        assert_eq!(env.get_var("PS1"), Some("%F{green}%n%f %# "));
+        assert_eq!(env.get_var("PS2"), Some("> "));
+        assert!(env.is_option_set(frost_options::ShellOption::PromptSubst));
+    }
+
+    #[test]
+    fn apply_hook_registers_function() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defhook :event "precmd"
+                     :body "echo 'before each prompt'")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.hooks, 1);
+        assert!(env.functions.contains_key(
+            hook_function_name("precmd").unwrap()
+        ));
+    }
+
+    #[test]
+    fn apply_unknown_hook_errors() {
+        let mut env = ShellEnv::new();
+        let src = r#"(defhook :event "bogus" :body "true")"#;
+        assert!(matches!(apply_source(src, &mut env), Err(LispError::UnknownHook(_))));
     }
 }
