@@ -28,6 +28,7 @@
 //! plus a pass in [`apply_source`]: `defprompt`, `defhook`, `defbind`,
 //! `defcompletion`, `defun`, `deftrap`.
 
+mod abbr;
 mod alias;
 mod bind;
 mod compcomp;
@@ -43,6 +44,7 @@ mod prompt;
 mod source;
 mod trap;
 
+pub use abbr::{expand_abbreviation, AbbrSpec};
 pub use alias::AliasSpec;
 pub use bind::{bind_function_name, BindSpec};
 pub use compcomp::{FlagSpec, PositSpec, SubcmdSpec, ValueKind};
@@ -142,6 +144,13 @@ pub struct ApplySummary {
     /// those counts are bumped already — `integrations` just records
     /// how many top-level integrations were triggered.
     pub integrations: usize,
+
+    /// Fish-style abbreviations from `(defabbr …)`. The REPL consults
+    /// this at submit time: if the first word of the submitted line
+    /// matches a key, the line is rewritten (and the expansion
+    /// echoed) before exec — like `!`-expansion. Unlike aliases
+    /// (hidden), this is visible in terminal output + history.
+    pub abbreviations: std::collections::HashMap<String, String>,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -354,6 +363,10 @@ fn apply_source_with_context(
             env.set_var("PS2", ps2);
             summary.prompts_set += 1;
         }
+        if let Some(rps1) = &p.rps1 {
+            env.set_var("RPS1", rps1);
+            summary.prompts_set += 1;
+        }
         if let Some(subst) = p.prompt_subst {
             if subst {
                 env.set_option(frost_options::ShellOption::PromptSubst);
@@ -532,6 +545,15 @@ fn apply_source_with_context(
         summary.functions += 1;
     }
 
+    // Fish-style abbreviations — collected for the REPL's submit-time
+    // expander. Later forms win (last-writer-wins consistent with
+    // aliases).
+    let abbreviations: Vec<AbbrSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for a in abbreviations {
+        summary.abbreviations.insert(a.name, a.expansion);
+    }
+
     Ok(summary)
 }
 
@@ -564,6 +586,7 @@ fn merge_summary(dst: &mut ApplySummary, src: ApplySummary) {
     dst.subcmds.extend(src.subcmds);
     dst.flags.extend(src.flags);
     dst.positionals.extend(src.positionals);
+    dst.abbreviations.extend(src.abbreviations);
 }
 
 /// Resolve a `(defsource :path …)` string against the sourcing file's
