@@ -31,3 +31,4 @@ libc = { workspace = true }
 
 [dev-dependencies]
 frost-compat = { path = "../frost-compat" }
+reedline = "0.42"

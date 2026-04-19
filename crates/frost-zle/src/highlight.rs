@@ -84,7 +84,22 @@ impl Highlighter for FrostHighlighter {
         let mut prev_end: usize = 0;
         let mut at_command_start = true;
 
+        // Belt-and-suspenders iteration cap: even if the lexer is
+        // buggy and emits zero-width non-EOF tokens forever, the
+        // loop can't exceed one iteration per byte of input + a
+        // small slack. Without this, pathological inputs
+        // (unterminated herestrings, `$` at EOL, certain unicode)
+        // could hang the REPL on every keystroke since the
+        // highlighter runs after each edit.
+        let max_iters = line.len() + 16;
+        let mut iters = 0;
+
         loop {
+            if iters >= max_iters {
+                break;
+            }
+            iters += 1;
+
             let tok = lexer.next_token();
             if matches!(tok.kind, TokenKind::Eof | TokenKind::Error) {
                 break;
@@ -124,6 +139,13 @@ impl Highlighter for FrostHighlighter {
                 }
             }
 
+            // Monotonic progress: if the lexer fails to advance past
+            // `prev_end` we'd spin forever. Break cleanly in that case
+            // so the painted output is a prefix of the real highlight
+            // rather than a hang.
+            if end <= prev_end && iters > 1 {
+                break;
+            }
             prev_end = end;
         }
 

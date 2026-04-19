@@ -480,6 +480,7 @@ dependencies = [
  "frost-zle",
  "libc",
  "miette",
+ "reedline",
  "tracing",
  "tracing-subscriber",
 ]
