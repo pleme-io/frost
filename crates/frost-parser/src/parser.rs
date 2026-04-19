@@ -736,6 +736,18 @@ impl<'a> Parser<'a> {
                 TokenKind::At => {
                     parts.push(WordPart::Glob(GlobKind::At));
                 }
+                // Adjacent quoted segments — e.g. `ll='ls -la'` where the
+                // word is `ll=` + `'ls -la'`. Must strip the surrounding
+                // quotes here; the initial-token branch above already does
+                // so for the first token of a word.
+                TokenKind::SingleQuoted => {
+                    let inner = strip_quotes(&next.text, '\'');
+                    parts.push(WordPart::SingleQuoted(inner));
+                }
+                TokenKind::DoubleQuoted | TokenKind::DollarSingleQuoted => {
+                    let inner = strip_quotes(&next.text, '"');
+                    parts.extend(parse_double_quoted_parts(&inner));
+                }
                 _ => {
                     parts.push(WordPart::Literal(next.text.clone()));
                 }
