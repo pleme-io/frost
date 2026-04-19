@@ -3,7 +3,6 @@
 //! Compares a manifest (expected) against a trace (actual) and produces
 //! a report with per-entry status and an aggregate verdict.
 
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -197,7 +196,7 @@ pub fn rehash(manifest: &Manifest) -> Report {
             }
         };
 
-        if actual_hash == m_entry.sha256 {
+        if actual_hash == m_entry.blake3 {
             verified += 1;
             entries.push(EntryResult {
                 path: m_entry.path.clone(),
@@ -210,7 +209,7 @@ pub fn rehash(manifest: &Manifest) -> Report {
             entries.push(EntryResult {
                 path: m_entry.path.clone(),
                 status: EntryStatus::HashMismatch {
-                    expected: m_entry.sha256.clone(),
+                    expected: m_entry.blake3.clone(),
                     actual: actual_hash,
                 },
                 kind: Some(m_entry.kind),
@@ -238,20 +237,17 @@ pub fn rehash(manifest: &Manifest) -> Report {
     }
 }
 
-/// Compute SHA-256 hash of a file.
+/// Compute hex-encoded BLAKE3 hash of a file.
 pub fn hash_file(path: &Path) -> Result<String, std::io::Error> {
     let data = std::fs::read(path)?;
-    let mut hasher = Sha256::new();
-    hasher.update(&data);
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(blake3::hash(&data).to_hex().to_string())
 }
 
 fn check_entry(manifest: &ManifestEntry, trace: &TraceEntry) -> EntryStatus {
-    // Check hash (if trace has one).
-    if !trace.sha256.is_empty() && trace.sha256 != manifest.sha256 {
+    if !trace.blake3.is_empty() && trace.blake3 != manifest.blake3 {
         return EntryStatus::HashMismatch {
-            expected: manifest.sha256.clone(),
-            actual: trace.sha256.clone(),
+            expected: manifest.blake3.clone(),
+            actual: trace.blake3.clone(),
         };
     }
 
@@ -379,7 +375,7 @@ mod tests {
             order,
             path: path.to_string(),
             kind: EntryKind::Group,
-            sha256: hash.to_string(),
+            blake3: hash.to_string(),
             name: None,
             priority: None,
             deferred: false,
@@ -392,15 +388,16 @@ mod tests {
             ts: 0.0,
             path: path.to_string(),
             real_path: String::new(),
-            sha256: hash.to_string(),
+            blake3: hash.to_string(),
         }
     }
 
     #[test]
     fn perfect_match() {
         let manifest = Manifest {
-            version: 1,
+            version: crate::manifest::MANIFEST_VERSION,
             shell: "zsh".into(),
+            root: None,
             entries: vec![
                 entry(0, "a.zsh", "aaa"),
                 entry(1, "b.zsh", "bbb"),
@@ -421,8 +418,9 @@ mod tests {
     #[test]
     fn hash_mismatch_fails() {
         let manifest = Manifest {
-            version: 1,
+            version: crate::manifest::MANIFEST_VERSION,
             shell: "zsh".into(),
+            root: None,
             entries: vec![entry(0, "a.zsh", "expected")],
         };
         let trace = vec![trace_entry(0, "a.zsh", "actual")];
@@ -435,8 +433,9 @@ mod tests {
     #[test]
     fn missing_entry_fails() {
         let manifest = Manifest {
-            version: 1,
+            version: crate::manifest::MANIFEST_VERSION,
             shell: "zsh".into(),
+            root: None,
             entries: vec![entry(0, "a.zsh", "aaa"), entry(1, "missing.zsh", "bbb")],
         };
         let trace = vec![trace_entry(0, "a.zsh", "aaa")];
@@ -449,8 +448,9 @@ mod tests {
     #[test]
     fn deferred_missing_is_warning() {
         let manifest = Manifest {
-            version: 1,
+            version: crate::manifest::MANIFEST_VERSION,
             shell: "zsh".into(),
+            root: None,
             entries: vec![ManifestEntry {
                 deferred: true,
                 ..entry(0, "deferred.zsh", "aaa")
@@ -467,8 +467,9 @@ mod tests {
     #[test]
     fn local_override_missing_is_warning() {
         let manifest = Manifest {
-            version: 1,
+            version: crate::manifest::MANIFEST_VERSION,
             shell: "zsh".into(),
+            root: None,
             entries: vec![ManifestEntry {
                 kind: EntryKind::LocalOverride,
                 ..entry(0, "local.zsh", "aaa")
@@ -484,8 +485,9 @@ mod tests {
     #[test]
     fn unexpected_entry_is_warning() {
         let manifest = Manifest {
-            version: 1,
+            version: crate::manifest::MANIFEST_VERSION,
             shell: "zsh".into(),
+            root: None,
             entries: vec![entry(0, "a.zsh", "aaa")],
         };
         let trace = vec![
@@ -501,8 +503,9 @@ mod tests {
     #[test]
     fn empty_manifest_empty_trace_passes() {
         let manifest = Manifest {
-            version: 1,
+            version: crate::manifest::MANIFEST_VERSION,
             shell: "zsh".into(),
+            root: None,
             entries: vec![],
         };
         let report = verify(&manifest, &[]);
@@ -512,8 +515,9 @@ mod tests {
     #[test]
     fn order_mismatch_fails() {
         let manifest = Manifest {
-            version: 1,
+            version: crate::manifest::MANIFEST_VERSION,
             shell: "zsh".into(),
+            root: None,
             entries: vec![entry(0, "a.zsh", "aaa"), entry(1, "b.zsh", "bbb")],
         };
         // b.zsh loaded before a.zsh
@@ -533,10 +537,10 @@ mod tests {
         let file = dir.path().join("test.txt");
         std::fs::write(&file, "hello\n").unwrap();
         let hash = hash_file(&file).unwrap();
-        // sha256 of "hello\n"
+        // BLAKE3 of "hello\n"
         assert_eq!(
             hash,
-            "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+            "8e4c7c1b99dbfd50e7a95185fead5ee1448fa904a2fdd778eaf5f2dbfd629a99"
         );
     }
 }

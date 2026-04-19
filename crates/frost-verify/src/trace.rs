@@ -16,7 +16,7 @@ pub struct TraceEntry {
     #[serde(default)]
     pub real_path: String,
     #[serde(default)]
-    pub sha256: String,
+    pub blake3: String,
 }
 
 /// Load a trace from a JSONL file. Skips malformed lines.
@@ -40,8 +40,8 @@ mod tests {
 
     #[test]
     fn parse_valid_trace() {
-        let jsonl = r#"{"seq":0,"ts":1709827200.123,"path":"~/.zshenv","real_path":"/nix/store/abc","sha256":"aaa"}
-{"seq":1,"ts":1709827200.130,"path":"~/.config/shell/groups/common/settings.zsh","real_path":"/nix/store/def","sha256":"bbb"}"#;
+        let jsonl = r#"{"seq":0,"ts":1709827200.123,"path":"~/.zshenv","real_path":"/nix/store/abc","blake3":"aaa"}
+{"seq":1,"ts":1709827200.130,"path":"~/.config/shell/groups/common/settings.zsh","real_path":"/nix/store/def","blake3":"bbb"}"#;
 
         let entries = parse_trace(jsonl);
         assert_eq!(entries.len(), 2);
@@ -52,9 +52,9 @@ mod tests {
 
     #[test]
     fn skip_malformed_lines() {
-        let jsonl = r#"{"seq":0,"path":"ok","sha256":"abc"}
+        let jsonl = r#"{"seq":0,"path":"ok","blake3":"abc"}
 not valid json
-{"seq":1,"path":"also ok","sha256":"def"}"#;
+{"seq":1,"path":"also ok","blake3":"def"}"#;
 
         let entries = parse_trace(jsonl);
         assert_eq!(entries.len(), 2);
@@ -71,6 +71,6 @@ not valid json
         let jsonl = r#"{"seq":0,"path":"test.zsh"}"#;
         let entries = parse_trace(jsonl);
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].sha256, "");
+        assert_eq!(entries[0].blake3, "");
     }
 }

@@ -6,6 +6,7 @@ use std::process;
 use clap::Parser;
 
 use frost_verify::manifest::Manifest;
+use frost_verify::merkle;
 use frost_verify::trace;
 use frost_verify::verify;
 
@@ -32,7 +33,7 @@ struct Cli {
     )]
     trace: String,
 
-    /// Re-compute SHA-256 of all files on disk (no trace needed)
+    /// Re-compute BLAKE3 of all files on disk (no trace needed)
     #[arg(long)]
     rehash: bool,
 
@@ -47,6 +48,10 @@ struct Cli {
     /// Exit non-zero on warnings (unexpected files, missing deferred)
     #[arg(long)]
     strict: bool,
+
+    /// Print the Merkle attestation root and exit (tameshi-compatible).
+    #[arg(long)]
+    root: bool,
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
@@ -69,6 +74,19 @@ fn main() {
             process::exit(2);
         }
     };
+
+    if cli.root {
+        match merkle::compute_manifest_root(&manifest.entries) {
+            Ok(root) => {
+                println!("{}", merkle::encode_hex(&root));
+                process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("frost-verify: {e}");
+                process::exit(2);
+            }
+        }
+    }
 
     let report = if cli.rehash {
         verify::rehash(&manifest)
