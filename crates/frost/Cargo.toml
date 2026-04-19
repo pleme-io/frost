@@ -18,6 +18,7 @@ frost-parser = { workspace = true }
 frost-exec = { workspace = true }
 frost-builtins = { workspace = true }
 frost-options = { workspace = true }
+frost-zle = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

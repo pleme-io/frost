@@ -12,6 +12,7 @@ description = "Zsh Line Editor (ZLE)"
 frost-options = { workspace = true }
 thiserror = { workspace = true }
 nix = { workspace = true }
+reedline = "0.42"
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
