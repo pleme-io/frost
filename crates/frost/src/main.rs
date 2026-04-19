@@ -384,6 +384,7 @@ fn interactive(
     rc_subcmds: Vec<frost_lisp::SubcmdSpec>,
     rc_flags: Vec<frost_lisp::FlagSpec>,
     rc_positionals: Vec<frost_lisp::PositSpec>,
+    rc_abbreviations: std::collections::HashMap<String, String>,
 ) {
     // Ignore SIGINT in the shell process itself; reedline handles Ctrl-C
     // by aborting the current line buffer, not killing frost.
@@ -418,10 +419,18 @@ fn interactive(
         .chain(env.functions.keys().cloned())
         .chain(rc_completions.keys().cloned())
         .collect();
-    let highlighter = Box::new(frost_zle::FrostHighlighter::with_known(known_commands));
+    let highlighter = Box::new(
+        frost_zle::FrostHighlighter::with_known(known_commands)
+            // Fish-style broken-path red — stat tokens that look
+            // like paths on every keystroke. The cost is a single
+            // `stat(2)` per path-looking arg; negligible for a
+            // typical command line.
+            .with_path_checks(true),
+    );
     let mut zle = zle_base
         .with_completer(completer)
         .with_highlighter(highlighter)
+        .with_history_hints()
         .with_bindings(rc_binds);
     // Separate in-process history for `!` expansion — reedline owns the
     // user-facing navigation buffer, frost-history owns the expansion
@@ -439,9 +448,10 @@ fn interactive(
         // via `(defhook :event "precmd" :body …)` in the rc file.
         run_hook("__frost_hook_precmd", env);
 
-        // Re-read PS1 / PS2 each iteration so variable changes mid-session
-        // take effect on the next prompt, then run it through frost-prompt
-        // for zsh-style % and (optionally) $ substitution.
+        // Re-read PS1 / PS2 / RPS1 each iteration so variable changes
+        // mid-session take effect on the next prompt, then run it
+        // through frost-prompt for zsh-style % and (optionally)
+        // $ substitution.
         let ps1_raw = env
             .get_var("PS1")
             .map(|s| s.to_string())
@@ -450,6 +460,10 @@ fn interactive(
             .get_var("PS2")
             .map(|s| s.to_string())
             .unwrap_or_else(|| "> ".to_string());
+        let rps1_raw = env
+            .get_var("RPS1")
+            .map(|s| s.to_string())
+            .unwrap_or_default();
         let pe = {
             let mut pe = frost_prompt::PromptEnv::snapshot(env.exit_status);
             // Surface common vars to $-substitution without shelling out.
@@ -463,7 +477,12 @@ fn interactive(
         let prompt_subst = env.is_option_set(frost_options::ShellOption::PromptSubst);
         let ps1 = frost_prompt::render(&ps1_raw, &pe, prompt_subst);
         let ps2 = frost_prompt::render(&ps2_raw, &pe, prompt_subst);
-        zle.set_prompt(ps1, ps2);
+        let rps1 = if rps1_raw.is_empty() {
+            String::new()
+        } else {
+            frost_prompt::render(&rps1_raw, &pe, prompt_subst)
+        };
+        zle.set_prompt_with_rps1(ps1, ps2, rps1);
 
         // Honor `setopt vi` / `setopt emacs` on every iteration so
         // `bindkey -v` behavior changes mid-session.
@@ -545,6 +564,21 @@ fn interactive(
                     continue;
                 }
 
+                // Abbreviation expansion (fish-style) runs BEFORE
+                // `!`-expansion: user types `gco main`, hits Enter,
+                // frost echoes `git checkout main` and runs that. If
+                // the expansion itself contains `!` sequences, bang-
+                // expansion below will see them. This order matches
+                // fish: abbrev → then history substitution.
+                let (abbrev_expanded, abbrev_changed) =
+                    frost_lisp::expand_abbreviation(&line, &rc_abbreviations);
+                let line = if abbrev_changed {
+                    println!("{abbrev_expanded}");
+                    abbrev_expanded
+                } else {
+                    line
+                };
+
                 // `!`-expansion before parse. zsh's default is on
                 // (`setopt BANG_HIST`); once we add a `NoBangHist` option to
                 // frost-options, gate here. Until then, always expand.
@@ -600,39 +634,49 @@ fn main() {
     // functions. Missing file is not an error; parse/apply errors print
     // a warning so frost still starts even if the rc has a bug.
     let rc_path = frost_lisp::default_rc_path();
-    let (rc_completions, rc_binds, rc_descriptions, rc_pickers, rc_subcmds, rc_flags, rc_positionals) =
-        match frost_lisp::load_rc(&rc_path, &mut env) {
-            Ok(summary) => {
-                if summary != frost_lisp::ApplySummary::default() {
-                    tracing::debug!(
-                        ?summary,
-                        rc = %rc_path.display(),
-                        "loaded frost-lisp rc file"
-                    );
-                }
-                (
-                    summary.completion_map,
-                    summary.bind_map,
-                    summary.completion_descriptions,
-                    summary.pickers,
-                    summary.subcmds,
-                    summary.flags,
-                    summary.positionals,
-                )
+    let (
+        rc_completions,
+        rc_binds,
+        rc_descriptions,
+        rc_pickers,
+        rc_subcmds,
+        rc_flags,
+        rc_positionals,
+        rc_abbreviations,
+    ) = match frost_lisp::load_rc(&rc_path, &mut env) {
+        Ok(summary) => {
+            if summary != frost_lisp::ApplySummary::default() {
+                tracing::debug!(
+                    ?summary,
+                    rc = %rc_path.display(),
+                    "loaded frost-lisp rc file"
+                );
             }
-            Err(e) => {
-                eprintln!("frost: warning: failed to load {}: {e}", rc_path.display());
-                (
-                    std::collections::HashMap::new(),
-                    Vec::new(),
-                    std::collections::HashMap::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                )
-            }
-        };
+            (
+                summary.completion_map,
+                summary.bind_map,
+                summary.completion_descriptions,
+                summary.pickers,
+                summary.subcmds,
+                summary.flags,
+                summary.positionals,
+                summary.abbreviations,
+            )
+        }
+        Err(e) => {
+            eprintln!("frost: warning: failed to load {}: {e}", rc_path.display());
+            (
+                std::collections::HashMap::new(),
+                Vec::new(),
+                std::collections::HashMap::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                std::collections::HashMap::new(),
+            )
+        }
+    };
 
     let code = if let Some(cmd) = &cli.command {
         unwrap_outcome(run(cmd, &mut env))
@@ -654,6 +698,7 @@ fn main() {
             rc_subcmds,
             rc_flags,
             rc_positionals,
+            rc_abbreviations,
         );
         0
     } else {

@@ -38,15 +38,25 @@ use reedline::{Highlighter, StyledText};
 /// Lookup table for "is this name a known command?" — builtins +
 /// rc-defined aliases/functions. `frost-complete` already has a
 /// builtin list; this wraps it + user-supplied additions.
+///
+/// `check_paths` toggles fish-style broken-path highlighting: tokens
+/// that look like filesystem paths (`./foo`, `/abs`, `~/rel`,
+/// `$HOME/x`) are stat'd and colored red if they don't exist. Off
+/// by default in tests (filesystem access per highlight is
+/// undesirable); enabled by the interactive REPL.
 pub struct FrostHighlighter {
     known: HashSet<String>,
+    check_paths: bool,
 }
 
 impl FrostHighlighter {
     /// Empty-lookup highlighter — every first-word becomes "unknown"
     /// (yellow). Useful for tests; prefer `with_known` in the REPL.
     pub fn new() -> Self {
-        Self { known: HashSet::new() }
+        Self {
+            known: HashSet::new(),
+            check_paths: false,
+        }
     }
 
     /// Seed the known-commands set with the given names. Callers
@@ -59,7 +69,18 @@ impl FrostHighlighter {
     {
         Self {
             known: names.into_iter().map(Into::into).collect(),
+            check_paths: false,
         }
+    }
+
+    /// Enable fish-style broken-path highlighting. Path-looking
+    /// tokens (`./x`, `/etc`, `~/foo`, `$VAR/x`) are stat'd and
+    /// painted red when they don't exist. Off by default because
+    /// tests shouldn't hit the filesystem; the interactive REPL
+    /// flips it on.
+    pub fn with_path_checks(mut self, enabled: bool) -> Self {
+        self.check_paths = enabled;
+        self
     }
 
     /// Add a single name to the known set post-construction. Useful for
@@ -69,6 +90,42 @@ impl FrostHighlighter {
     pub fn insert_known(&mut self, name: impl Into<String>) {
         self.known.insert(name.into());
     }
+}
+
+/// Does `s` look like a filesystem path the user might have typed?
+/// Conservative — we'd rather miss a path than stat every Word
+/// token. Recognized prefixes: `/`, `./`, `../`, `~`, `~/`, `$`.
+fn looks_like_path(s: &str) -> bool {
+    s.starts_with('/')
+        || s.starts_with("./")
+        || s.starts_with("../")
+        || s.starts_with('~')
+        || s.starts_with('$')
+}
+
+/// Resolve environment-ish prefixes for a stat check: `~`, `~/`,
+/// `$VAR`, `${VAR}`. Returns None when we can't resolve (then we
+/// just skip the check).
+fn resolve_path_for_check(s: &str) -> Option<std::path::PathBuf> {
+    // Tilde.
+    if let Some(rest) = s.strip_prefix("~/") {
+        let home = std::env::var("HOME").ok()?;
+        return Some(std::path::PathBuf::from(home).join(rest));
+    }
+    if s == "~" {
+        return std::env::var("HOME").ok().map(std::path::PathBuf::from);
+    }
+    // $NAME at the start — strip, expand, concatenate. One level deep.
+    if let Some(rest) = s.strip_prefix('$') {
+        let (name, tail) = match rest.find('/') {
+            Some(idx) => (&rest[..idx], &rest[idx..]),
+            None => (rest, ""),
+        };
+        let name = name.trim_start_matches('{').trim_end_matches('}');
+        let value = std::env::var(name).ok()?;
+        return Some(std::path::PathBuf::from(value).join(tail.trim_start_matches('/')));
+    }
+    Some(std::path::PathBuf::from(s))
 }
 
 impl Default for FrostHighlighter {
@@ -121,7 +178,26 @@ impl Highlighter for FrostHighlighter {
             }
 
             let raw = line[start..end].to_string();
-            let style = style_for_token(&tok, at_command_start, &self.known);
+            let mut style = style_for_token(&tok, at_command_start, &self.known);
+
+            // Path-existence override. Only at non-command position
+            // (command-position words are already styled as green/
+            // yellow based on `known`); tokens that parse as paths
+            // get red if they don't resolve. Checking happens after
+            // the base style is picked so command-position paths
+            // still follow the known/unknown coloring.
+            if self.check_paths
+                && !at_command_start
+                && matches!(tok.kind, TokenKind::Word)
+                && looks_like_path(&raw)
+            {
+                if let Some(resolved) = resolve_path_for_check(&raw) {
+                    if !resolved.exists() {
+                        style = Style::new().fg(Color::Red);
+                    }
+                }
+            }
+
             out.push((style, raw));
 
             // Update command-boundary state for the next iteration.

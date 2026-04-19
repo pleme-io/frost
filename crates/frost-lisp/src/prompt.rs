@@ -29,6 +29,11 @@ pub struct PromptSpec {
     pub ps1: Option<String>,
     #[serde(default)]
     pub ps2: Option<String>,
+    /// Right-aligned prompt (`RPROMPT` in zsh, `RPS1`). Drawn on the
+    /// same line as `ps1` but flush-right. Common uses: clock, git
+    /// branch, exit-code badge. Empty = no right prompt.
+    #[serde(default)]
+    pub rps1: Option<String>,
     /// If true, enable `PROMPT_SUBST` so `$VAR` inside the template
     /// expands. Defaults to unchanged (None).
     #[serde(default)]

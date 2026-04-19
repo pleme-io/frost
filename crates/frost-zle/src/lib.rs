@@ -22,10 +22,12 @@ use std::path::{Path, PathBuf};
 
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    Completer, EditCommand, EditMode, Emacs, FileBackedHistory, Highlighter, KeyCode, KeyModifiers,
-    Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
-    ReedlineEvent, ReedlineMenu, Signal, Vi,
+    Completer, DefaultHinter, EditCommand, EditMode, Emacs, FileBackedHistory, Highlighter, Hinter,
+    KeyCode, KeyModifiers, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
+    Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
 };
+
+use nu_ansi_term::{Color, Style};
 
 mod highlight;
 pub use highlight::FrostHighlighter;
@@ -65,15 +67,28 @@ pub enum ReadLineOutcome {
     Eof,
 }
 
-/// A frost prompt: `PS1` for the primary line and `PS2` for continuations.
+/// A frost prompt: `PS1` for the primary line, `PS2` for continuations,
+/// optional `RPS1` for the right-side segment (clock, git info, exit
+/// code badge — typical blzsh / fish / zsh `RPROMPT` usage).
 pub struct FrostPrompt {
     ps1: String,
     ps2: String,
+    rps1: String,
 }
 
 impl FrostPrompt {
     pub fn new(ps1: impl Into<String>, ps2: impl Into<String>) -> Self {
-        Self { ps1: ps1.into(), ps2: ps2.into() }
+        Self {
+            ps1: ps1.into(),
+            ps2: ps2.into(),
+            rps1: String::new(),
+        }
+    }
+
+    /// Include a right-aligned prompt segment.
+    pub fn with_rps1(mut self, rps1: impl Into<String>) -> Self {
+        self.rps1 = rps1.into();
+        self
     }
 }
 
@@ -88,7 +103,7 @@ impl Prompt for FrostPrompt {
         std::borrow::Cow::Borrowed(&self.ps1)
     }
     fn render_prompt_right(&self) -> std::borrow::Cow<'_, str> {
-        std::borrow::Cow::Borrowed("")
+        std::borrow::Cow::Borrowed(&self.rps1)
     }
     fn render_prompt_indicator(&self, _mode: PromptEditMode) -> std::borrow::Cow<'_, str> {
         std::borrow::Cow::Borrowed("")
@@ -170,10 +185,47 @@ impl ZleEngine {
         self
     }
 
+    /// Install a history-backed hinter. Fish's ghost-text UX: after
+    /// you type a prefix that matches a past command, reedline shows
+    /// the remainder of that command in a dim-grey overlay. Accept
+    /// with → (right-arrow) or Ctrl-E.
+    ///
+    /// Convenience — installs [`reedline::DefaultHinter`] with the
+    /// Nord-adjacent dim-grey styling frostmourne uses elsewhere. For
+    /// a custom hinter (e.g. completing from a frecency db or live
+    /// command registry) use [`Self::with_hinter`] directly.
+    pub fn with_history_hints(mut self) -> Self {
+        let hinter = DefaultHinter::default()
+            .with_style(Style::new().fg(Color::Fixed(244))) // Nord polar-night-4
+            .with_min_chars(1);
+        self.inner = std::mem::replace(&mut self.inner, Reedline::create())
+            .with_hinter(Box::new(hinter));
+        self
+    }
+
+    /// Install an arbitrary [`Hinter`]. Used by tests + any consumer
+    /// that wants to override the default history-backed hint.
+    pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Self {
+        self.inner = std::mem::replace(&mut self.inner, Reedline::create())
+            .with_hinter(hinter);
+        self
+    }
+
     /// Update PS1 / PS2. Callers should pre-expand any `PROMPT_SUBST`
     /// placeholders before passing strings here.
     pub fn set_prompt(&mut self, ps1: impl Into<String>, ps2: impl Into<String>) {
         self.prompt = FrostPrompt::new(ps1, ps2);
+    }
+
+    /// Update PS1 / PS2 and RPS1 in one call — the common path for
+    /// REPLs that re-read the prompt vars each iteration.
+    pub fn set_prompt_with_rps1(
+        &mut self,
+        ps1: impl Into<String>,
+        ps2: impl Into<String>,
+        rps1: impl Into<String>,
+    ) {
+        self.prompt = FrostPrompt::new(ps1, ps2).with_rps1(rps1);
     }
 
     /// Switch the line editor into vi or emacs mode. Idempotent —
