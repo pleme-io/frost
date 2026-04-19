@@ -387,11 +387,18 @@ esac")
 (defalias :name "grep" :value "rg")
 (defalias :name "find" :value "fd")
 
-;; eza > ls — show git status + icons when available.
-(defalias :name "ls"   :value "eza --git")
+;; blx-ls > ls — thin Rust wrapper (pleme-io/blx) that translates
+;; POSIX `ls` flags to eza equivalents. Fixes the common case
+;; `ls -ltra` — eza's -t means --time (takes a value), so a raw
+;; `eza -ltra` fails; blx-ls parses the cluster and invokes eza
+;; with `-la --sort=modified --reverse`.
+(defalias :name "ls"   :value "blx-ls")
 (defalias :name "ll"   :value "eza -la --git --group-directories-first")
 (defalias :name "la"   :value "eza -A --git")
 (defalias :name "lt"   :value "eza -la --git --tree --level=2 --group-directories-first")
+(defalias :name "lta"  :value "eza -la --sort=modified --reverse --icons --group-directories-first")
+(defalias :name "ltr"  :value "eza -l --sort=modified --reverse --icons --group-directories-first")
+(defalias :name "tree" :value "eza --tree --icons")
 
 ;; delta makes git diff legible.
 (defenv :name "GIT_PAGER" :value "delta" :export #t)
