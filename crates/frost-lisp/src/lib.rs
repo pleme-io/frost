@@ -40,6 +40,7 @@ mod option;
 mod path;
 mod picker;
 mod prompt;
+mod source;
 mod trap;
 
 pub use alias::AliasSpec;
@@ -54,6 +55,7 @@ pub use option::OptionSetSpec;
 pub use path::{apply_path, expand_vars, PathSpec};
 pub use picker::{is_valid_action, picker_sentinel, PickerSpec, VALID_ACTIONS};
 pub use prompt::PromptSpec;
+pub use source::SourceSpec;
 pub use trap::TrapSpec;
 
 use frost_exec::ShellEnv;
@@ -77,6 +79,10 @@ pub enum LispError {
     UnknownPickerAction(String),
     #[error("unknown integration: {0} (known: zoxide, direnv, starship, atuin)")]
     UnknownIntegration(String),
+    #[error("defsource path not found: {path} (from rc at {rc})")]
+    SourceNotFound { path: String, rc: String },
+    #[error("defsource path unreadable: {path}: {source}")]
+    SourceIo { path: String, source: std::io::Error },
 }
 
 /// Summary of what a rc-application round actually changed. Returned by
@@ -144,7 +150,63 @@ pub struct ApplySummary {
 /// `compile_typed` filters by keyword, so mixing `defalias`/`defopts`/
 /// `defenv` in the same file is expected).
 pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
+    apply_source_with_context(src, env, None, &mut std::collections::HashSet::new())
+}
+
+/// Full-fat apply entry. `rc_dir` is the directory of the file the
+/// source came from (used for `(defsource :path "relative.lisp")`
+/// resolution). `visited` carries the canonical paths already sourced
+/// in this apply-tree so recursive sourcing terminates.
+fn apply_source_with_context(
+    src: &str,
+    env: &mut ShellEnv,
+    rc_dir: Option<&std::path::Path>,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+) -> LispResult<ApplySummary> {
     let mut summary = ApplySummary::default();
+
+    // ─── Sourced files (first — their forms fold into the outer pass) ─
+    // Sourcing happens ahead of every primitive pass so that later
+    // primitive forms in THIS file can override sourced ones — last
+    // writer still wins on aliases / env / prompt. Hook bodies
+    // compose either way thanks to the hook pass's accumulation.
+    let sources: Vec<SourceSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for s in sources {
+        let resolved = resolve_source_path(&s.path, rc_dir);
+        let canonical = std::fs::canonicalize(&resolved).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                LispError::SourceNotFound {
+                    path: resolved.display().to_string(),
+                    rc: rc_dir
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "<inline>".into()),
+                }
+            } else {
+                LispError::SourceIo {
+                    path: resolved.display().to_string(),
+                    source: e,
+                }
+            }
+        })?;
+        if !visited.insert(canonical.clone()) {
+            // Already sourced in this apply-tree — silent skip keeps
+            // re-exports from spamming; we aren't a package manager.
+            continue;
+        }
+        let inner_src = std::fs::read_to_string(&canonical).map_err(|e| LispError::SourceIo {
+            path: canonical.display().to_string(),
+            source: e,
+        })?;
+        let inner_dir = canonical.parent().map(|p| p.to_path_buf());
+        let inner_summary = apply_source_with_context(
+            &inner_src,
+            env,
+            inner_dir.as_deref(),
+            visited,
+        )?;
+        merge_summary(&mut summary, inner_summary);
+    }
 
     // ─── Integrations (first — they contribute primitives) ──────────
     // `(defintegration :tool "zoxide")` expands into the canonical
@@ -473,6 +535,71 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
     Ok(summary)
 }
 
+/// Fold a nested-source's summary into the outer one. Hook / trap /
+/// alias counts sum; the map-shaped fields (completion_map,
+/// completion_descriptions) extend; vec-shaped (bind_map, subcmds,
+/// flags, positionals, pickers) extend. This is lossy for `pickers`
+/// with the same `name` across inner+outer — both land in the vec and
+/// the REPL's lookup uses `find()` which returns the first match, so
+/// inner wins when it exists. For most uses (inner files are
+/// auto-generated, outer is hand-authored), that's correct.
+fn merge_summary(dst: &mut ApplySummary, src: ApplySummary) {
+    dst.aliases += src.aliases;
+    dst.options_enabled += src.options_enabled;
+    dst.options_disabled += src.options_disabled;
+    dst.env_vars += src.env_vars;
+    dst.env_exports += src.env_exports;
+    dst.prompts_set += src.prompts_set;
+    dst.hooks += src.hooks;
+    dst.traps += src.traps;
+    dst.binds += src.binds;
+    dst.completions += src.completions;
+    dst.functions += src.functions;
+    dst.path_ops += src.path_ops;
+    dst.integrations += src.integrations;
+    dst.completion_map.extend(src.completion_map);
+    dst.bind_map.extend(src.bind_map);
+    dst.completion_descriptions.extend(src.completion_descriptions);
+    dst.pickers.extend(src.pickers);
+    dst.subcmds.extend(src.subcmds);
+    dst.flags.extend(src.flags);
+    dst.positionals.extend(src.positionals);
+}
+
+/// Resolve a `(defsource :path …)` string against the sourcing file's
+/// directory. `~/` + `$VAR` / `${VAR}` expansion runs against the
+/// process env (not `ShellEnv`; sourcing is a build-time-of-rc concept).
+fn resolve_source_path(raw: &str, rc_dir: Option<&std::path::Path>) -> std::path::PathBuf {
+    // Env expansion — reuse the defpath expand_vars so behavior
+    // matches what users already know.
+    let expanded = path::expand_vars(raw, &|name| std::env::var(name).ok());
+
+    // Tilde: only `~/` (home-prefix). Full user home (`~user`) is
+    // niche; sourcing is mostly the author's own files.
+    let tilde_expanded = if let Some(rest) = expanded.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            std::path::PathBuf::from(home).join(rest)
+        } else {
+            std::path::PathBuf::from(&expanded)
+        }
+    } else if expanded == "~" {
+        std::env::var("HOME").map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from(&expanded))
+    } else {
+        std::path::PathBuf::from(&expanded)
+    };
+
+    // Relative paths resolve against rc_dir (not cwd) — stable across
+    // frost launch locations.
+    if tilde_expanded.is_absolute() {
+        tilde_expanded
+    } else if let Some(dir) = rc_dir {
+        dir.join(tilde_expanded)
+    } else {
+        tilde_expanded
+    }
+}
+
 /// Scan a string for `$NAME` / `${NAME}` references and add the
 /// names (without the `$` / braces) to `out`. Used by the defpath
 /// apply to build a minimal env snapshot for expansion — avoids
@@ -543,7 +670,8 @@ fn install_body_as_function(env: &mut ShellEnv, fn_name: &str, body: &str) {
 }
 
 /// Read and apply a Lisp rc file. Missing file = Ok with empty summary
-/// so callers can unconditionally call this on startup.
+/// so callers can unconditionally call this on startup. `defsource`
+/// paths resolve against this file's directory.
 pub fn load_rc(path: impl AsRef<Path>, env: &mut ShellEnv) -> LispResult<ApplySummary> {
     let path = path.as_ref();
     if !path.exists() {
@@ -553,7 +681,12 @@ pub fn load_rc(path: impl AsRef<Path>, env: &mut ShellEnv) -> LispResult<ApplySu
         path: path.display().to_string(),
         source: e,
     })?;
-    apply_source(&src, env)
+    let rc_dir = path.parent();
+    let mut visited = std::collections::HashSet::new();
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        visited.insert(canonical);
+    }
+    apply_source_with_context(&src, env, rc_dir, &mut visited)
 }
 
 /// Resolve the default rc file path — `$FROSTRC` if set, else
@@ -836,14 +969,94 @@ mod tests {
     }
 
     #[test]
+    fn apply_defsource_loads_external_file() {
+        let mut env = ShellEnv::new();
+        let tmp = std::env::temp_dir().join(format!("frost-defsource-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let inner = tmp.join("inner.lisp");
+        std::fs::write(&inner, r#"(defalias :name "aa" :value "aliased-via-source")"#).unwrap();
+        let outer = tmp.join("outer.lisp");
+        std::fs::write(
+            &outer,
+            format!(
+                "(defsource :path \"{}\")\n(defalias :name \"bb\" :value \"outer-alias\")",
+                inner.display()
+            ),
+        ).unwrap();
+        let s = load_rc(&outer, &mut env).unwrap();
+        // Both aliases land in env.aliases; both count toward the summary.
+        assert_eq!(env.aliases.get("aa").map(String::as_str), Some("aliased-via-source"));
+        assert_eq!(env.aliases.get("bb").map(String::as_str), Some("outer-alias"));
+        assert_eq!(s.aliases, 2);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_defsource_relative_path_resolves_against_rc_dir() {
+        let mut env = ShellEnv::new();
+        let tmp = std::env::temp_dir().join(format!("frost-defsource-rel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let inner = tmp.join("inner.lisp");
+        std::fs::write(&inner, r#"(defalias :name "rel" :value "from-sibling")"#).unwrap();
+        let outer = tmp.join("outer.lisp");
+        std::fs::write(&outer, r#"(defsource :path "inner.lisp")"#).unwrap();
+        load_rc(&outer, &mut env).unwrap();
+        assert_eq!(env.aliases.get("rel").map(String::as_str), Some("from-sibling"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_defsource_missing_file_errors() {
+        let mut env = ShellEnv::new();
+        let src = r#"(defsource :path "/definitely/not/a/real/path.lisp")"#;
+        let err = apply_source(src, &mut env).unwrap_err();
+        assert!(matches!(err, LispError::SourceNotFound { .. }));
+    }
+
+    #[test]
+    fn apply_defsource_cycle_is_skipped() {
+        // Two files that source each other — the visited-set must
+        // prevent infinite recursion.
+        let mut env = ShellEnv::new();
+        let tmp = std::env::temp_dir().join(format!("frost-defsource-cycle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let a = tmp.join("a.lisp");
+        let b = tmp.join("b.lisp");
+        std::fs::write(
+            &a,
+            format!(
+                "(defsource :path \"{}\")\n(defalias :name \"a\" :value \"from-a\")",
+                b.display()
+            ),
+        ).unwrap();
+        std::fs::write(
+            &b,
+            format!(
+                "(defsource :path \"{}\")\n(defalias :name \"b\" :value \"from-b\")",
+                a.display()
+            ),
+        ).unwrap();
+        load_rc(&a, &mut env).unwrap();
+        // Both aliases register; the cycle is broken by the visited set.
+        assert_eq!(env.aliases.get("a").map(String::as_str), Some("from-a"));
+        assert_eq!(env.aliases.get("b").map(String::as_str), Some("from-b"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
     fn apply_integration_zoxide_expands_aliases_and_chpwd() {
         let mut env = ShellEnv::new();
         let src = r#"(defintegration :tool "zoxide")"#;
         let s = apply_source(src, &mut env).unwrap();
         assert_eq!(s.integrations, 1);
-        // Recipe added two aliases.
-        assert_eq!(env.aliases.get("z").map(String::as_str), Some("__zoxide_z"));
-        assert_eq!(env.aliases.get("zi").map(String::as_str), Some("__zoxide_zi"));
+        // Recipe added two aliases — frost-native (no `__zoxide_*`
+        // shell-function indirection since frost doesn't run zoxide's
+        // bash/zsh init).
+        assert_eq!(env.aliases.get("z").map(String::as_str), Some("zoxide query"));
+        assert_eq!(env.aliases.get("zi").map(String::as_str), Some("zoxide query -i"));
         // chpwd hook body must include the zoxide add call. The body
         // renders as a parsed AST (Word { parts: [Literal("zoxide")] }
         // + Word { parts: [Literal("add")] }), so assert on the tokens

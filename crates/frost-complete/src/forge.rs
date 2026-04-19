@@ -25,7 +25,7 @@
 //! * **JSON/YAML formats** — CLIs with structured help (`podman`,
 //!   newer `aws` CLI) expose completable trees directly.
 
-use frost_lisp::{FlagSpec, PositSpec, SubcmdSpec};
+use frost_lisp::{FlagSpec, PositSpec, SubcmdSpec, ValueKind};
 
 /// Errors raised by the forge.
 #[derive(Debug, thiserror::Error)]
@@ -379,6 +379,402 @@ fn lisp_str(s: &str) -> String {
     out
 }
 
+// ─── zsh compdef parser ───────────────────────────────────────────────────
+
+/// Parse a zsh completion script (as found in `_git`, `_kubectl`,
+/// `_ssh`, etc.) and emit frost-complete specs. Targets the common
+/// shape:
+///
+/// ```zsh
+/// #compdef git
+/// _git() {
+///   _arguments -C \
+///     '-C[change working directory]:directory:_files -/' \
+///     '--version[show version]' \
+///     '--help[show help]' \
+///     '1: :_git_commands' \
+///     '*::arg:->args'
+/// }
+/// ```
+///
+/// What we extract:
+///
+/// * `#compdef <name> [, <alias>, …]` lines → the target command
+///   name(s). Every alias gets a parallel branch, so `_kubectl` with
+///   `#compdef kubectl kubecolor` emits FlagSpec/PositSpec under both.
+/// * Each argument spec string (the `'...'` quoted chunks passed to
+///   `_arguments`) → one or more FlagSpec / PositSpec entries.
+///
+/// What we don't cover in this first pass:
+///
+/// * `case $state` subcommand state machines. Zsh uses `$state`
+///   dispatching to group flags per subcommand; parsing that
+///   requires running a partial zsh interpreter. v1 treats every
+///   flag as living at the top level — good enough for flat CLIs,
+///   and still far better than nothing for subcommanded ones
+///   (the user sees SOME flags for every subcommand rather than
+///   none at all).
+/// * Helper-function dispatchers like `:_files`, `:_git_commands`.
+///   We map `_files` / `_directories` / `_path_files` to file/dir
+///   value kinds; unknown helpers become string-typed.
+/// * `(group1 group2 ...)` exclusion. We ignore the group name and
+///   still emit the flag.
+///
+/// Every failure point is non-fatal: unparseable lines are dropped
+/// with a debug note, because real-world `_git` runs 8000+ lines of
+/// zsh that includes inline functions we shouldn't try to parse.
+pub fn parse_zsh_compdef(src: &str) -> ForgeResult<ForgeOutput> {
+    let mut out = ForgeOutput::default();
+    let Some(commands) = find_compdef_commands(src) else {
+        // No `#compdef` marker — skip, return empty. Some completion
+        // files are helpers called by the main compdef and don't bind
+        // to a command themselves.
+        return Ok(out);
+    };
+    let spec_strings = extract_arguments_specs(src);
+    for spec in &spec_strings {
+        let parsed = match parse_arguments_spec(spec) {
+            Some(p) => p,
+            None => continue,
+        };
+        for cmd in &commands {
+            emit_parsed_for_command(cmd, &parsed, &mut out);
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// First-line `#compdef foo bar,baz` → `["foo", "bar", "baz"]`.
+/// Zsh accepts both space and comma separators. `=cmd` aliases are
+/// treated as additional names, stripping the `=`.
+fn find_compdef_commands(src: &str) -> Option<Vec<String>> {
+    for line in src.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("#compdef ") {
+            let names: Vec<String> = rest
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .map(|s| s.trim().trim_start_matches('='))
+                .filter(|s| !s.is_empty() && !s.starts_with('-'))
+                .map(String::from)
+                .collect();
+            if !names.is_empty() {
+                return Some(names);
+            }
+        }
+    }
+    None
+}
+
+/// Find every single- or double-quoted string passed to `_arguments`.
+/// Zsh line-continuation with `\` is honored — multi-line _arguments
+/// invocations produce one flat concatenated view here.
+///
+/// We deliberately over-collect: any quoted string that looks like an
+/// `_arguments` spec (starts with `-`, `*`, or digit after optional
+/// paren-group) is returned. Non-spec strings get filtered out by
+/// [`parse_arguments_spec`] returning None.
+fn extract_arguments_specs(src: &str) -> Vec<String> {
+    // Collapse `\<newline>` continuations. Zsh uses them heavily.
+    let joined = src.replace("\\\n", " ");
+    let bytes = joined.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' => {
+                let start = i + 1;
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'\'' {
+                    i += 1;
+                }
+                if start < i {
+                    let s = &joined[start..i];
+                    if looks_like_arg_spec(s) {
+                        out.push(s.to_string());
+                    }
+                }
+                i += 1;
+            }
+            b'"' => {
+                let start = i + 1;
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == b'"' { break; }
+                    i += 1;
+                }
+                if start < i {
+                    let s = &joined[start..i];
+                    if looks_like_arg_spec(s) {
+                        out.push(s.to_string());
+                    }
+                }
+                i += 1;
+            }
+            // Fast-skip line comments (# outside a string).
+            b'#' => {
+                while i < bytes.len() && bytes[i] != b'\n' { i += 1; }
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+/// Heuristic: does this quoted string look like an `_arguments` spec?
+/// _arguments specs start with one of:
+///   -flag | --long | *:…  | 1:…  | (a|b):…
+/// plus an optional `(group)` prefix for mutual-exclusion sets.
+fn looks_like_arg_spec(s: &str) -> bool {
+    let mut rest = s;
+    // Strip leading `(group)` → continue checking the remainder.
+    if let Some(stripped) = strip_group_prefix(rest) {
+        rest = stripped;
+    }
+    // Leading `!` means "hidden" in _arguments. Ignore.
+    rest = rest.trim_start_matches('!');
+    let Some(c) = rest.chars().next() else { return false };
+    c == '-' || c == '*' || c.is_ascii_digit() || c == ':'
+}
+
+fn strip_group_prefix(s: &str) -> Option<&str> {
+    if !s.starts_with('(') { return None; }
+    // Scan forward to matching `)` — `_arguments` groups don't nest
+    // parens, so a flat scan is sufficient.
+    let bytes = s.as_bytes();
+    let mut i = 1;
+    while i < bytes.len() && bytes[i] != b')' { i += 1; }
+    if i >= bytes.len() { return None; }
+    // Trim any whitespace after the `)` and return the tail.
+    let tail = &s[i + 1..];
+    Some(tail.trim_start())
+}
+
+/// Parsed shape of one `_arguments` spec string. We express the full
+/// `_arguments` surface conservatively — anything we don't understand
+/// falls through as `Other` and is skipped downstream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ParsedArg {
+    /// `-f[desc]` or `--long[desc]` with optional value.
+    Flag {
+        name: String,
+        takes: Option<ValueKind>,
+        description: Option<String>,
+    },
+    /// `1: :action` / `*:arg:action` — positional at index `n` (or
+    /// `u32::MAX` for `*`, meaning "rest").
+    Positional {
+        index: u32,
+        takes: Option<ValueKind>,
+        description: Option<String>,
+    },
+    /// We parsed the shape but don't know what to do — drop.
+    Other,
+}
+
+fn parse_arguments_spec(raw: &str) -> Option<ParsedArg> {
+    let mut s = raw;
+    if let Some(stripped) = strip_group_prefix(s) {
+        s = stripped;
+    }
+    s = s.trim_start_matches('!');
+
+    // Is this a flag (starts with `-`) or positional (`*` / digit / `:`)?
+    if s.starts_with('-') {
+        return parse_flag_spec(s);
+    }
+    if s.starts_with('*') || s.starts_with(':') || s.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        return parse_positional_spec(s);
+    }
+    Some(ParsedArg::Other)
+}
+
+/// Parse a flag spec: optional `-name` possibly with `+`, optional
+/// `[description]`, optional `:label:action` for value types.
+fn parse_flag_spec(s: &str) -> Option<ParsedArg> {
+    // `-f+` / `-f=` means "takes an arg"; we'll pick up the value
+    // type from the `:label:action` later.
+    let (name_part, rest) = split_flag_name(s);
+    let name = name_part.trim_end_matches('+').trim_end_matches('=').to_string();
+    if name.is_empty() || name == "-" {
+        return Some(ParsedArg::Other);
+    }
+
+    // Description in brackets: `[description]`.
+    let mut description: Option<String> = None;
+    let mut after_desc = rest;
+    if let Some(desc_rest) = rest.strip_prefix('[') {
+        if let Some(close) = desc_rest.find(']') {
+            description = Some(desc_rest[..close].to_string());
+            after_desc = &desc_rest[close + 1..];
+        }
+    }
+
+    // Value action: `:label:action` — possibly multiple colon groups.
+    // First colon-group's action names the value type.
+    let takes = parse_value_action(after_desc);
+
+    Some(ParsedArg::Flag { name, takes, description })
+}
+
+/// Split `-f+foo` into ("-f+", "foo"). Split `--help[desc]` into
+/// ("--help", "[desc]"). A bare `-abc` without `+`/`=` is ambiguous
+/// in zsh (cluster of short flags) — treat as literal `-abc`.
+fn split_flag_name(s: &str) -> (&str, &str) {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'[' || c == b':' {
+            return (&s[..i], &s[i..]);
+        }
+        if c == b'+' || c == b'=' {
+            return (&s[..=i], &s[i + 1..]);
+        }
+        i += 1;
+    }
+    (s, "")
+}
+
+/// Parse a positional spec: `N: :action`, `*:label:action`, `1:file:_files`.
+fn parse_positional_spec(s: &str) -> Option<ParsedArg> {
+    // Index: `*` = u32::MAX sentinel for "rest"; digits parse to N; `:` means "next" (skip).
+    let (index, rest) = match s.chars().next()? {
+        '*' => (u32::MAX, &s[1..]),
+        ':' => (1, s),
+        c if c.is_ascii_digit() => {
+            let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+            let n: u32 = s[..end].parse().ok()?;
+            (n.max(1), &s[end..])
+        }
+        _ => return None,
+    };
+
+    // `::` or ':' — skip leading separators.
+    let after_index = rest.trim_start_matches(':');
+    // Next colon-delimited label is the description-ish placeholder;
+    // zsh spec is `label:action`. We extract a description from
+    // `[desc]` if it appears, otherwise use the label.
+    let (label_or_desc, after_label) = match after_index.find(':') {
+        Some(idx) => (&after_index[..idx], &after_index[idx + 1..]),
+        None => (after_index, ""),
+    };
+    let trimmed_label = label_or_desc.trim();
+    let description = if !trimmed_label.is_empty()
+        && trimmed_label != "arg"
+        && !trimmed_label.starts_with('_')
+    {
+        Some(trimmed_label.to_string())
+    } else {
+        None
+    };
+    let takes = parse_value_action(after_label);
+    Some(ParsedArg::Positional { index, takes, description })
+}
+
+/// `_files` → `file`, `_directories` → `dir`, `_path_files -/` → `dir`,
+/// `(json yaml text)` → `choice:json,yaml,text`. Unknown actions
+/// fall back to `String`.
+///
+/// zsh spec shape: `:label:action`. Callers pass the whole
+/// post-description tail (may include leading `:`), so we strip a
+/// leading colon, peel off the label (everything up to the next
+/// colon), then parse what remains as the action.
+fn parse_value_action(s: &str) -> Option<ValueKind> {
+    let s = s.trim().trim_start_matches(':');
+    if s.is_empty() { return None; }
+    // Spec is `label:action` — split once. If no colon, the whole
+    // string is already the action.
+    let action = match s.find(':') {
+        Some(idx) => s[idx + 1..].trim(),
+        None => s,
+    };
+    if action.is_empty() { return None; }
+    // Strip leading `->state` — state dispatchers are subcommand
+    // hand-off we don't follow here.
+    if action.starts_with("->") {
+        return None;
+    }
+    let s = action;
+    // `(a b c)` choice-literal.
+    if let Some(rest) = s.strip_prefix('(') {
+        if let Some(close) = rest.find(')') {
+            let choices: Vec<String> = rest[..close]
+                .split(|c: char| c.is_whitespace() || c == '|')
+                .map(|c| c.trim().to_string())
+                .filter(|c| !c.is_empty())
+                .collect();
+            if !choices.is_empty() {
+                return Some(ValueKind::Choice(choices));
+            }
+        }
+    }
+    // Helper-function dispatchers.
+    for (prefix, kind) in &[
+        ("_files", ValueKind::File),
+        ("_path_files", ValueKind::File),
+        ("_directories", ValueKind::Dir),
+        ("_cd", ValueKind::Dir),
+    ] {
+        if s.starts_with(*prefix) {
+            // `_files -/` or `_path_files -/` restricts to directories.
+            if s.contains("-/") {
+                return Some(ValueKind::Dir);
+            }
+            return Some(kind.clone());
+        }
+    }
+    // Label-only (`:msg`) with nothing after — string.
+    Some(ValueKind::String)
+}
+
+/// Fold one ParsedArg into the output under `command`.
+fn emit_parsed_for_command(command: &str, arg: &ParsedArg, out: &mut ForgeOutput) {
+    match arg {
+        ParsedArg::Flag { name, takes, description } => {
+            out.flags.push(FlagSpec {
+                path: command.to_string(),
+                name: name.clone(),
+                takes: takes.as_ref().map(|k| value_kind_to_str(k)),
+                description: description.clone(),
+            });
+        }
+        ParsedArg::Positional { index, takes, description } => {
+            // Clamp `*` (u32::MAX) to a large but sentinel-ish slot
+            // so BTreeMap<u32> ordering in the tree stays sane.
+            let idx = if *index == u32::MAX { 999 } else { *index };
+            out.positionals.push(PositSpec {
+                path: command.to_string(),
+                index: idx,
+                takes: takes.as_ref().map(|k| value_kind_to_str(k)),
+                description: description.clone(),
+            });
+        }
+        ParsedArg::Other => {}
+    }
+}
+
+/// Inverse of [`ValueKind::parse`] — used by the compdef emitter so
+/// its output round-trips through the Lisp reader.
+fn value_kind_to_str(k: &ValueKind) -> String {
+    match k {
+        ValueKind::String   => "string".into(),
+        ValueKind::Integer  => "integer".into(),
+        ValueKind::File     => "file".into(),
+        ValueKind::Files    => "files".into(),
+        ValueKind::Dir      => "dir".into(),
+        ValueKind::Dirs     => "dirs".into(),
+        ValueKind::Choice(choices) => {
+            let joined = choices.join(",");
+            format!("choice:{joined}")
+        }
+    }
+}
+
 // ─── skim-tab YAML parser ─────────────────────────────────────────────────
 
 use serde::Deserialize;
@@ -573,6 +969,89 @@ subcommands:
         let paths: Vec<&str> = out.subcmds.iter().map(|s| s.path.as_str()).collect();
         assert!(paths.contains(&"kubectl"));
         assert!(paths.contains(&"k"));
+    }
+
+    #[test]
+    fn parse_zsh_extracts_compdef_command_name() {
+        let z = r#"
+#compdef git
+_git() {
+  _arguments
+}
+"#;
+        assert_eq!(find_compdef_commands(z), Some(vec!["git".into()]));
+    }
+
+    #[test]
+    fn parse_zsh_extracts_multiple_compdef_names() {
+        let z = "#compdef git gitk, gh\n_git() {}";
+        let names = find_compdef_commands(z).unwrap();
+        assert_eq!(names, vec!["git".to_string(), "gitk".to_string(), "gh".to_string()]);
+    }
+
+    #[test]
+    fn parse_zsh_flag_with_description_and_file_type() {
+        let z = r#"
+#compdef mytool
+_mytool() {
+  _arguments -C \
+    '-C[change working directory]:directory:_files -/' \
+    '--version[show version]' \
+    '-h[show help]' \
+    '1: :_files'
+}
+"#;
+        let out = parse_zsh_compdef(z).unwrap();
+        let c_flag = out.flags.iter().find(|f| f.name == "-C").unwrap();
+        assert_eq!(c_flag.takes.as_deref(), Some("dir")); // `-/` → directory only
+        assert_eq!(c_flag.description.as_deref(), Some("change working directory"));
+        let v = out.flags.iter().find(|f| f.name == "--version").unwrap();
+        assert_eq!(v.description.as_deref(), Some("show version"));
+        assert_eq!(v.takes, None); // bool flag
+        // Positional 1 → file action.
+        assert_eq!(out.positionals.len(), 1);
+        assert_eq!(out.positionals[0].takes.as_deref(), Some("file"));
+    }
+
+    #[test]
+    fn parse_zsh_choice_literal_becomes_choice_kind() {
+        let z = r#"
+#compdef foo
+_foo() {
+  _arguments \
+    '-f[format]:format:(json yaml text)'
+}
+"#;
+        let out = parse_zsh_compdef(z).unwrap();
+        let f = out.flags.iter().find(|f| f.name == "-f").unwrap();
+        assert!(f.takes.as_deref().unwrap().starts_with("choice:"));
+        let t = f.takes.as_deref().unwrap();
+        assert!(t.contains("json"));
+        assert!(t.contains("yaml"));
+        assert!(t.contains("text"));
+    }
+
+    #[test]
+    fn parse_zsh_group_prefix_is_stripped() {
+        let z = r#"
+#compdef foo
+_foo() {
+  _arguments \
+    '(--verbose)--quiet[be quiet]'
+}
+"#;
+        let out = parse_zsh_compdef(z).unwrap();
+        let q = out.flags.iter().find(|f| f.name == "--quiet").unwrap();
+        assert_eq!(q.description.as_deref(), Some("be quiet"));
+    }
+
+    #[test]
+    fn parse_zsh_without_compdef_returns_empty() {
+        let z = "_helper_function() { return 0; }";
+        let out = parse_zsh_compdef(z).unwrap();
+        assert_eq!(out.flags.len(), 0);
+        assert_eq!(out.subcmds.len(), 0);
+        assert_eq!(out.positionals.len(), 0);
     }
 
     #[test]
