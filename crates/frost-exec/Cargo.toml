@@ -16,6 +16,7 @@ frost-glob = { workspace = true }
 frost-builtins = { workspace = true }
 frost-options = { workspace = true }
 indexmap = { workspace = true }
+compact_str = { workspace = true }
 thiserror = { workspace = true }
 nix = { workspace = true }
 libc = { workspace = true }

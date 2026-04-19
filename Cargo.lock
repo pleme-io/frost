@@ -518,6 +518,7 @@ dependencies = [
 name = "frost-exec"
 version = "0.1.0"
 dependencies = [
+ "compact_str",
  "fancy-regex",
  "frost-builtins",
  "frost-expand",
