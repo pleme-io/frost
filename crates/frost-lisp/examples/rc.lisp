@@ -37,3 +37,30 @@
 
 (defhook :event "preexec"
          :body "echo 'running: ' $1")                ; announce each command
+
+;; ── Signal traps ───────────────────────────────────────────────────
+(deftrap :signal "INT"  :body "echo interrupted")
+(deftrap :signal "EXIT" :body "echo goodbye")
+
+;; ── Keybindings ────────────────────────────────────────────────────
+;; Stored under __frost_bind_<canonical-key> in env.functions. ZLE
+;; dispatcher wire-up lands in a follow-up; authoring works today.
+(defbind :key "C-x e" :action "edit-line-in-editor")
+(defbind :key "M-?"   :action "help")
+
+;; ── Per-command completions ────────────────────────────────────────
+;; Stored as a JSON payload in __frost_complete_<command>; the
+;; FrostCompleter will consult these for argument-position suggestions.
+(defcompletion :command "git"
+               :args ("status" "diff" "log" "commit" "push" "pull")
+               :description "version control")
+
+(defcompletion :command "kubectl"
+               :args ("get" "describe" "apply" "delete" "logs" "exec"))
+
+;; ── Shell functions (Lisp-declared, shell-bodied) ──────────────────
+(defun :name "mkcd"
+       :body "mkdir -p \"$1\" && cd \"$1\"")
+
+(defun :name "up"
+       :body "cd $(printf '../%.0s' $(seq 1 ${1:-1}))")

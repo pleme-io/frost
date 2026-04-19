@@ -29,16 +29,24 @@
 //! `defcompletion`, `defun`, `deftrap`.
 
 mod alias;
+mod bind;
+mod completion;
 mod env;
+mod function;
 mod hook;
 mod option;
 mod prompt;
+mod trap;
 
 pub use alias::AliasSpec;
+pub use bind::{bind_function_name, BindSpec};
+pub use completion::CompletionSpec;
 pub use env::EnvSpec;
+pub use function::FunctionSpec;
 pub use hook::{hook_function_name, HookSpec};
 pub use option::OptionSetSpec;
 pub use prompt::PromptSpec;
+pub use trap::TrapSpec;
 
 use frost_exec::ShellEnv;
 use std::path::Path;
@@ -55,6 +63,8 @@ pub enum LispError {
     UnknownOption(String),
     #[error("unknown hook event: {0} (valid: precmd, preexec, chpwd)")]
     UnknownHook(String),
+    #[error("unknown signal: {0}")]
+    UnknownSignal(String),
 }
 
 /// Summary of what a rc-application round actually changed. Returned by
@@ -68,6 +78,10 @@ pub struct ApplySummary {
     pub env_exports: usize,
     pub prompts_set: usize,
     pub hooks: usize,
+    pub traps: usize,
+    pub binds: usize,
+    pub completions: usize,
+    pub functions: usize,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -144,36 +158,91 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
     for h in hooks {
         let fn_name = hook_function_name(&h.event)
             .ok_or_else(|| LispError::UnknownHook(h.event.clone()))?;
-        // Parse the shell body into an AST so the REPL can invoke it as a
-        // regular function. The parsing happens once at load time; at
-        // runtime the executor just walks the stored AST.
-        let tokens = {
-            let mut lexer = frost_lexer::Lexer::new(h.body.as_bytes());
-            let mut toks = Vec::new();
-            loop {
-                let t = lexer.next_token();
-                let eof = t.kind == frost_lexer::TokenKind::Eof;
-                toks.push(t);
-                if eof { break; }
-            }
-            toks
-        };
-        let program = frost_parser::Parser::new(&tokens).parse();
-        env.functions.insert(
-            fn_name.to_string(),
-            frost_parser::ast::FunctionDef {
-                name: compact_str::CompactString::from(fn_name),
-                body: frost_parser::ast::Command::Subshell(frost_parser::ast::Subshell {
-                    body: program.commands,
-                    redirects: vec![],
-                }),
-                redirects: vec![],
-            },
-        );
+        install_body_as_function(env, fn_name, &h.body);
         summary.hooks += 1;
     }
 
+    // Signal traps — validate the signal name, then register the body as
+    // a function under `__frost_trap_<SIGNAL>`. Runtime dispatch (actual
+    // signal delivery → function invocation) lands in a follow-up.
+    let traps: Vec<TrapSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for t in traps {
+        let is_pseudo = frost_exec::trap::PseudoSignal::from_name(&t.signal).is_some();
+        let is_real = frost_exec::trap::signal_name_to_number(&t.signal).is_some();
+        if !is_pseudo && !is_real {
+            return Err(LispError::UnknownSignal(t.signal));
+        }
+        let fn_name = format!("__frost_trap_{}", t.signal.to_ascii_uppercase());
+        install_body_as_function(env, &fn_name, &t.body);
+        summary.traps += 1;
+    }
+
+    // Keybindings — stored as `__frost_bind_<KEY>`. ZLE wire-up is a
+    // follow-up; this establishes the authoring surface so a rc file can
+    // declare its key map without waiting on the dispatcher.
+    let binds: Vec<BindSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for b in binds {
+        let fn_name = bind_function_name(&b.key);
+        install_body_as_function(env, &fn_name, &b.action);
+        summary.binds += 1;
+    }
+
+    // Per-command completions — stored as a JSON-serialized CompletionSpec
+    // under a variable `__frost_complete_<COMMAND>`. Keeps the runtime
+    // side trivially consumable from frost-complete without a new
+    // dependency on frost-lisp.
+    let completions: Vec<CompletionSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for c in completions {
+        let var = format!("__frost_complete_{}", c.command);
+        let payload = serde_json::to_string(&c).unwrap_or_default();
+        env.set_var(&var, &payload);
+        summary.completions += 1;
+    }
+
+    // Lisp-authored functions — same shape as the shell's own `function`
+    // keyword but declarative: one form per function, body is shell
+    // source. Registered under the user-visible name in `env.functions`
+    // so everything else (aliasing, calls from hooks, completion) sees it.
+    let funcs: Vec<FunctionSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for f in funcs {
+        install_body_as_function(env, &f.name, &f.body);
+        summary.functions += 1;
+    }
+
     Ok(summary)
+}
+
+/// Parse shell source into an AST and register it under `fn_name` in
+/// `env.functions`. Used by defhook / deftrap / defbind / defun, all of
+/// which carry a `body` that must round-trip through the frost parser.
+fn install_body_as_function(env: &mut ShellEnv, fn_name: &str, body: &str) {
+    let tokens = {
+        let mut lexer = frost_lexer::Lexer::new(body.as_bytes());
+        let mut toks = Vec::new();
+        loop {
+            let tk = lexer.next_token();
+            let eof = tk.kind == frost_lexer::TokenKind::Eof;
+            toks.push(tk);
+            if eof { break; }
+        }
+        toks
+    };
+    let program = frost_parser::Parser::new(&tokens).parse();
+    env.functions.insert(
+        fn_name.to_string(),
+        frost_parser::ast::FunctionDef {
+            name: compact_str::CompactString::from(fn_name),
+            body: frost_parser::ast::Command::Subshell(frost_parser::ast::Subshell {
+                body: program.commands,
+                redirects: vec![],
+            }),
+            redirects: vec![],
+        },
+    );
 }
 
 /// Read and apply a Lisp rc file. Missing file = Ok with empty summary
@@ -321,5 +390,65 @@ mod tests {
         let mut env = ShellEnv::new();
         let src = r#"(defhook :event "bogus" :body "true")"#;
         assert!(matches!(apply_source(src, &mut env), Err(LispError::UnknownHook(_))));
+    }
+
+    #[test]
+    fn apply_trap_registers_function() {
+        let mut env = ShellEnv::new();
+        let src = r#"(deftrap :signal "INT" :body "echo interrupted")"#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.traps, 1);
+        assert!(env.functions.contains_key("__frost_trap_INT"));
+    }
+
+    #[test]
+    fn apply_pseudo_trap_exit_also_ok() {
+        let mut env = ShellEnv::new();
+        let src = r#"(deftrap :signal "EXIT" :body "echo goodbye")"#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.traps, 1);
+        assert!(env.functions.contains_key("__frost_trap_EXIT"));
+    }
+
+    #[test]
+    fn apply_unknown_signal_errors() {
+        let mut env = ShellEnv::new();
+        let src = r#"(deftrap :signal "NONESUCH" :body "true")"#;
+        assert!(matches!(apply_source(src, &mut env), Err(LispError::UnknownSignal(_))));
+    }
+
+    #[test]
+    fn apply_bind_registers_function() {
+        let mut env = ShellEnv::new();
+        let src = r#"(defbind :key "C-x e" :action "echo fire")"#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.binds, 1);
+        // Canonicalized key: whitespace stripped, uppercased.
+        assert!(env.functions.contains_key("__frost_bind_C-XE"));
+    }
+
+    #[test]
+    fn apply_completion_stores_as_json_var() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defcompletion :command "git"
+                           :args ("status" "diff" "log")
+                           :description "version control")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.completions, 1);
+        let stored = env.get_var("__frost_complete_git").unwrap();
+        assert!(stored.contains("status"));
+        assert!(stored.contains("diff"));
+        assert!(stored.contains("version control"));
+    }
+
+    #[test]
+    fn apply_defun_registers_named_function() {
+        let mut env = ShellEnv::new();
+        let src = r#"(defun :name "greet" :body "echo hello $1")"#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.functions, 1);
+        assert!(env.functions.contains_key("greet"));
     }
 }
