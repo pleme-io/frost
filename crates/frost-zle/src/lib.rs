@@ -21,8 +21,9 @@
 use std::path::{Path, PathBuf};
 
 use reedline::{
-    Completer, FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch,
-    PromptHistorySearchStatus, Reedline, ReedlineMenu, Signal,
+    default_vi_insert_keybindings, default_vi_normal_keybindings, Completer, EditMode, Emacs,
+    FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch,
+    PromptHistorySearchStatus, Reedline, ReedlineMenu, Signal, Vi,
 };
 
 // Re-export so downstream crates can write completers without adding a
@@ -160,6 +161,23 @@ impl ZleEngine {
         self.prompt = FrostPrompt::new(ps1, ps2);
     }
 
+    /// Switch the line editor into vi or emacs mode. Idempotent —
+    /// repeating the same mode is a no-op from the user's perspective,
+    /// but the reedline engine is rebuilt (retaining history + completer
+    /// is the caller's responsibility; today the REPL reconstructs them
+    /// per-session so this is fine).
+    pub fn set_edit_mode(&mut self, mode: EditModeKind) {
+        let boxed: Box<dyn EditMode> = match mode {
+            EditModeKind::Emacs => Box::new(Emacs::default()),
+            EditModeKind::Vi => Box::new(Vi::new(
+                default_vi_insert_keybindings(),
+                default_vi_normal_keybindings(),
+            )),
+        };
+        let taken = std::mem::replace(&mut self.inner, Reedline::create());
+        self.inner = taken.with_edit_mode(boxed);
+    }
+
     /// Read one logical command line. `is_complete` is called after each
     /// physical line read; returning [`InputStatus::Incomplete`] causes the
     /// engine to re-prompt with PS2 and concatenate the next line.
@@ -186,6 +204,13 @@ impl ZleEngine {
             }
         }
     }
+}
+
+/// Which line-editing model to bind. Maps to zsh's `bindkey -v` / `-e`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditModeKind {
+    Emacs,
+    Vi,
 }
 
 /// Resolve the history file path from `HISTFILE` if set, else
