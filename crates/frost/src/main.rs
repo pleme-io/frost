@@ -16,16 +16,27 @@ struct Cli {
     file: Option<String>,
 }
 
-fn run(input: &str, env: &mut frost_exec::ShellEnv) -> i32 {
+/// Outcome of running one chunk of input through the executor.
+enum RunOutcome {
+    /// Normal completion — store the command's exit status.
+    Completed(i32),
+    /// User invoked `exit` / `exit N` — the REPL must stop.
+    Exit(i32),
+}
+
+fn run(input: &str, env: &mut frost_exec::ShellEnv) -> RunOutcome {
     let tokens = tokenize(input);
     let mut parser = frost_parser::Parser::new(&tokens);
     let program = parser.parse();
     let mut executor = frost_exec::Executor::new(env);
     match executor.execute_program(&program) {
-        Ok(status) => status,
+        Ok(status) => RunOutcome::Completed(status),
+        Err(frost_exec::ExecError::ControlFlow(frost_exec::ControlFlow::Exit(code))) => {
+            RunOutcome::Exit(code)
+        }
         Err(e) => {
             eprintln!("frost: {e}");
-            1
+            RunOutcome::Completed(1)
         }
     }
 }
@@ -228,7 +239,12 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
                 };
                 if expansion_failed { continue; }
                 let _ = history.push(to_run.clone());
-                run(&to_run, env);
+                match run(&to_run, env) {
+                    RunOutcome::Completed(_) => {}
+                    RunOutcome::Exit(code) => {
+                        std::process::exit(code);
+                    }
+                }
             }
             Ok(ReadLineOutcome::Interrupted) => {
                 // Match zsh: Ctrl-C just discards the current line.
@@ -253,10 +269,10 @@ fn main() {
     let mut env = frost_exec::ShellEnv::new();
 
     let code = if let Some(cmd) = &cli.command {
-        run(cmd, &mut env)
+        unwrap_outcome(run(cmd, &mut env))
     } else if let Some(path) = &cli.file {
         match std::fs::read_to_string(path) {
-            Ok(source) => run(&source, &mut env),
+            Ok(source) => unwrap_outcome(run(&source, &mut env)),
             Err(e) => {
                 eprintln!("frost: {path}: {e}");
                 1
@@ -269,13 +285,22 @@ fn main() {
         // Non-interactive stdin (e.g., `frost < script.sh`) — slurp it.
         let mut buf = String::new();
         if std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).is_ok() {
-            run(&buf, &mut env)
+            unwrap_outcome(run(&buf, &mut env))
         } else {
             1
         }
     };
 
     process::exit(code);
+}
+
+/// Map a `RunOutcome` to a raw exit code for non-interactive entry
+/// points where both `exit` and "command finished normally" just collapse
+/// to the same "what should the frost process return".
+fn unwrap_outcome(outcome: RunOutcome) -> i32 {
+    match outcome {
+        RunOutcome::Completed(c) | RunOutcome::Exit(c) => c,
+    }
 }
 
 #[cfg(test)]

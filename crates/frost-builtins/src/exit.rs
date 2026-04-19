@@ -1,8 +1,24 @@
 //! The `exit` builtin — terminate the shell.
 
-use crate::{Builtin, ShellEnvironment};
+use crate::{Builtin, BuiltinAction, BuiltinResult, ShellEnvironment};
 
 pub struct Exit;
+
+impl Exit {
+    fn compute_code(args: &[&str], env: &dyn ShellEnvironment) -> Result<i32, i32> {
+        match args.first() {
+            Some(s) => match s.parse::<i32>() {
+                Ok(n) => Ok(n & 0xFF), // Clamp to 0..255 like POSIX.
+                Err(_) => {
+                    eprintln!("exit: {s}: numeric argument required");
+                    Err(2)
+                }
+            },
+            // No argument: use the last command's exit status.
+            None => Ok(env.exit_status()),
+        }
+    }
+}
 
 impl Builtin for Exit {
     fn name(&self) -> &str {
@@ -10,23 +26,22 @@ impl Builtin for Exit {
     }
 
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
-        let code = match args.first() {
-            Some(s) => match s.parse::<i32>() {
-                Ok(n) => n & 0xFF, // Clamp to 0..255 like POSIX.
-                Err(_) => {
-                    eprintln!("exit: {s}: numeric argument required");
-                    2
-                }
-            },
-            // No argument: use the last command's exit status.
-            None => env.exit_status(),
-        };
-
-        // Signal the executor by setting exit status. The executor
-        // must check for the "exit requested" condition after running
-        // the `exit` builtin.
+        // Legacy path — also used by pre-action callers. We set exit_status
+        // so `$?` reflects the requested code; the actual shell-termination
+        // lives in `execute_with_action` via `BuiltinAction::Exit`.
+        let code = Self::compute_code(args, env).unwrap_or_else(|e| e);
         env.set_exit_status(code);
         code
+    }
+
+    fn execute_with_action(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> BuiltinResult {
+        match Self::compute_code(args, env) {
+            Ok(code) => {
+                env.set_exit_status(code);
+                BuiltinResult::with_action(code, BuiltinAction::Exit(code))
+            }
+            Err(code) => BuiltinResult::fail(code),
+        }
     }
 }
 
