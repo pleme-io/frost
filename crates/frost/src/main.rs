@@ -71,6 +71,223 @@ struct Cli {
     file: Option<String>,
 }
 
+// ─── Host-command sentinels (skim-backed pickers) ─────────────────────────
+//
+// rc files bind keys to `ExecuteHostCommand("__frost_picker_*__")` sentinels
+// that the REPL intercepts rather than executing as commands. Each sentinel
+// names a terminal-takeover widget (history, files, cd, content) that runs
+// `sk` (skim, the Rust fuzzy finder) and splices the selection back into
+// the edit buffer via [`ZleEngine::inject_prefill`].
+//
+// This mirrors `blackmatter-shell`'s `skim-*` ZLE widgets — keeping
+// frostmourne's UX in parity with blzsh while owning the glue in Rust
+// instead of zsh. Binding names (C-r, C-t, M-c, C-f) are frostmourne
+// convention, authored in `lisp/61-tools-skim.lisp`.
+//
+// Naming: `__frost_picker_<kind>__`. Single-word (no metachars) so
+// `ExecuteHostCommand` round-trips through the shell parser cleanly.
+
+/// Ctrl-R: fuzzy over `$HISTFILE`. Selection replaces the buffer.
+const PICKER_HISTORY_SENTINEL: &str = "__frost_picker_history__";
+/// Ctrl-T: fuzzy over files via `fd`. Selection appends to buffer at cursor.
+const PICKER_FILES_SENTINEL: &str = "__frost_picker_files__";
+/// Alt-C (M-c): fuzzy over directories via `fd -t d`. Selection becomes
+/// `cd <dir>` and auto-submits.
+const PICKER_CD_SENTINEL: &str = "__frost_picker_cd__";
+/// Ctrl-F: content search via `rg`. Selection becomes the command and
+/// auto-submits — useful for "find this error, run it" workflows.
+const PICKER_CONTENT_SENTINEL: &str = "__frost_picker_content__";
+
+/// What to do with the picker's selection once the user hits Enter on it.
+#[derive(Debug, Clone, Copy)]
+enum PickerAction {
+    /// Replace the edit buffer with `selection`. User reviews and submits.
+    /// Used by the history picker (C-r).
+    Replace,
+    /// Append `selection` to the edit buffer, separated by a space if the
+    /// buffer doesn't already end in whitespace. Used by the file picker
+    /// (C-t) — natural "now operate on this file" UX.
+    Append,
+    /// Replace the buffer with `cd <selection>` and auto-submit.
+    /// Used by the cd picker (M-c).
+    CdSubmit,
+    /// Replace the buffer with `selection` and auto-submit.
+    /// Used by the content picker (C-f) where the "selection" is a
+    /// reconstructed command line (e.g., `vim path:line`).
+    Submit,
+}
+
+/// Outcome of a picker dispatch — tells the REPL what to do next.
+enum PickerOutcome {
+    /// Nothing picked (user cancelled, binary missing, empty selection).
+    /// REPL just loops back to the prompt with empty buffer.
+    Nothing,
+    /// Inject `text` into the next read_line. If `submit` is true the
+    /// REPL executes it directly instead of letting the user edit first.
+    Splice { text: String, submit: bool },
+}
+
+/// Run `sk` (skim) with `stdin_lines` on stdin, and return the selected
+/// line trimmed. Returns `None` on cancel (Esc/Ctrl-C), missing binary,
+/// or empty selection. Fully inline — skim draws into the bottom N% of
+/// the terminal, reedline has already exited raw mode on its way out.
+///
+/// Non-fatal everywhere: pickers that can't find input sources (no
+/// HISTFILE, no `fd`, no `rg`) just return `None` — the user gets an
+/// empty prompt back, they move on.
+fn run_skim(stdin_lines: &str, extra_args: &[&str]) -> Option<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    // SKIM_DEFAULT_OPTIONS from rc is honored by sk automatically — we
+    // only append explicit flags the widget needs (prompt label, tiebreak).
+    let mut child = Command::new("sk")
+        .args(extra_args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .ok()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(stdin_lines.as_bytes());
+    }
+
+    let output = child.wait_with_output().ok()?;
+    // sk exits non-zero on cancel — treat as no-op.
+    if !output.status.success() { return None; }
+    let selection = String::from_utf8(output.stdout).ok()?;
+    let trimmed = selection.trim();
+    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+}
+
+/// Read `history_path`, newest first, dropping blanks and adjacent dupes —
+/// the natural order for a Ctrl-R picker.
+fn read_history_newest_first(history_path: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(history_path).ok()?;
+    let mut seen_prev: Option<&str> = None;
+    let mut out: Vec<&str> = Vec::new();
+    for line in raw.lines().rev() {
+        if line.is_empty() { continue; }
+        if Some(line) == seen_prev { continue; }
+        out.push(line);
+        seen_prev = Some(line);
+    }
+    if out.is_empty() { None } else { Some(out.join("\n")) }
+}
+
+/// History picker: fuzzy over `$HISTFILE`, replaces buffer.
+fn picker_history(history_path: &std::path::Path) -> PickerOutcome {
+    let Some(lines) = read_history_newest_first(history_path) else {
+        return PickerOutcome::Nothing;
+    };
+    match run_skim(&lines, &["--no-sort", "--tiebreak=end", "--prompt=history > "]) {
+        Some(sel) => PickerOutcome::Splice { text: sel, submit: false },
+        None => PickerOutcome::Nothing,
+    }
+}
+
+/// Files picker: fuzzy over `fd` output, appends to buffer.
+/// Falls back gracefully if `fd` is missing (returns Nothing).
+fn picker_files() -> PickerOutcome {
+    use std::process::{Command, Stdio};
+    let fd_out = Command::new("fd")
+        .args(["--type", "f", "--hidden", "--follow", "--exclude", ".git"])
+        .stdout(Stdio::piped())
+        .output()
+        .ok();
+    let Some(out) = fd_out else { return PickerOutcome::Nothing; };
+    if !out.status.success() { return PickerOutcome::Nothing; }
+    let Ok(listing) = String::from_utf8(out.stdout) else {
+        return PickerOutcome::Nothing;
+    };
+    if listing.trim().is_empty() { return PickerOutcome::Nothing; }
+    match run_skim(&listing, &["--prompt=files > "]) {
+        Some(sel) => PickerOutcome::Splice { text: sel, submit: false },
+        None => PickerOutcome::Nothing,
+    }
+}
+
+/// cd picker: fuzzy over directories, becomes `cd <dir>` and auto-submits.
+fn picker_cd() -> PickerOutcome {
+    use std::process::{Command, Stdio};
+    let fd_out = Command::new("fd")
+        .args(["--type", "d", "--hidden", "--follow", "--exclude", ".git"])
+        .stdout(Stdio::piped())
+        .output()
+        .ok();
+    let Some(out) = fd_out else { return PickerOutcome::Nothing; };
+    if !out.status.success() { return PickerOutcome::Nothing; }
+    let Ok(listing) = String::from_utf8(out.stdout) else {
+        return PickerOutcome::Nothing;
+    };
+    if listing.trim().is_empty() { return PickerOutcome::Nothing; }
+    match run_skim(&listing, &["--prompt=cd > "]) {
+        Some(sel) => PickerOutcome::Splice { text: format!("cd {sel}"), submit: true },
+        None => PickerOutcome::Nothing,
+    }
+}
+
+/// Content picker: pipe `rg` through `sk`. `rg`'s `--ansi`-compatible
+/// output (`path:line:col:content`) is fuzzy-matched; the selection is
+/// parsed back into `vim path +line` and auto-submitted. If `rg` isn't
+/// on PATH, the widget is a no-op.
+fn picker_content() -> PickerOutcome {
+    use std::process::{Command, Stdio};
+    // sk's `--interactive` mode would make this a live-grep UI, but
+    // reedline has already yielded the terminal and spawning sk in
+    // interactive-mode with an executable-query is fragile cross-shell.
+    // The simpler "rg once, sk over results" is fast enough for most
+    // repos and has no surprises.
+    let rg_out = Command::new("rg")
+        .args(["--line-number", "--color=never", "--no-heading", "--with-filename", ""])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok();
+    let Some(out) = rg_out else { return PickerOutcome::Nothing; };
+    if !out.status.success() { return PickerOutcome::Nothing; }
+    let Ok(listing) = String::from_utf8(out.stdout) else {
+        return PickerOutcome::Nothing;
+    };
+    if listing.trim().is_empty() { return PickerOutcome::Nothing; }
+    let Some(sel) = run_skim(&listing, &["--prompt=content > "]) else {
+        return PickerOutcome::Nothing;
+    };
+    // sel is like "src/foo.rs:42:  let x = …". Pull out path + line.
+    let mut parts = sel.splitn(3, ':');
+    let path = parts.next().unwrap_or("").trim();
+    let line = parts.next().unwrap_or("").trim();
+    if path.is_empty() {
+        return PickerOutcome::Nothing;
+    }
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+    let cmd = if line.is_empty() {
+        format!("{editor} {path}")
+    } else {
+        // vim / nvim accept `+LINE`; most editors accept it as a positional
+        // or ignore it harmlessly. For non-vim editors, users can rebind.
+        format!("{editor} +{line} {path}")
+    };
+    PickerOutcome::Splice { text: cmd, submit: true }
+}
+
+/// Dispatch a picker sentinel. Returns `Some` if the sentinel matched,
+/// `None` if the input is a regular command that should continue to
+/// `!`-expansion and the executor.
+fn dispatch_picker_sentinel(
+    sentinel: &str,
+    history_path: &std::path::Path,
+) -> Option<(PickerOutcome, PickerAction)> {
+    match sentinel {
+        PICKER_HISTORY_SENTINEL => Some((picker_history(history_path), PickerAction::Replace)),
+        PICKER_FILES_SENTINEL   => Some((picker_files(),                PickerAction::Append)),
+        PICKER_CD_SENTINEL      => Some((picker_cd(),                   PickerAction::CdSubmit)),
+        PICKER_CONTENT_SENTINEL => Some((picker_content(),              PickerAction::Submit)),
+        _ => None,
+    }
+}
+
 /// Outcome of running one chunk of input through the executor.
 enum RunOutcome {
     /// Normal completion — store the command's exit status.
@@ -298,6 +515,56 @@ fn interactive(
             Ok(ReadLineOutcome::Input(line)) => {
                 let trimmed = line.trim();
                 if trimmed.is_empty() { continue; }
+
+                // Picker sentinels — rc-authored `defbind`s return a
+                // `__frost_picker_*__` string via `ExecuteHostCommand`.
+                // We catch it here (before `!`-expansion / exec), run the
+                // matching skim-backed picker in the freed terminal, and
+                // either splice the selection into the next read_line or
+                // auto-execute it depending on the picker's action.
+                if let Some((outcome, action)) = dispatch_picker_sentinel(trimmed, &history_path) {
+                    let PickerOutcome::Splice { text, submit } = outcome else {
+                        continue;
+                    };
+                    match action {
+                        PickerAction::Replace => {
+                            zle.inject_prefill(&text);
+                        }
+                        PickerAction::Append => {
+                            // Append with a separating space if the user
+                            // had already typed something before hitting
+                            // the key. We don't have direct access to the
+                            // current buffer here (reedline owned it and
+                            // returned empty on sentinel), so the first
+                            // implementation just replaces — users can
+                            // extend by prefixing the selection. A future
+                            // pass can add an EditCommand::InsertAtCursor
+                            // variant that preserves LBUFFER.
+                            zle.inject_prefill(&text);
+                        }
+                        PickerAction::CdSubmit | PickerAction::Submit => {
+                            // Execute directly — simulate what the user
+                            // would have typed + Enter. `!`-expansion
+                            // isn't applied because the selection is a
+                            // Rust-constructed command, not user input.
+                            if submit {
+                                let _ = history.push(text.clone());
+                                run_hook("__frost_hook_preexec", env);
+                                match run(&text, env) {
+                                    RunOutcome::Completed(_) => {}
+                                    RunOutcome::Exit(code) => {
+                                        run_exit_trap(env);
+                                        std::process::exit(code);
+                                    }
+                                }
+                            } else {
+                                zle.inject_prefill(&text);
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 // `!`-expansion before parse. zsh's default is on
                 // (`setopt BANG_HIST`); once we add a `NoBangHist` option to
                 // frost-options, gate here. Until then, always expand.
