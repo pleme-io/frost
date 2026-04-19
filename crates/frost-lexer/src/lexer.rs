@@ -14,6 +14,8 @@ pub struct Lexer<'src> {
     src: &'src [u8],
     /// Whether the next word can be a reserved word (start of command position).
     command_position: bool,
+    /// Depth inside `${...}` braces — when > 0, `#` is not a comment.
+    brace_depth: u32,
 }
 
 impl<'src> Lexer<'src> {
@@ -22,6 +24,7 @@ impl<'src> Lexer<'src> {
             cursor: Cursor::new(src),
             src,
             command_position: true,
+            brace_depth: 0,
         }
     }
 
@@ -36,7 +39,12 @@ impl<'src> Lexer<'src> {
         };
 
         let kind = match b {
-            b'#' => self.lex_comment(),
+            b'#' if self.brace_depth == 0 => self.lex_comment(),
+            b'#' => {
+                // Inside ${...}, # is a parameter operator, not a comment
+                self.cursor.advance();
+                TokenKind::Word
+            }
             b'\n' => {
                 self.cursor.advance();
                 self.command_position = true;
@@ -66,6 +74,9 @@ impl<'src> Lexer<'src> {
             }
             b'}' => {
                 self.cursor.advance();
+                if self.brace_depth > 0 {
+                    self.brace_depth -= 1;
+                }
                 TokenKind::RightBrace
             }
             b'<' => self.lex_less(),
@@ -154,6 +165,7 @@ impl<'src> Lexer<'src> {
         match self.cursor.peek() {
             Some(b'{') => {
                 self.cursor.advance();
+                self.brace_depth += 1;
                 TokenKind::DollarBrace
             }
             Some(b'(') => {
@@ -301,19 +313,19 @@ impl<'src> Lexer<'src> {
             }
             Some(b'&') => {
                 self.cursor.advance();
-                TokenKind::AmpGreater
+                TokenKind::FdDup
             }
             _ => TokenKind::Greater,
         }
     }
 
     fn lex_word(&mut self) -> TokenKind {
+        let start = self.cursor.pos();
         self.cursor.eat_while(|b| !is_meta(b));
         let was_command = self.command_position;
         self.command_position = false;
 
         if was_command {
-            let start = self.cursor.pos();
             // Check if this word is a reserved word (only in command position)
             let text = &self.src[start..self.cursor.pos()];
             return match text {
@@ -331,6 +343,7 @@ impl<'src> Lexer<'src> {
                 b"case" => TokenKind::Case,
                 b"esac" => TokenKind::Esac,
                 b"select" => TokenKind::Select,
+                b"repeat" => TokenKind::Repeat,
                 b"function" => TokenKind::Function,
                 b"time" => TokenKind::Time,
                 b"coproc" => TokenKind::Coproc,

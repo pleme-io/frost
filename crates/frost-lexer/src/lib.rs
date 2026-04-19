@@ -6,7 +6,7 @@
 
 mod token;
 mod cursor;
-mod lexer;
+pub mod lexer;
 
 pub use token::{Token, TokenKind, Span};
-pub use lexer::Lexer;
+pub use lexer::{Lexer, tokenize};

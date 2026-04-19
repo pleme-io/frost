@@ -100,14 +100,11 @@ mod cli {
 
 // ---------------------------------------------------------------------------
 // Command execution via `frost -c "..."`.
-// All ignored: the parser's parse() is currently `todo!()`.
-// Un-ignore these as the parser is implemented.
 // ---------------------------------------------------------------------------
 mod execution {
     use super::*;
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn true_exits_zero() {
         let output = Command::new(frost_bin())
             .args(["-c", "true"])
@@ -122,7 +119,6 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn false_exits_one() {
         let output = Command::new(frost_bin())
             .args(["-c", "false"])
@@ -138,7 +134,6 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn echo_hello() {
         let output = Command::new(frost_bin())
             .args(["-c", "echo hello"])
@@ -154,7 +149,6 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn echo_multiple_words() {
         let output = Command::new(frost_bin())
             .args(["-c", "echo hello world"])
@@ -170,7 +164,6 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn exit_with_code() {
         let output = Command::new(frost_bin())
             .args(["-c", "exit 42"])
@@ -186,7 +179,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
+    #[ignore = "needs variable expansion in executor"]
     fn export_and_variable_expansion() {
         let output = Command::new(frost_bin())
             .args(["-c", "export FOO=bar; echo $FOO"])
@@ -202,7 +195,7 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
+    #[ignore = "executor doesn't apply redirects for builtins yet"]
     fn output_redirection() {
         let test_file = "/tmp/frost-test-redir.txt";
         // Clean up any previous run.
@@ -226,7 +219,6 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn pipeline() {
         let output = Command::new(frost_bin())
             .args(["-c", "echo a | cat"])
@@ -242,7 +234,6 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn and_list_success() {
         let output = Command::new(frost_bin())
             .args(["-c", "true && echo yes"])
@@ -258,7 +249,6 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn or_list_fallback() {
         let output = Command::new(frost_bin())
             .args(["-c", "false || echo fallback"])
@@ -274,7 +264,6 @@ mod execution {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn and_list_short_circuit() {
         let output = Command::new(frost_bin())
             .args(["-c", "false && echo nope"])
@@ -294,14 +283,12 @@ mod execution {
 
 // ---------------------------------------------------------------------------
 // Script file execution.
-// Ignored until the parser is implemented.
 // ---------------------------------------------------------------------------
 mod script {
     use super::*;
     use std::io::Write;
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn run_script_file() {
         let dir = std::env::temp_dir();
         let script_path = dir.join("frost-test-script.sh");
@@ -328,7 +315,6 @@ mod script {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn run_multiline_script() {
         let dir = std::env::temp_dir();
         let script_path = dir.join("frost-test-multiline.sh");
@@ -356,7 +342,6 @@ mod script {
     }
 
     #[test]
-    #[ignore = "parser not yet implemented (todo!())"]
     fn script_exit_code_propagates() {
         let dir = std::env::temp_dir();
         let script_path = dir.join("frost-test-exit-code.sh");

@@ -176,6 +176,8 @@ pub enum TokenKind {
     Esac,
     /// select
     Select,
+    /// repeat
+    Repeat,
     /// function
     Function,
     /// time
@@ -213,6 +215,7 @@ impl TokenKind {
                 | Self::Case
                 | Self::Esac
                 | Self::Select
+                | Self::Repeat
                 | Self::Function
                 | Self::Time
                 | Self::Coproc

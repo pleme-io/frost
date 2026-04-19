@@ -37,19 +37,38 @@ pub enum RedirectError {
 ///
 /// Typically called in the child after `fork()`. Each redirection
 /// opens/creates the target file and dups it onto the appropriate fd.
+///
+/// `expanded_targets` provides pre-expanded strings for redirect targets.
+/// If provided and non-empty, the i-th entry is used as the target text
+/// instead of resolving the word from the AST. This allows the executor
+/// to pass in variable-expanded herestring content.
 pub fn apply_redirects(redirects: &[Redirect]) -> Result<(), RedirectError> {
     for redir in redirects {
-        apply_one(redir)?;
+        apply_one(redir, None)?;
     }
     Ok(())
 }
 
-fn apply_one(redir: &Redirect) -> Result<(), RedirectError> {
+/// Apply redirections with pre-expanded target text for each redirect.
+pub fn apply_redirects_expanded(
+    redirects: &[Redirect],
+    expanded_targets: &[String],
+) -> Result<(), RedirectError> {
+    for (i, redir) in redirects.iter().enumerate() {
+        let expanded = expanded_targets.get(i).map(|s| s.as_str());
+        apply_one(redir, expanded)?;
+    }
+    Ok(())
+}
+
+fn apply_one(redir: &Redirect, expanded_target: Option<&str>) -> Result<(), RedirectError> {
+    let target_text = || expanded_target.map(|s| s.to_owned()).unwrap_or_else(|| resolve_word(&redir.target));
+
     match redir.op {
         // < file  (input)
         RedirectOp::Less => {
             let target_fd = redir.fd.unwrap_or(0) as i32;
-            let path = resolve_word(&redir.target);
+            let path = target_text();
             let fd = open_file(&path, OFlag::O_RDONLY, Mode::empty())?;
             dup2_and_close(fd, target_fd)?;
         }
@@ -57,7 +76,7 @@ fn apply_one(redir: &Redirect) -> Result<(), RedirectError> {
         // > file  (output, truncate)
         RedirectOp::Greater | RedirectOp::GreaterPipe | RedirectOp::GreaterBang => {
             let target_fd = redir.fd.unwrap_or(1) as i32;
-            let path = resolve_word(&redir.target);
+            let path = target_text();
             let fd = open_file(
                 &path,
                 OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
@@ -69,7 +88,7 @@ fn apply_one(redir: &Redirect) -> Result<(), RedirectError> {
         // >> file  (append)
         RedirectOp::DoubleGreater => {
             let target_fd = redir.fd.unwrap_or(1) as i32;
-            let path = resolve_word(&redir.target);
+            let path = target_text();
             let fd = open_file(
                 &path,
                 OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND,
@@ -80,7 +99,7 @@ fn apply_one(redir: &Redirect) -> Result<(), RedirectError> {
 
         // &> file  (stdout + stderr)
         RedirectOp::AmpGreater => {
-            let path = resolve_word(&redir.target);
+            let path = target_text();
             let fd = open_file(
                 &path,
                 OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
@@ -92,7 +111,7 @@ fn apply_one(redir: &Redirect) -> Result<(), RedirectError> {
 
         // &>> file  (append stdout + stderr)
         RedirectOp::AmpDoubleGreater => {
-            let path = resolve_word(&redir.target);
+            let path = target_text();
             let fd = open_file(
                 &path,
                 OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND,
@@ -105,7 +124,7 @@ fn apply_one(redir: &Redirect) -> Result<(), RedirectError> {
         // <> file  (read-write)
         RedirectOp::LessGreater => {
             let target_fd = redir.fd.unwrap_or(0) as i32;
-            let path = resolve_word(&redir.target);
+            let path = target_text();
             let fd = open_file(
                 &path,
                 OFlag::O_RDWR | OFlag::O_CREAT,
@@ -117,7 +136,7 @@ fn apply_one(redir: &Redirect) -> Result<(), RedirectError> {
         // N>&M  (fd duplication)
         RedirectOp::FdDup => {
             let target_fd = redir.fd.unwrap_or(1) as i32;
-            let src_text = resolve_word(&redir.target);
+            let src_text = target_text();
             if src_text == "-" {
                 sys::close(target_fd).map_err(RedirectError::Close)?;
             } else {
@@ -128,11 +147,43 @@ fn apply_one(redir: &Redirect) -> Result<(), RedirectError> {
             }
         }
 
-        // Heredoc / herestring — not yet implemented.
-        RedirectOp::DoubleLess | RedirectOp::TripleLess | RedirectOp::DoubleLessDash => {}
+        // <<< herestring — feed the word as stdin
+        RedirectOp::TripleLess => {
+            let target_fd = redir.fd.unwrap_or(0) as i32;
+            let text = target_text();
+            let content = format!("{text}\n");
+            let fd = write_to_pipe(content.as_bytes())?;
+            dup2_and_close(fd, target_fd)?;
+        }
+
+        // << heredoc / <<- heredoc (strip tabs) — treat body as herestring for now
+        RedirectOp::DoubleLess | RedirectOp::DoubleLessDash => {
+            let target_fd = redir.fd.unwrap_or(0) as i32;
+            let text = target_text();
+            let content = format!("{text}\n");
+            let fd = write_to_pipe(content.as_bytes())?;
+            dup2_and_close(fd, target_fd)?;
+        }
     }
 
     Ok(())
+}
+
+/// Write data to a pipe and return the read end as a raw fd.
+fn write_to_pipe(data: &[u8]) -> Result<i32, RedirectError> {
+    let pipe = sys::pipe().map_err(|e| RedirectError::Open {
+        path: "<herestring>".to_owned(),
+        source: e,
+    })?;
+    // Write data to the write end.
+    nix::unistd::write(unsafe { std::os::fd::BorrowedFd::borrow_raw(pipe.write) }, data)
+        .map_err(|e| RedirectError::Open {
+            path: "<herestring>".to_owned(),
+            source: e,
+        })?;
+    // Close the write end so the reader gets EOF.
+    sys::close(pipe.write).ok();
+    Ok(pipe.read)
 }
 
 /// Open a file by path, returning a raw fd.
@@ -148,6 +199,19 @@ fn open_file(path: &str, flags: OFlag, mode: Mode) -> Result<i32, RedirectError>
 /// Dup `fd` onto `target`, then close the original if they differ.
 fn dup2_and_close(fd: i32, target: i32) -> Result<(), RedirectError> {
     sys::dup2_and_close(fd, target).map_err(RedirectError::Dup2)
+}
+
+/// Get the target fd for a redirect (used by save/restore logic).
+pub fn target_fd_for(redir: &Redirect) -> i32 {
+    match redir.op {
+        RedirectOp::Less | RedirectOp::LessGreater => redir.fd.unwrap_or(0) as i32,
+        RedirectOp::Greater | RedirectOp::GreaterPipe | RedirectOp::GreaterBang
+        | RedirectOp::DoubleGreater | RedirectOp::FdDup => redir.fd.unwrap_or(1) as i32,
+        RedirectOp::AmpGreater | RedirectOp::AmpDoubleGreater => 1, // also affects 2
+        RedirectOp::DoubleLess | RedirectOp::TripleLess | RedirectOp::DoubleLessDash => {
+            redir.fd.unwrap_or(0) as i32
+        }
+    }
 }
 
 /// Extract a plain string from a [`Word`].

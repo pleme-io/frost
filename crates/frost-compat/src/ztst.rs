@@ -79,8 +79,11 @@ enum Section {
 
 /// Parse a `.ztst` file at the given path into a [`TestFile`].
 pub fn parse_ztst(path: &Path) -> Result<TestFile, String> {
-    let content = std::fs::read_to_string(path)
+    let bytes = std::fs::read(path)
         .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    // Handle non-UTF-8 files (some zsh tests use ISO-8859 encoding).
+    let content = String::from_utf8(bytes)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
 
     let name = path
         .file_stem()

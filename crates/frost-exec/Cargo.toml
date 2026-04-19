@@ -9,6 +9,7 @@ homepage.workspace = true
 description = "Zsh-compatible command execution engine"
 
 [dependencies]
+frost-lexer = { workspace = true }
 frost-parser = { workspace = true }
 frost-builtins = { workspace = true }
 frost-options = { workspace = true }
@@ -16,6 +17,7 @@ thiserror = { workspace = true }
 nix = { workspace = true }
 libc = { workspace = true }
 tracing = { workspace = true }
+glob = "0.3.3"
 
 [dev-dependencies]
 frost-lexer = { workspace = true }

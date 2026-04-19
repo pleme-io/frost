@@ -38,10 +38,13 @@ pub enum Command {
     BraceGroup(BraceGroup),
     If(Box<IfClause>),
     For(Box<ForClause>),
+    ArithFor(Box<ArithForClause>),
     While(Box<WhileClause>),
     Until(Box<UntilClause>),
     Case(Box<CaseClause>),
     Select(Box<SelectClause>),
+    Repeat(Box<RepeatClause>),
+    Always(Box<AlwaysClause>),
     FunctionDef(Box<FunctionDef>),
     Coproc(Box<Coproc>),
     Time(Box<TimeClause>),
@@ -152,6 +155,15 @@ pub struct ForClause {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ArithForClause {
+    pub init: CompactString,
+    pub condition: CompactString,
+    pub step: CompactString,
+    pub body: Vec<CompleteCommand>,
+    pub redirects: Vec<Redirect>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct WhileClause {
     pub condition: Vec<CompleteCommand>,
     pub body: Vec<CompleteCommand>,
@@ -191,6 +203,20 @@ pub struct SelectClause {
     pub var: CompactString,
     pub words: Option<Vec<Word>>,
     pub body: Vec<CompleteCommand>,
+    pub redirects: Vec<Redirect>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepeatClause {
+    pub count: Word,
+    pub body: Vec<CompleteCommand>,
+    pub redirects: Vec<Redirect>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlwaysClause {
+    pub try_body: Vec<CompleteCommand>,
+    pub always_body: Vec<CompleteCommand>,
     pub redirects: Vec<Redirect>,
 }
 

@@ -5,10 +5,24 @@
 //! command names to their implementations.
 
 mod cd;
+mod colon;
+mod command;
 mod echo;
+mod eval;
 mod exit;
 mod export;
+mod print;
+mod read_builtin;
+mod readonly;
+mod return_builtin;
+mod set;
+mod setopt;
+mod stubs;
+mod test_builtin;
 mod true_false;
+mod typeset;
+mod unset;
+mod whence;
 
 use std::collections::HashMap;
 
@@ -90,11 +104,65 @@ impl Default for BuiltinRegistry {
 pub fn default_builtins() -> BuiltinRegistry {
     let mut reg = BuiltinRegistry::new();
     reg.register(Box::new(cd::Cd));
+    reg.register(Box::new(colon::Colon));
+    reg.register(Box::new(command::CommandBuiltin));
     reg.register(Box::new(echo::Echo));
+    reg.register(Box::new(eval::Eval));
     reg.register(Box::new(exit::Exit));
     reg.register(Box::new(export::Export));
+    reg.register(Box::new(print::Print));
+    reg.register(Box::new(read_builtin::ReadBuiltin));
+    reg.register(Box::new(return_builtin::Return));
+    reg.register(Box::new(set::Set));
+    reg.register(Box::new(set::Shift));
+    reg.register(Box::new(test_builtin::Test));
+    reg.register(Box::new(test_builtin::TestKeyword));
     reg.register(Box::new(true_false::True));
     reg.register(Box::new(true_false::False));
+    reg.register(Box::new(typeset::Typeset));
+    reg.register(Box::new(typeset::Local));
+    reg.register(Box::new(typeset::Declare));
+    reg.register(Box::new(unset::Unset));
+    reg.register(Box::new(whence::Whence));
+    reg.register(Box::new(whence::Which));
+    reg.register(Box::new(setopt::Setopt));
+    reg.register(Box::new(setopt::Unsetopt));
+    reg.register(Box::new(readonly::Readonly));
+    // Stubs — accept arguments silently and succeed.
+    reg.register(Box::new(stubs::Autoload));
+    reg.register(Box::new(stubs::Zmodload));
+    reg.register(Box::new(stubs::Integer));
+    reg.register(Box::new(stubs::Float));
+    reg.register(Box::new(stubs::Let));
+    reg.register(Box::new(stubs::Trap));
+    reg.register(Box::new(stubs::Hash));
+    reg.register(Box::new(stubs::Disable));
+    reg.register(Box::new(stubs::Enable));
+    reg.register(Box::new(stubs::Emulate));
+    reg.register(Box::new(stubs::Zle));
+    reg.register(Box::new(stubs::Bindkey));
+    reg.register(Box::new(stubs::Compdef));
+    reg.register(Box::new(stubs::Zstyle));
+    reg.register(Box::new(stubs::Alias));
+    reg.register(Box::new(stubs::Unalias));
+    reg.register(Box::new(stubs::BuiltinCmd));
+    reg.register(Box::new(stubs::Wait));
+    reg.register(Box::new(stubs::Fg));
+    reg.register(Box::new(stubs::Bg));
+    reg.register(Box::new(stubs::Jobs));
+    reg.register(Box::new(stubs::Suspend));
+    reg.register(Box::new(stubs::Times));
+    reg.register(Box::new(stubs::Umask));
+    reg.register(Box::new(stubs::Ulimit));
+    reg.register(Box::new(stubs::Getopts));
+    reg.register(Box::new(stubs::Pushd));
+    reg.register(Box::new(stubs::Popd));
+    reg.register(Box::new(stubs::Dirs));
+    reg.register(Box::new(stubs::Limit));
+    reg.register(Box::new(stubs::Unlimit));
+    reg.register(Box::new(stubs::Sched));
+    reg.register(Box::new(stubs::Rehash));
+    reg.register(Box::new(stubs::Noglob));
     reg
 }
 
@@ -106,11 +174,27 @@ mod tests {
     fn default_registry_contains_expected_builtins() {
         let reg = default_builtins();
         assert!(reg.contains("cd"));
+        assert!(reg.contains(":"));
+        assert!(reg.contains("command"));
         assert!(reg.contains("echo"));
+        assert!(reg.contains("eval"));
         assert!(reg.contains("exit"));
         assert!(reg.contains("export"));
+        assert!(reg.contains("print"));
+        assert!(reg.contains("read"));
+        assert!(reg.contains("return"));
+        assert!(reg.contains("set"));
+        assert!(reg.contains("shift"));
+        assert!(reg.contains("["));
+        assert!(reg.contains("test"));
         assert!(reg.contains("true"));
         assert!(reg.contains("false"));
+        assert!(reg.contains("typeset"));
+        assert!(reg.contains("local"));
+        assert!(reg.contains("declare"));
+        assert!(reg.contains("unset"));
+        assert!(reg.contains("whence"));
+        assert!(reg.contains("which"));
         assert!(!reg.contains("nonexistent"));
     }
 }
