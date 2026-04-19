@@ -77,7 +77,10 @@ pub fn fold_merkle(leaves: &[Digest]) -> Option<Digest> {
 /// Decode a hex string (produced by BLAKE3 `to_hex`) into a [`Digest`].
 pub fn decode_hex(hex: &str) -> Result<Digest, String> {
     if hex.len() != 64 {
-        return Err(format!("expected 64-hex-char BLAKE3 digest, got {} chars", hex.len()));
+        return Err(format!(
+            "expected 64-hex-char BLAKE3 digest, got {} chars",
+            hex.len()
+        ));
     }
     let mut out = [0u8; 32];
     for (i, byte) in out.iter_mut().enumerate() {
@@ -129,8 +132,7 @@ pub fn compute_layer_roots(entries: &[ManifestEntry]) -> Result<Vec<LayerRoot>, 
                     .map_err(|err| format!("{}: {err}", e.path))
             })
             .collect::<Result<_, _>>()?;
-        let root = fold_merkle(&leaves)
-            .ok_or_else(|| format!("layer {layer} has no entries"))?;
+        let root = fold_merkle(&leaves).ok_or_else(|| format!("layer {layer} has no entries"))?;
         out.push(LayerRoot {
             layer,
             root,
