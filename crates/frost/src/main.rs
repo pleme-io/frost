@@ -3,7 +3,7 @@ use std::process;
 
 use clap::Parser as ClapParser;
 
-use frost_zle::{InputStatus, ReadLineOutcome, ZleEngine};
+use frost_zle::{EditModeKind, InputStatus, ReadLineOutcome, ZleEngine};
 
 #[derive(ClapParser)]
 #[command(name = "frost", version, about = "A zsh-compatible shell")]
@@ -189,6 +189,15 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
         let ps1 = frost_prompt::render(&ps1_raw, &pe, prompt_subst);
         let ps2 = frost_prompt::render(&ps2_raw, &pe, prompt_subst);
         zle.set_prompt(ps1, ps2);
+
+        // Honor `setopt vi` / `setopt emacs` on every iteration so
+        // `bindkey -v` behavior changes mid-session.
+        let wanted = if env.is_option_set(frost_options::ShellOption::Vi) {
+            EditModeKind::Vi
+        } else {
+            EditModeKind::Emacs
+        };
+        zle.set_edit_mode(wanted);
 
         let outcome = zle.read_line(|src| {
             if is_complete(src) { InputStatus::Complete } else { InputStatus::Incomplete }
