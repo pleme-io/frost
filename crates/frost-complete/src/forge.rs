@@ -32,6 +32,8 @@ use frost_lisp::{FlagSpec, PositSpec, SubcmdSpec};
 pub enum ForgeError {
     #[error("failed to parse fish completion line: {line:?}: {reason}")]
     FishParse { line: String, reason: String },
+    #[error("failed to parse skim-tab yaml: {0}")]
+    YamlParse(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -377,6 +379,81 @@ fn lisp_str(s: &str) -> String {
     out
 }
 
+// ─── skim-tab YAML parser ─────────────────────────────────────────────────
+
+use serde::Deserialize;
+use std::collections::BTreeMap;
+
+/// Top-level document shape for `pleme-io/skim-tab/specs/*.yaml`.
+///
+/// ```yaml
+/// commands: [kubectl, kubecolor, k]
+/// icon: "⎈ "
+/// subcommands:
+///   get:
+///     description: "Display resources"
+///     glyph: "◈"
+///     subcommands:             # optional — nested
+///       ...
+/// ```
+///
+/// `commands` lists aliases the spec applies to (kubectl, kubecolor,
+/// and `k` all get the same tree). `icon` is cosmetic — skim-tab
+/// shows it in the picker header; we ignore it here. Each subcommand
+/// recursively may itself declare `subcommands`.
+#[derive(Deserialize)]
+struct SkimSpec {
+    #[serde(default)]
+    commands: Vec<String>,
+    #[serde(default)]
+    subcommands: BTreeMap<String, SkimSub>,
+}
+
+#[derive(Deserialize)]
+struct SkimSub {
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    subcommands: BTreeMap<String, SkimSub>,
+}
+
+/// Parse a skim-tab YAML spec file. For every entry in `commands`, a
+/// parallel branch of the subcommand tree is emitted under that root
+/// path — so `kubectl get` and `k get` share the same tree but each
+/// is discoverable via its own top-level name.
+pub fn parse_skim_yaml(src: &str) -> ForgeResult<ForgeOutput> {
+    let spec: SkimSpec =
+        serde_yaml_ng::from_str(src).map_err(|e| ForgeError::YamlParse(e.to_string()))?;
+    let mut out = ForgeOutput::default();
+
+    // If `commands:` is empty, fall back to `kubectl` → skip. (A yaml
+    // without any command name can't be materialized into specs.)
+    for root in &spec.commands {
+        emit_sub_tree(root, &spec.subcommands, &mut out);
+    }
+
+    out.sort();
+    Ok(out)
+}
+
+fn emit_sub_tree(
+    parent_path: &str,
+    subs: &BTreeMap<String, SkimSub>,
+    out: &mut ForgeOutput,
+) {
+    for (name, sub) in subs {
+        out.subcmds.push(SubcmdSpec {
+            path: parent_path.to_string(),
+            name: name.clone(),
+            description: sub.description.clone(),
+        });
+        if !sub.subcommands.is_empty() {
+            let child_path = format!("{parent_path}.{name}");
+            emit_sub_tree(&child_path, &sub.subcommands, out);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,6 +533,46 @@ mod tests {
         assert_eq!(seen_subcommand("__fish_git_using_command push"),
                    Some("push".into()));
         assert_eq!(seen_subcommand("__fish_use_subcommand"), None);
+    }
+
+    #[test]
+    fn parse_skim_yaml_single_command() {
+        let yaml = r#"
+commands: [nix]
+icon: "❄ "
+subcommands:
+  build:
+    description: "Build a derivation"
+  flake:
+    description: "Flake operations"
+    subcommands:
+      update:
+        description: "Update flake inputs"
+"#;
+        let out = parse_skim_yaml(yaml).unwrap();
+        // Two top-level + one nested = 3.
+        assert_eq!(out.subcmds.len(), 3);
+        let build = out.subcmds.iter().find(|s| s.name == "build").unwrap();
+        assert_eq!(build.path, "nix");
+        assert_eq!(build.description.as_deref(), Some("Build a derivation"));
+        let update = out.subcmds.iter().find(|s| s.name == "update").unwrap();
+        assert_eq!(update.path, "nix.flake");
+    }
+
+    #[test]
+    fn parse_skim_yaml_multiple_command_aliases() {
+        let yaml = r#"
+commands: [kubectl, k]
+subcommands:
+  get:
+    description: "Display resources"
+"#;
+        let out = parse_skim_yaml(yaml).unwrap();
+        // Two aliases × one subcommand = 2 specs.
+        assert_eq!(out.subcmds.len(), 2);
+        let paths: Vec<&str> = out.subcmds.iter().map(|s| s.path.as_str()).collect();
+        assert!(paths.contains(&"kubectl"));
+        assert!(paths.contains(&"k"));
     }
 
     #[test]

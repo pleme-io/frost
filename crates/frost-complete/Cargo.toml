@@ -15,6 +15,8 @@ frost-options = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
 reedline = "0.42"
+serde = { workspace = true }
+serde_yaml_ng = "0.10"
 
 [[bin]]
 name = "frost-complete-forge"
