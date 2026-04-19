@@ -1052,6 +1052,23 @@ impl<'env> Executor<'env> {
                 }
             }
 
+            // chpwd hook — fires after a successful `cd`, matching zsh's
+            // convention. Authored via `(defhook :event "chpwd" :body …)`
+            // in the rc; frost-lisp stores the body under
+            // `__frost_hook_chpwd` in env.functions.
+            if status == 0 && name == "cd"
+                && self.env.functions.contains_key("__frost_hook_chpwd")
+            {
+                // Clone the body out of the borrow so we can call
+                // execute_command without holding an immutable ref to env.
+                let body = self.env.functions["__frost_hook_chpwd"].body.clone();
+                // Swallow errors — a broken hook must not break `cd`.
+                let _ = self.execute_command(&body);
+                // Restore the cd's exit status; the hook's result shouldn't
+                // leak into $?.
+                self.env.exit_status = 0;
+            }
+
             self.env.exit_status = status;
             return Ok(status);
         }
