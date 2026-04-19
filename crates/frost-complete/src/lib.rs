@@ -19,7 +19,7 @@
 //! * Completion from aliases / functions / named parameters.
 //! * Menu-select completion widgets and `zstyle` configuration.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use reedline::{Completer, Span, Suggestion};
@@ -32,11 +32,18 @@ use reedline::{Completer, Span, Suggestion};
 pub struct FrostCompleter {
     /// Shell builtins to suggest at command position.
     builtins: Vec<String>,
+    /// Per-command argument completions, keyed by the first word of the
+    /// current command. Populated from `(defcompletion :command … :args …)`
+    /// forms in the user's rc (see `frost-lisp::ApplySummary::completion_map`).
+    arg_completions: HashMap<String, Vec<String>>,
 }
 
 impl FrostCompleter {
     pub fn new(builtins: impl IntoIterator<Item = String>) -> Self {
-        Self { builtins: builtins.into_iter().collect() }
+        Self {
+            builtins: builtins.into_iter().collect(),
+            arg_completions: HashMap::new(),
+        }
     }
 
     /// Construct a default completer with a small built-in set — enough
@@ -49,6 +56,15 @@ impl FrostCompleter {
                 .map(|s| (*s).to_string()),
         )
     }
+
+    /// Replace the rc-authored per-command argument completion map.
+    /// Merged with filesystem suggestions at argument position, so a
+    /// command with declared args still allows filename completion for
+    /// anything not in the list.
+    pub fn with_arg_completions(mut self, map: HashMap<String, Vec<String>>) -> Self {
+        self.arg_completions = map;
+        self
+    }
 }
 
 impl Completer for FrostCompleter {
@@ -57,7 +73,22 @@ impl Completer for FrostCompleter {
         let matches: Vec<String> = if ctx.is_command_position && !ctx.word.contains('/') {
             command_candidates(&self.builtins, &ctx.word)
         } else {
-            filename_candidates(&ctx.word)
+            // At argument position: surface the rc-authored args for the
+            // current command (git status / log / …, kubectl get / apply
+            // / …) FIRST, then fall through to filename completion so the
+            // user still gets path candidates even after subcommand names.
+            let mut out: Vec<String> = Vec::new();
+            if let Some(cmd_name) = first_word(line) {
+                if let Some(args) = self.arg_completions.get(cmd_name) {
+                    out.extend(
+                        args.iter()
+                            .filter(|a| a.starts_with(&ctx.word))
+                            .cloned()
+                    );
+                }
+            }
+            out.extend(filename_candidates(&ctx.word));
+            out
         };
 
         let span = Span { start: ctx.word_start, end: pos };
@@ -112,6 +143,15 @@ struct WordContext<'a> {
     /// the "logical line" after the last `;`, `|`, `&`, `&&`, or `||`).
     is_command_position: bool,
     _phantom: std::marker::PhantomData<&'a ()>,
+}
+
+/// First word of `line` (everything up to the first whitespace),
+/// or None if the line is empty. Used to identify which command we're
+/// completing arguments for — crude but matches zsh's default.
+fn first_word(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let end = trimmed.find(|c: char| c.is_whitespace()).unwrap_or(trimmed.len());
+    if end == 0 { None } else { Some(&trimmed[..end]) }
 }
 
 fn current_word(line: &str, pos: usize) -> WordContext<'_> {

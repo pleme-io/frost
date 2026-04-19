@@ -68,7 +68,9 @@ pub enum LispError {
 }
 
 /// Summary of what a rc-application round actually changed. Returned by
-/// [`apply_source`] so callers can log or validate.
+/// [`apply_source`] so callers can log, validate, or plumb through to
+/// runtime consumers (the completion arg map is the notable one —
+/// `frost-complete` reads it to populate per-command Tab suggestions).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ApplySummary {
     pub aliases: usize,
@@ -82,6 +84,11 @@ pub struct ApplySummary {
     pub binds: usize,
     pub completions: usize,
     pub functions: usize,
+    /// command → argument list, extracted from every `(defcompletion …)`
+    /// applied. Preserved so the REPL can hand the map to
+    /// `frost-complete::FrostCompleter` without re-parsing the JSON
+    /// blobs we also wrote to shell vars.
+    pub completion_map: std::collections::HashMap<String, Vec<String>>,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -199,6 +206,7 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
         let var = format!("__frost_complete_{}", c.command);
         let payload = serde_json::to_string(&c).unwrap_or_default();
         env.set_var(&var, &payload);
+        summary.completion_map.insert(c.command.clone(), c.args.clone());
         summary.completions += 1;
     }
 
