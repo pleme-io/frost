@@ -875,6 +875,15 @@ impl<'env> Executor<'env> {
         if argv.is_empty() {
             return Ok(0);
         }
+
+        // Alias expansion — zsh rule: an alias is expanded iff the name
+        // matches argv[0] *and* we haven't already expanded it in this
+        // expansion pass (prevents infinite recursion when an alias refers
+        // to itself, e.g. `alias ls='ls --color'`). Trailing space in an
+        // alias value allows the next word to also be alias-expanded, but
+        // for the first pass we implement the common case only.
+        let argv = expand_aliases(argv, &self.env.aliases);
+
         let name = &argv[0];
 
         // Check for functions first
@@ -1188,6 +1197,43 @@ impl<'env> Executor<'env> {
             }
         }
     }
+}
+
+/// Expand an alias chain in `argv`. zsh's rules:
+///
+/// * Only the first word of a simple command is matched against the alias
+///   table.
+/// * An alias value is re-tokenized on whitespace; the resulting words
+///   replace argv\[0\] and argv\[1..\] is appended.
+/// * Recursion is bounded by tracking which alias names have been expanded
+///   in this pass — a self-referential `alias ls='ls --color'` expands once
+///   and then falls through to the real `ls`.
+/// * A trailing space in the alias value would allow alias expansion to
+///   apply to the next word too (`alias sudo='sudo '` ⇒ `sudo ll` expands
+///   both); implementing that precisely requires carrying a flag through
+///   recursion and is deferred for a follow-up.
+fn expand_aliases(mut argv: Vec<String>, aliases: &std::collections::HashMap<String, String>) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for _ in 0..16 {
+        // Hard cap: 16 expansion rounds covers real configs and prevents any
+        // pathological mutual-recursive aliases from looping forever.
+        if argv.is_empty() { break; }
+        let first = &argv[0];
+        if seen.contains(first) { break; }
+        let Some(value) = aliases.get(first) else { break; };
+        seen.insert(first.clone());
+        // Tokenize the alias value on whitespace. This is intentionally
+        // simpler than full shell tokenization — aliases commonly look
+        // like `ls -la` or `grep --color=auto` and don't need quoting.
+        let mut replacement: Vec<String> = value
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
+        if replacement.is_empty() { break; }
+        replacement.extend(argv.drain(1..));
+        argv = replacement;
+    }
+    argv
 }
 
 /// Returns true if `w` contains an unquoted glob AST node (not an escaped or
@@ -1568,5 +1614,50 @@ mod tests {
         assert_eq!(eval_arithmetic("3+4", &env), 7);
         assert_eq!(eval_arithmetic("10-3", &env), 7);
         assert_eq!(eval_arithmetic("6*7", &env), 42);
+    }
+
+    // ── Alias expansion ────────────────────────────────────────────
+
+    fn alias_map(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn alias_expands_first_word() {
+        let a = alias_map(&[("ll", "ls -la")]);
+        let argv = vec!["ll".into(), "src/".into()];
+        assert_eq!(expand_aliases(argv, &a), vec!["ls", "-la", "src/"]);
+    }
+
+    #[test]
+    fn alias_chain_until_fixed_point() {
+        let a = alias_map(&[("ll", "la -l"), ("la", "ls -A")]);
+        let argv = vec!["ll".into()];
+        assert_eq!(expand_aliases(argv, &a), vec!["ls", "-A", "-l"]);
+    }
+
+    #[test]
+    fn self_referential_alias_expands_once() {
+        // `alias ls='ls --color'` — must expand exactly once, not loop.
+        let a = alias_map(&[("ls", "ls --color")]);
+        let argv = vec!["ls".into(), "src/".into()];
+        assert_eq!(expand_aliases(argv, &a), vec!["ls", "--color", "src/"]);
+    }
+
+    #[test]
+    fn unknown_command_is_unchanged() {
+        let a = alias_map(&[("ll", "ls -la")]);
+        let argv = vec!["cat".into(), "file".into()];
+        assert_eq!(expand_aliases(argv, &a), vec!["cat", "file"]);
+    }
+
+    #[test]
+    fn empty_alias_value_is_a_noop() {
+        let a = alias_map(&[("nop", "")]);
+        let argv = vec!["nop".into(), "arg".into()];
+        // An empty-valued alias shouldn't drop argv[0] into nothing — keep
+        // the original word so the user gets a clean "command not found"
+        // rather than a confusing blank execution.
+        assert_eq!(expand_aliases(argv, &a), vec!["nop", "arg"]);
     }
 }
