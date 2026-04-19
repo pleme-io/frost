@@ -431,6 +431,7 @@ dependencies = [
  "fancy-regex",
  "frost-builtins",
  "frost-expand",
+ "frost-glob",
  "frost-lexer",
  "frost-options",
  "frost-parser",

@@ -851,10 +851,30 @@ impl<'env> Executor<'env> {
             return Ok(0);
         }
 
-        let argv: Vec<String> = cmd.words.iter()
-            .flat_map(|w| self.expand_word_multi(w))
-            .filter(|s| !s.is_empty() || cmd.words.len() == 1)
-            .collect();
+        // Glob expansion runs after all other word expansions. We only glob
+        // words that originally contained unquoted glob AST parts — this
+        // preserves zsh's GLOB_SUBST-off default (a `*` that came from a
+        // variable value is NOT re-globbed).
+        let argv: Vec<String> = {
+            let mut out = Vec::with_capacity(cmd.words.len());
+            for word in &cmd.words {
+                let expanded = self.expand_word_multi(word);
+                if word_has_unquoted_glob(word) && self.env.is_option_set(frost_options::ShellOption::Glob) {
+                    for candidate in expanded {
+                        self.apply_glob_to(candidate, &mut out);
+                    }
+                } else {
+                    out.extend(expanded);
+                }
+            }
+            out.into_iter()
+                .filter(|s| !s.is_empty() || cmd.words.len() == 1)
+                .collect()
+        };
+
+        if argv.is_empty() {
+            return Ok(0);
+        }
         let name = &argv[0];
 
         // Check for functions first
@@ -1131,6 +1151,70 @@ impl<'env> Executor<'env> {
         }
         result
     }
+
+    /// Attempt filesystem glob expansion of `pattern` against the current cwd.
+    /// Appends matches to `out`. Policy:
+    ///
+    /// * If the glob matches: append each match path (as a string).
+    /// * If it does not match AND `NULL_GLOB` is set: drop the word silently.
+    /// * If it does not match AND `NO_MATCH` is set (zsh default): currently
+    ///   passes the pattern through literally. This deviates from strict zsh
+    ///   (which would error) but matches bash and makes frost useful today;
+    ///   strict NOMATCH enforcement can be layered on later.
+    /// * Otherwise: pass the pattern through literally.
+    fn apply_glob_to(&self, pattern: String, out: &mut Vec<String>) {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let opts = frost_glob::GlobOptions {
+            dot_glob: self.env.is_option_set(frost_options::ShellOption::GlobDots),
+            case_insensitive: !self.env.is_option_set(frost_options::ShellOption::CaseGlob),
+        };
+        match frost_glob::expand_pattern(&pattern, &cwd, &opts) {
+            Ok(matches) if !matches.is_empty() => {
+                for m in matches {
+                    out.push(m.to_string_lossy().into_owned());
+                }
+            }
+            Ok(_) => {
+                if self.env.is_option_set(frost_options::ShellOption::NullGlob) {
+                    // NULL_GLOB: drop the word silently.
+                } else {
+                    // Default & NO_MATCH: pass pattern through.
+                    out.push(pattern);
+                }
+            }
+            Err(_) => {
+                // Pattern syntax error or I/O issue: fall back to literal.
+                out.push(pattern);
+            }
+        }
+    }
+}
+
+/// Returns true if `w` contains an unquoted glob AST node (not an escaped or
+/// quoted `*`/`?`). This is the signal that the executor should try
+/// filesystem glob expansion after all other expansions complete — a `*`
+/// that appears only inside a single-quoted literal or inside a `$var`
+/// value is NOT a glob under zsh's default semantics.
+fn word_has_unquoted_glob(w: &Word) -> bool {
+    use frost_parser::ast::WordPart;
+    fn contains(parts: &[WordPart]) -> bool {
+        parts.iter().any(|p| match p {
+            WordPart::Glob(_) | WordPart::ExtGlob { .. } => true,
+            // Quoted parts carry their own parts but they are all literal.
+            WordPart::DoubleQuoted(inner) => contains(inner),
+            WordPart::SingleQuoted(_)
+            | WordPart::Literal(_)
+            | WordPart::DollarVar(_)
+            | WordPart::DollarBrace { .. }
+            | WordPart::ParamExp(_)
+            | WordPart::CommandSub(_)
+            | WordPart::ArithSub(_)
+            | WordPart::Tilde(_)
+            | WordPart::BraceExp(_)
+            | WordPart::ProcessSub { .. } => false,
+        })
+    }
+    contains(&w.parts)
 }
 
 // ── Bridge from ShellEnv to frost_expand::ExpandEnv ─────────────────

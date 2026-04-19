@@ -723,6 +723,19 @@ impl<'a> Parser<'a> {
                         parts.push(WordPart::Literal(CompactString::from("$")));
                     }
                 }
+                // Glob metacharacters must preserve their WordPart::Glob tag so
+                // the executor can recognize the word as needing filesystem
+                // globbing. Without this, `sub/*` was parsed as a single
+                // Literal word, silently disabling glob expansion.
+                TokenKind::Star => {
+                    parts.push(WordPart::Glob(GlobKind::Star));
+                }
+                TokenKind::Question => {
+                    parts.push(WordPart::Glob(GlobKind::Question));
+                }
+                TokenKind::At => {
+                    parts.push(WordPart::Glob(GlobKind::At));
+                }
                 _ => {
                     parts.push(WordPart::Literal(next.text.clone()));
                 }

@@ -12,6 +12,7 @@ description = "Zsh-compatible command execution engine"
 frost-lexer = { workspace = true }
 frost-parser = { workspace = true }
 frost-expand = { workspace = true }
+frost-glob = { workspace = true }
 frost-builtins = { workspace = true }
 frost-options = { workspace = true }
 indexmap = { workspace = true }
