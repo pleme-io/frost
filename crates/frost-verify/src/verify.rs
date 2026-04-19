@@ -308,7 +308,11 @@ impl Report {
                 let status = match &entry.status {
                     EntryStatus::Verified => "ok".to_string(),
                     EntryStatus::HashMismatch { expected, actual } => {
-                        format!("HASH MISMATCH (expected {}, got {})", &expected[..8], &actual[..8.min(actual.len())])
+                        format!(
+                            "HASH MISMATCH (expected {}, got {})",
+                            &expected[..8],
+                            &actual[..8.min(actual.len())]
+                        )
                     }
                     EntryStatus::OrderMismatch { expected, actual } => {
                         format!("ORDER MISMATCH (expected {expected}, got {actual})")
@@ -398,10 +402,7 @@ mod tests {
             version: crate::manifest::MANIFEST_VERSION,
             shell: "zsh".into(),
             root: None,
-            entries: vec![
-                entry(0, "a.zsh", "aaa"),
-                entry(1, "b.zsh", "bbb"),
-            ],
+            entries: vec![entry(0, "a.zsh", "aaa"), entry(1, "b.zsh", "bbb")],
         };
         let trace = vec![
             trace_entry(0, "a.zsh", "aaa"),

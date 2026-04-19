@@ -54,10 +54,9 @@ mod tests {
 
     #[test]
     fn parses_builtin_with_aliases() {
-        let specs: Vec<BuiltinSpec> = tatara_lisp::compile_typed(
-            r#"(defbuiltin :name "[" :aliases ("test") :min-args 1)"#,
-        )
-        .unwrap();
+        let specs: Vec<BuiltinSpec> =
+            tatara_lisp::compile_typed(r#"(defbuiltin :name "[" :aliases ("test") :min-args 1)"#)
+                .unwrap();
         assert_eq!(specs[0].name, "[");
         assert_eq!(specs[0].aliases, vec!["test".to_string()]);
         assert_eq!(specs[0].min_args, Some(1));

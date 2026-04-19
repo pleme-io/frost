@@ -7,8 +7,14 @@ fn both_domains_register_and_resolve() {
     frost_spec::register_all();
 
     let keywords = tatara_lisp::domain::registered_keywords();
-    assert!(keywords.contains(&"defbuiltin"), "missing defbuiltin: {keywords:?}");
-    assert!(keywords.contains(&"defoption"), "missing defoption: {keywords:?}");
+    assert!(
+        keywords.contains(&"defbuiltin"),
+        "missing defbuiltin: {keywords:?}"
+    );
+    assert!(
+        keywords.contains(&"defoption"),
+        "missing defoption: {keywords:?}"
+    );
 }
 
 #[test]
