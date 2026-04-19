@@ -59,6 +59,7 @@ libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+blake3 = "1.8"
 
 # Testing
 pretty_assertions = "1"
