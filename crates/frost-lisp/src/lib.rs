@@ -35,6 +35,7 @@ mod completion;
 mod env;
 mod function;
 mod hook;
+mod integration;
 mod option;
 mod path;
 mod picker;
@@ -48,6 +49,7 @@ pub use completion::CompletionSpec;
 pub use env::EnvSpec;
 pub use function::FunctionSpec;
 pub use hook::{hook_function_name, HookSpec};
+pub use integration::{lookup_integration, IntegrationSpec, KNOWN_INTEGRATIONS};
 pub use option::OptionSetSpec;
 pub use path::{apply_path, expand_vars, PathSpec};
 pub use picker::{is_valid_action, picker_sentinel, PickerSpec, VALID_ACTIONS};
@@ -73,6 +75,8 @@ pub enum LispError {
     UnknownSignal(String),
     #[error("unknown picker action: {0} (valid: replace, append, cd-submit, submit)")]
     UnknownPickerAction(String),
+    #[error("unknown integration: {0} (known: zoxide, direnv, starship, atuin)")]
+    UnknownIntegration(String),
 }
 
 /// Summary of what a rc-application round actually changed. Returned by
@@ -125,6 +129,13 @@ pub struct ApplySummary {
     pub flags: Vec<FlagSpec>,
     /// Positional registrations from `(defposit …)`.
     pub positionals: Vec<PositSpec>,
+
+    /// Number of `(defintegration :tool "…")` expansions applied. Each
+    /// expansion contributes to aliases / env_vars / hooks /
+    /// prompts_set via the recipe in `frost_lisp::lookup_integration`;
+    /// those counts are bumped already — `integrations` just records
+    /// how many top-level integrations were triggered.
+    pub integrations: usize,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -134,6 +145,64 @@ pub struct ApplySummary {
 /// `defenv` in the same file is expected).
 pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
     let mut summary = ApplySummary::default();
+
+    // ─── Integrations (first — they contribute primitives) ──────────
+    // `(defintegration :tool "zoxide")` expands into the canonical
+    // alias+hook+env set for each known tool. Processing happens BEFORE
+    // the primitive passes so that (a) integration-contributed aliases
+    // land in env.aliases alongside user-authored ones and (b) hook /
+    // precmd contributions can be merged in the existing consolidation
+    // loops below.
+    let integrations: Vec<IntegrationSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let mut integration_hooks: std::collections::HashMap<&'static str, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut integration_prompt_commands: Vec<String> = Vec::new();
+    for spec in integrations {
+        let recipe = lookup_integration(&spec.tool)
+            .ok_or_else(|| LispError::UnknownIntegration(spec.tool.clone()))?;
+        // Aliases → env.aliases, counted toward summary.aliases.
+        for (name, value) in recipe.aliases {
+            env.aliases.insert((*name).to_string(), (*value).to_string());
+            summary.aliases += 1;
+        }
+        // Env vars → env.set_var + optional export.
+        for (name, value, exp) in recipe.env {
+            env.set_var(name, value);
+            summary.env_vars += 1;
+            if *exp {
+                env.export_var(name);
+                summary.env_exports += 1;
+            }
+        }
+        // Hook bodies — staged into a side map; the hook pass below
+        // merges them with user-declared hooks into one composed body
+        // per event.
+        if let Some(body) = recipe.precmd_body {
+            integration_hooks
+                .entry("__frost_hook_precmd")
+                .or_default()
+                .push(body.to_string());
+        }
+        if let Some(body) = recipe.preexec_body {
+            integration_hooks
+                .entry("__frost_hook_preexec")
+                .or_default()
+                .push(body.to_string());
+        }
+        if let Some(body) = recipe.chpwd_body {
+            integration_hooks
+                .entry("__frost_hook_chpwd")
+                .or_default()
+                .push(body.to_string());
+        }
+        // Prompt command → synthetic precmd (appended to whatever the
+        // prompt pass produces from user defprompts).
+        if let Some(cmd) = recipe.prompt_command {
+            integration_prompt_commands.push(cmd.to_string());
+        }
+        summary.integrations += 1;
+    }
 
     // Aliases
     let aliases: Vec<AliasSpec> =
@@ -243,6 +312,17 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
             }
         }
     }
+    // Merge in prompt commands contributed by `(defintegration :tool "starship")`.
+    for cmd in integration_prompt_commands {
+        let piece = format!("PS1=\"$({cmd})\"");
+        match &mut synthetic_precmd {
+            Some(existing) => {
+                existing.push('\n');
+                existing.push_str(&piece);
+            }
+            None => synthetic_precmd = Some(piece),
+        }
+    }
 
     // Hooks — each stored under a well-known function name the REPL
     // checks. Multiple `(defhook :event "precmd" …)` forms compose —
@@ -280,6 +360,19 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
             })
             .or_insert(body);
         summary.hooks += 1;
+    }
+    // Merge `(defintegration …)` hook bodies — each event accumulates
+    // across every matching integration + user `(defhook …)` form.
+    for (fn_name, bodies) in integration_hooks {
+        let joined = bodies.join("\n");
+        hook_bodies
+            .entry(fn_name)
+            .and_modify(|existing| {
+                existing.push('\n');
+                existing.push_str(&joined);
+            })
+            .or_insert(joined);
+        summary.hooks += bodies.len();
     }
     for (fn_name, body) in hook_bodies {
         install_body_as_function(env, fn_name, &body);
@@ -739,6 +832,51 @@ mod tests {
         assert!(matches!(
             apply_source(src, &mut env),
             Err(LispError::UnknownPickerAction(_))
+        ));
+    }
+
+    #[test]
+    fn apply_integration_zoxide_expands_aliases_and_chpwd() {
+        let mut env = ShellEnv::new();
+        let src = r#"(defintegration :tool "zoxide")"#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.integrations, 1);
+        // Recipe added two aliases.
+        assert_eq!(env.aliases.get("z").map(String::as_str), Some("__zoxide_z"));
+        assert_eq!(env.aliases.get("zi").map(String::as_str), Some("__zoxide_zi"));
+        // chpwd hook body must include the zoxide add call. The body
+        // renders as a parsed AST (Word { parts: [Literal("zoxide")] }
+        // + Word { parts: [Literal("add")] }), so assert on the tokens
+        // rather than the reconstructed phrase.
+        let chpwd = env.functions.get("__frost_hook_chpwd").expect("chpwd registered");
+        let rendered = format!("{:?}", chpwd.body);
+        assert!(rendered.contains("zoxide"), "body: {rendered}");
+        assert!(rendered.contains("add"), "body: {rendered}");
+        assert!(rendered.contains("PWD"), "body: {rendered}");
+    }
+
+    #[test]
+    fn apply_integration_starship_synthesizes_prompt_hook() {
+        let mut env = ShellEnv::new();
+        let src = r#"(defintegration :tool "starship")"#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.integrations, 1);
+        // Starship recipe adds a prompt_command → synthesized precmd
+        // that assigns `$(starship prompt …)` to PS1.
+        let precmd = env.functions.get("__frost_hook_precmd").expect("precmd registered");
+        let rendered = format!("{:?}", precmd.body);
+        assert!(rendered.contains("starship"), "body: {rendered}");
+        assert!(rendered.contains("prompt"), "body: {rendered}");
+        assert!(rendered.contains("PS1"), "body: {rendered}");
+    }
+
+    #[test]
+    fn apply_integration_unknown_tool_errors() {
+        let mut env = ShellEnv::new();
+        let src = r#"(defintegration :tool "not-a-real-tool")"#;
+        assert!(matches!(
+            apply_source(src, &mut env),
+            Err(LispError::UnknownIntegration(_))
         ));
     }
 
