@@ -211,7 +211,10 @@ fn is_complete(src: &str) -> bool {
         && kw.is_empty()
 }
 
-fn interactive(env: &mut frost_exec::ShellEnv) {
+fn interactive(
+    env: &mut frost_exec::ShellEnv,
+    rc_completions: std::collections::HashMap<String, Vec<String>>,
+) {
     // Ignore SIGINT in the shell process itself; reedline handles Ctrl-C
     // by aborting the current line buffer, not killing frost.
     unsafe {
@@ -227,7 +230,10 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
             ZleEngine::in_memory()
         }
     };
-    let completer = Box::new(frost_complete::FrostCompleter::with_default_builtins());
+    let completer = Box::new(
+        frost_complete::FrostCompleter::with_default_builtins()
+            .with_arg_completions(rc_completions),
+    );
     let mut zle = zle_base.with_completer(completer);
     // Separate in-process history for `!` expansion — reedline owns the
     // user-facing navigation buffer, frost-history owns the expansion
@@ -338,23 +344,26 @@ fn main() {
     let mut env = frost_exec::ShellEnv::new();
 
     // Tatara-Lisp rc file — declarative authoring surface for aliases,
-    // options, env vars, and (future) prompt/hook/binding/completion.
-    // Missing file is not an error; parse/apply errors print a warning
-    // so frost still starts even if the rc has a bug.
+    // options, env vars, prompt, hooks, traps, binds, completions,
+    // functions. Missing file is not an error; parse/apply errors print
+    // a warning so frost still starts even if the rc has a bug.
     let rc_path = frost_lisp::default_rc_path();
-    match frost_lisp::load_rc(&rc_path, &mut env) {
-        Ok(summary) if summary == frost_lisp::ApplySummary::default() => { /* no rc, silent */ }
+    let rc_completions = match frost_lisp::load_rc(&rc_path, &mut env) {
         Ok(summary) => {
-            tracing::debug!(
-                ?summary,
-                rc = %rc_path.display(),
-                "loaded frost-lisp rc file"
-            );
+            if summary != frost_lisp::ApplySummary::default() {
+                tracing::debug!(
+                    ?summary,
+                    rc = %rc_path.display(),
+                    "loaded frost-lisp rc file"
+                );
+            }
+            summary.completion_map
         }
         Err(e) => {
             eprintln!("frost: warning: failed to load {}: {e}", rc_path.display());
+            std::collections::HashMap::new()
         }
-    }
+    };
 
     let code = if let Some(cmd) = &cli.command {
         unwrap_outcome(run(cmd, &mut env))
@@ -367,7 +376,7 @@ fn main() {
             }
         }
     } else if std::io::stdin().is_terminal() {
-        interactive(&mut env);
+        interactive(&mut env, rc_completions);
         0
     } else {
         // Non-interactive stdin (e.g., `frost < script.sh`) — slurp it.
