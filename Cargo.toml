@@ -67,8 +67,10 @@ sha2 = "0.10"
 blake3 = "1.8"
 
 # Tatara Rust+Lisp authoring — pinned to a known-good rev so the derive
-# macro shape is stable across frost rebuilds.
-tatara-lisp = { git = "ssh://git@github.com/pleme-io/tatara", rev = "a1062f8069bb336a87cb9b2c68a85885665e3234" }
+# macro shape is stable across frost rebuilds. Uses HTTPS so the Nix
+# daemon can vendor via access-tokens.conf without needing an SSH key
+# inside its sandbox.
+tatara-lisp = { git = "https://github.com/pleme-io/tatara", rev = "a1062f8069bb336a87cb9b2c68a85885665e3234" }
 
 # Testing
 pretty_assertions = "1"
