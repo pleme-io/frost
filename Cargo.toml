@@ -8,6 +8,7 @@ members = [
   "crates/frost-glob",
   "crates/frost-prompt",
   "crates/frost-history",
+  "crates/frost-lisp",
   "crates/frost-exec",
   "crates/frost-zle",
   "crates/frost-complete",
@@ -34,6 +35,7 @@ frost-expand = { path = "crates/frost-expand" }
 frost-glob = { path = "crates/frost-glob" }
 frost-prompt = { path = "crates/frost-prompt" }
 frost-history = { path = "crates/frost-history" }
+frost-lisp = { path = "crates/frost-lisp" }
 frost-exec = { path = "crates/frost-exec" }
 frost-zle = { path = "crates/frost-zle" }
 frost-complete = { path = "crates/frost-complete" }
