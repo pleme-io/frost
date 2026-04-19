@@ -12,9 +12,12 @@ use frost_builtins::BuiltinRegistry;
 use frost_expand::ExpandEnv;
 use frost_parser::ast::{
     BraceGroup, CaseClause, CForClause, Command, CompleteCommand, CondExpr, CondOp,
-    ForClause, IfClause, List, ListOp, Pipeline, Program, RepeatClause, SelectClause,
-    SimpleCommand, Subshell, TryAlwaysClause, UntilClause, WhileClause, Word,
+    ForClause, IfClause, List, ListOp, Pipeline, Program, ProcessSubKind, RepeatClause,
+    SelectClause, SimpleCommand, Subshell, TryAlwaysClause, UntilClause, WhileClause,
+    Word, WordPart,
 };
+use compact_str::CompactString;
+use std::os::fd::RawFd;
 
 use crate::env::ShellEnv;
 use crate::job::JobTable;
@@ -851,13 +854,25 @@ impl<'env> Executor<'env> {
             return Ok(0);
         }
 
+        // Process substitution resolves first — each `<(cmd)` / `>(cmd)` in
+        // a word spawns a subprocess and is replaced by a `/dev/fd/N`
+        // literal. The guard closes the parent-side fds on drop (any return
+        // path) so the child subprocess sees EOF / an empty read and exits.
+        let mut proc_sub_fds: Vec<RawFd> = Vec::new();
+        let resolved_words: Vec<Word> = cmd.words.iter().map(|w| {
+            let (rw, fds) = self.resolve_process_subs(w);
+            proc_sub_fds.extend(fds);
+            rw
+        }).collect();
+        let _proc_sub_guard = ProcSubFdGuard { fds: proc_sub_fds };
+
         // Glob expansion runs after all other word expansions. We only glob
         // words that originally contained unquoted glob AST parts — this
         // preserves zsh's GLOB_SUBST-off default (a `*` that came from a
         // variable value is NOT re-globbed).
         let argv: Vec<String> = {
-            let mut out = Vec::with_capacity(cmd.words.len());
-            for word in &cmd.words {
+            let mut out = Vec::with_capacity(resolved_words.len());
+            for word in &resolved_words {
                 let expanded = self.expand_word_multi(word);
                 if word_has_unquoted_glob(word) && self.env.is_option_set(frost_options::ShellOption::Glob) {
                     for candidate in expanded {
@@ -1161,6 +1176,93 @@ impl<'env> Executor<'env> {
         result
     }
 
+    /// Scan a word for `<(cmd)` / `>(cmd)` process substitutions. For each,
+    /// fork a subprocess whose I/O is attached to a fresh pipe, then replace
+    /// the AST node with a `/dev/fd/N` literal so expansion yields a plain
+    /// filename argument. Returns the rewritten word along with the list of
+    /// file descriptors the parent kept open — the caller must close them
+    /// after the main command completes, otherwise the subprocess will
+    /// block on its pipe.
+    ///
+    /// macOS and Linux both expose `/dev/fd/N`, so the returned path works
+    /// without any `mkfifo` dance.
+    fn resolve_process_subs(&mut self, word: &Word) -> (Word, Vec<RawFd>) {
+        if !word.parts.iter().any(|p| matches!(p, WordPart::ProcessSub { .. })) {
+            return (word.clone(), Vec::new());
+        }
+        let mut new_parts = Vec::with_capacity(word.parts.len());
+        let mut open_fds = Vec::new();
+        for part in &word.parts {
+            match part {
+                WordPart::ProcessSub { kind, body } => {
+                    match self.spawn_process_sub(*kind, body) {
+                        Ok((path, fd)) => {
+                            open_fds.push(fd);
+                            new_parts.push(WordPart::Literal(CompactString::from(path)));
+                        }
+                        Err(e) => {
+                            eprintln!("frost: process substitution failed: {e}");
+                            new_parts.push(WordPart::Literal(CompactString::from("")));
+                        }
+                    }
+                }
+                other => new_parts.push(other.clone()),
+            }
+        }
+        (Word { parts: new_parts, span: word.span }, open_fds)
+    }
+
+    /// Fork a subprocess connected via a pipe and return the parent-side
+    /// `/dev/fd/N` path + the fd the parent should close after the main
+    /// command finishes.
+    fn spawn_process_sub(
+        &mut self,
+        kind: ProcessSubKind,
+        body: &Program,
+    ) -> Result<(String, RawFd), ExecError> {
+        let pipe = sys::pipe().map_err(ExecError::Pipe)?;
+        let body_owned = body.clone();
+        match unsafe { sys::fork() }.map_err(ExecError::Fork)? {
+            sys::ForkOutcome::Child => {
+                // Wire child's stdout/stdin to the pipe according to direction,
+                // close the other end, then execute the body. Exit deliberately
+                // so we don't fall through into the parent's control flow.
+                //
+                // Reset SIGPIPE to SIG_DFL so a closed read end produces a
+                // clean signal exit instead of Rust's default "panic on
+                // Broken pipe from println!". This matches zsh behavior —
+                // `echo <(echo foo)` just prints the path; the child's write
+                // to a never-read pipe should not be a visible error.
+                unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL); }
+
+                let (src, dst, close_other) = match kind {
+                    ProcessSubKind::Input => (pipe.write, 1, pipe.read),
+                    ProcessSubKind::Output => (pipe.read, 0, pipe.write),
+                };
+                let _ = sys::close(close_other);
+                if sys::dup2_and_close(src, dst).is_err() {
+                    std::process::exit(126);
+                }
+                let mut child_env = self.env.clone();
+                let mut executor = Executor::new(&mut child_env);
+                let status = executor.execute_program(&body_owned).unwrap_or(1);
+                std::process::exit(status);
+            }
+            sys::ForkOutcome::Parent { child_pid: _ } => {
+                // Keep the parent's end open for the main command; close the
+                // other end immediately so the child actually sees EOF / the
+                // write end when it's done.
+                let (keep, drop_fd) = match kind {
+                    ProcessSubKind::Input => (pipe.read, pipe.write),
+                    ProcessSubKind::Output => (pipe.write, pipe.read),
+                };
+                let _ = sys::close(drop_fd);
+                let path = format!("/dev/fd/{keep}");
+                Ok((path, keep))
+            }
+        }
+    }
+
     /// Attempt filesystem glob expansion of `pattern` against the current cwd.
     /// Appends matches to `out`. Policy:
     ///
@@ -1195,6 +1297,23 @@ impl<'env> Executor<'env> {
                 // Pattern syntax error or I/O issue: fall back to literal.
                 out.push(pattern);
             }
+        }
+    }
+}
+
+/// RAII close of the parent-side process-substitution file descriptors.
+/// The child subprocess keeps its end of the pipe and runs on its own.
+/// When the main command has finished, dropping this guard closes the
+/// parent's ends — the child then sees EOF (for `<(cmd)`) or gets its
+/// stdin closed (for `>(cmd)`) and exits naturally.
+struct ProcSubFdGuard {
+    fds: Vec<RawFd>,
+}
+
+impl Drop for ProcSubFdGuard {
+    fn drop(&mut self) {
+        for fd in &self.fds {
+            let _ = sys::close(*fd);
         }
     }
 }

@@ -196,6 +196,9 @@ impl<'a> Parser<'a> {
                 | TokenKind::At
                 | TokenKind::Number
                 | TokenKind::Equals
+                // Process substitution opens a word — `<(cmd)` / `>(cmd)`.
+                | TokenKind::ProcessSubIn
+                | TokenKind::ProcessSubOut
         )
     }
 
@@ -680,6 +683,41 @@ impl<'a> Parser<'a> {
             TokenKind::Star => parts.push(WordPart::Glob(GlobKind::Star)),
             TokenKind::Question => parts.push(WordPart::Glob(GlobKind::Question)),
             TokenKind::At => parts.push(WordPart::Glob(GlobKind::At)),
+            // Process substitution `<(cmd)` / `>(cmd)` — parse the
+            // parenthesized body as a standalone program, same shape as
+            // `$(cmd)` above. The executor later forks a subprocess whose
+            // pipe is exposed as `/dev/fd/N`.
+            TokenKind::ProcessSubIn | TokenKind::ProcessSubOut => {
+                let kind = if tok.kind == TokenKind::ProcessSubIn {
+                    ProcessSubKind::Input
+                } else {
+                    ProcessSubKind::Output
+                };
+                let mut inner_tokens = Vec::new();
+                let mut depth = 1u32;
+                while !self.at_eof() && depth > 0 {
+                    if self.at(TokenKind::LeftParen) || self.at(TokenKind::DollarParen)
+                        || self.at(TokenKind::ProcessSubIn) || self.at(TokenKind::ProcessSubOut)
+                    {
+                        depth += 1;
+                        inner_tokens.push(self.advance().clone());
+                    } else if self.at(TokenKind::RightParen) {
+                        depth -= 1;
+                        if depth == 0 { self.advance(); break; }
+                        inner_tokens.push(self.advance().clone());
+                    } else {
+                        inner_tokens.push(self.advance().clone());
+                    }
+                }
+                inner_tokens.push(Token {
+                    kind: TokenKind::Eof,
+                    span: self.span(),
+                    text: CompactString::default(),
+                });
+                let mut sub_parser = Parser::new(&inner_tokens);
+                let body = sub_parser.parse();
+                parts.push(WordPart::ProcessSub { kind, body: Box::new(body) });
+            }
             TokenKind::Tilde => {
                 // ~user or just ~
                 let user = if self.kind() == TokenKind::Word {
