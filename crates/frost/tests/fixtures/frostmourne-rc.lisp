@@ -387,18 +387,23 @@ esac")
 (defalias :name "grep" :value "rg")
 (defalias :name "find" :value "fd")
 
-;; blx-ls > ls — thin Rust wrapper (pleme-io/blx) that translates
-;; POSIX `ls` flags to eza equivalents. Fixes the common case
-;; `ls -ltra` — eza's -t means --time (takes a value), so a raw
-;; `eza -ltra` fails; blx-ls parses the cluster and invokes eza
-;; with `-la --sort=modified --reverse`.
+;; ls family — blzsh parity. All variants share --icons (glyphs for
+;; file types) and --group-directories-first (dirs sort above files);
+;; --git decorates versioned paths with their status. `l` is the
+;; cheap "just list names"; `ll`/`la` add long-form + hidden-file
+;; variants; `lt`/`tree` expose the tree view at depth 2; `lta`/`ltr`
+;; cover reverse-chronological sorts. `ls` delegates to `blx-ls`
+;; (pleme-io/blx — a Rust wrapper) which translates POSIX flag
+;; clusters like `-ltra` to eza's flag model.
 (defalias :name "ls"   :value "blx-ls")
-(defalias :name "ll"   :value "eza -la --git --group-directories-first")
-(defalias :name "la"   :value "eza -A --git")
-(defalias :name "lt"   :value "eza -la --git --tree --level=2 --group-directories-first")
-(defalias :name "lta"  :value "eza -la --sort=modified --reverse --icons --group-directories-first")
-(defalias :name "ltr"  :value "eza -l --sort=modified --reverse --icons --group-directories-first")
-(defalias :name "tree" :value "eza --tree --icons")
+(defalias :name "l"    :value "eza --icons --group-directories-first")
+(defalias :name "la"   :value "eza -a --icons --group-directories-first --git")
+(defalias :name "ll"   :value "eza -l --icons --group-directories-first --git")
+(defalias :name "lla"  :value "eza -la --icons --group-directories-first --git")
+(defalias :name "lt"   :value "eza -T --icons --group-directories-first --level=2")
+(defalias :name "lta"  :value "eza -la --sort=modified --reverse --icons --group-directories-first --git")
+(defalias :name "ltr"  :value "eza -l --sort=modified --reverse --icons --group-directories-first --git")
+(defalias :name "tree" :value "eza --tree --icons --group-directories-first")
 
 ;; delta makes git diff legible.
 (defenv :name "GIT_PAGER" :value "delta" :export #t)

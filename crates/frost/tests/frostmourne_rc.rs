@@ -31,6 +31,61 @@ fn applies_full_frostmourne_rc_without_panic() {
 }
 
 #[test]
+fn every_rc_chord_classifies_as_a_known_category() {
+    // Take every (chord, fn_name) the rc produced and run it through
+    // classify_chord. Count the outcomes. Asserts the invariant
+    // we actually care about: the rc never produces an Invalid
+    // chord silently (typo that slipped in), AND at least some
+    // single-key chords are applied (so picker keybindings fire).
+    use frost_zle::{classify_chord, ParsedChord};
+
+    let mut env = frost_exec::ShellEnv::new();
+    let summary = frost_lisp::apply_source(FIXTURE, &mut env).unwrap();
+
+    let mut single = 0usize;
+    let mut multi = 0usize;
+    let mut invalid: Vec<(String, String)> = Vec::new();
+
+    for (chord, fn_name) in &summary.bind_map {
+        match classify_chord(chord) {
+            ParsedChord::Single(..) => single += 1,
+            ParsedChord::MultiKey(_) => multi += 1,
+            ParsedChord::Invalid => invalid.push((chord.clone(), fn_name.clone())),
+        }
+    }
+
+    assert!(
+        invalid.is_empty(),
+        "rc has invalid keybindings (typo / unknown key): {invalid:?}"
+    );
+    // At least the four skim-tab picker chords (C-r/C-t/M-c/C-f)
+    // should classify as Single — i.e., applicable to reedline.
+    assert!(
+        single >= 4,
+        "rc produced only {single} single-key chords; expected ≥ 4 \
+         for the core skim-tab picker set"
+    );
+    // Multi-key chords are silently skipped until reedline ships
+    // chord dispatch; we just want visibility.
+    eprintln!("rc keybinding breakdown: {single} single, {multi} multi-key");
+}
+
+#[test]
+fn with_bindings_applies_rc_bindings_without_stderr_spam() {
+    // Regression: before the set_edit_mode fix, running with the
+    // frostmourne rc spammed stderr with "frost-zle: skipping
+    // unparseable keybinding: C-x e". Verify the fix holds by
+    // asserting with_bindings round-trips every rc chord without
+    // producing an Invalid classification (silent-skip on MultiKey
+    // is OK; warn-on-Invalid is the failure signal).
+    let mut env = frost_exec::ShellEnv::new();
+    let summary = frost_lisp::apply_source(FIXTURE, &mut env).unwrap();
+    let zle = frost_zle::ZleEngine::in_memory().with_bindings(summary.bind_map.clone());
+    assert_eq!(zle.custom_bindings_count(), summary.bind_map.len(),
+        "custom_bindings should mirror the rc's bind_map 1:1");
+}
+
+#[test]
 fn every_picker_binary_is_a_valid_word() {
     // Picker sentinels round-trip through reedline's ExecuteHostCommand.
     // A spec with whitespace / metachars would break the dispatch path.

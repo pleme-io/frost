@@ -280,6 +280,14 @@ impl ZleEngine {
         self.current_mode = Some(mode);
     }
 
+    /// How many custom keybindings were stashed via
+    /// [`Self::with_bindings`]. Exposed for harness tests that
+    /// verify rc-authored chord lists round-trip into the engine.
+    /// Not useful in the REPL hot path.
+    pub fn custom_bindings_count(&self) -> usize {
+        self.custom_bindings.len()
+    }
+
     /// Snapshot of the current edit buffer. Returns what the user has
     /// typed so far — useful when an ExecuteHostCommand sentinel fires
     /// mid-line and the caller wants to pre-seed an external picker
