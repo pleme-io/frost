@@ -1,0 +1,15 @@
+[package]
+name = "frost-history"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Zsh-compatible history storage and ! expansion"
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
