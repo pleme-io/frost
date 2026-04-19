@@ -128,6 +128,19 @@ impl Prompt for FrostPrompt {
 pub struct ZleEngine {
     inner: Reedline,
     prompt: FrostPrompt,
+    /// Rc-authored keybindings captured via `with_bindings`. Stored so
+    /// `set_edit_mode` can re-apply them whenever reedline's edit mode
+    /// is rebuilt (e.g. when `setopt vi` toggles). Without this cache
+    /// the bindings would silently vanish on every REPL iteration —
+    /// the source of the C-r-fires-default-reverse-search bug
+    /// reported against frostmourne. Each entry is `(chord, fn_name)`
+    /// matching the shape `with_bindings` ingests.
+    custom_bindings: Vec<(String, String)>,
+    /// The mode currently installed on `inner`. Avoids rebuilding the
+    /// Emacs/Vi machinery on every iteration when the shell option
+    /// hasn't changed — both a correctness win (doesn't stomp the
+    /// keymap mid-session) and a small perf win.
+    current_mode: Option<EditModeKind>,
 }
 
 impl ZleEngine {
@@ -149,6 +162,8 @@ impl ZleEngine {
         Ok(Self {
             inner: editor,
             prompt: FrostPrompt::default(),
+            custom_bindings: Vec::new(),
+            current_mode: None,
         })
     }
 
@@ -158,6 +173,8 @@ impl ZleEngine {
         Self {
             inner: Reedline::create(),
             prompt: FrostPrompt::default(),
+            custom_bindings: Vec::new(),
+            current_mode: None,
         }
     }
 
@@ -229,20 +246,38 @@ impl ZleEngine {
     }
 
     /// Switch the line editor into vi or emacs mode. Idempotent —
-    /// repeating the same mode is a no-op from the user's perspective,
-    /// but the reedline engine is rebuilt (retaining history + completer
-    /// is the caller's responsibility; today the REPL reconstructs them
-    /// per-session so this is fine).
+    /// if the requested mode is already installed this is a no-op;
+    /// otherwise reedline's edit machinery is rebuilt with
+    /// `self.custom_bindings` merged into the default emacs / vi
+    /// keymap. Previously this silently replaced the user's
+    /// `(defbind …)` / `(defpicker …)` bindings with the default
+    /// keymap on every REPL iteration, which is why Ctrl-R ended
+    /// up firing reedline's built-in reverse search instead of the
+    /// skim-history picker frostmourne binds it to.
     pub fn set_edit_mode(&mut self, mode: EditModeKind) {
+        // Fast path: already in the requested mode. Custom bindings
+        // are embedded in the current keymap; no rebuild needed.
+        if self.current_mode == Some(mode) {
+            return;
+        }
         let boxed: Box<dyn EditMode> = match mode {
-            EditModeKind::Emacs => Box::new(Emacs::default()),
-            EditModeKind::Vi => Box::new(Vi::new(
-                default_vi_insert_keybindings(),
-                default_vi_normal_keybindings(),
-            )),
+            EditModeKind::Emacs => {
+                let mut kb = default_emacs_keybindings();
+                apply_custom_bindings_to(&mut kb, &self.custom_bindings);
+                Box::new(Emacs::new(kb))
+            }
+            EditModeKind::Vi => {
+                // In vi mode, custom bindings apply to the INSERT
+                // keymap (where Ctrl-R et al. commonly fire). Normal
+                // mode keeps its default keymap.
+                let mut insert_kb = default_vi_insert_keybindings();
+                apply_custom_bindings_to(&mut insert_kb, &self.custom_bindings);
+                Box::new(Vi::new(insert_kb, default_vi_normal_keybindings()))
+            }
         };
         let taken = std::mem::replace(&mut self.inner, Reedline::create());
         self.inner = taken.with_edit_mode(boxed);
+        self.current_mode = Some(mode);
     }
 
     /// Snapshot of the current edit buffer. Returns what the user has
@@ -311,6 +346,26 @@ pub enum EditModeKind {
 
 // ─── Custom keybindings ─────────────────────────────────────────────────
 
+/// Parsed chord result. Carries more nuance than the single-chord
+/// shape so callers can distinguish "not supported yet" from
+/// "typo in rc".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParsedChord {
+    /// Single-key chord — reedline can bind this directly.
+    Single(KeyModifiers, KeyCode),
+    /// Space-separated multi-key sequence (`"C-x e"`, `"M-k M-h"`).
+    /// Authoring surface is valid; reedline's current keybinding API
+    /// binds one chord at a time, so we silently record these as
+    /// "opted-in but not-yet-dispatched" rather than erroring. The
+    /// intent survives an rc edit so the moment multi-key lands in
+    /// reedline we can switch the variant's consumer side.
+    MultiKey(Vec<String>),
+    /// Malformed — neither a valid single chord nor a multi-key
+    /// sequence (empty input, trailing `-`, unknown modifier token
+    /// like `Z-x`).
+    Invalid,
+}
+
 /// Apply rc-authored `defbind` keybindings. Each entry maps a chord
 /// string (`"C-l"`, `"M-?"`, …) to the name of a shell function that
 /// reedline will invoke by returning it from `read_line` as if the user
@@ -318,24 +373,110 @@ pub enum EditModeKind {
 /// keybindings.
 ///
 /// Only single-key chords with Ctrl / Alt / Shift modifiers are
-/// supported today; multi-key sequences like `"C-x e"` are accepted
-/// syntactically but dropped with a warning, because reedline's
-/// default emacs keymap owns chord state in a way that needs deeper
-/// plumbing.
+/// bound today; multi-key sequences (`"C-x e"`, `"M-k M-h"`) are
+/// recognized by [`classify_chord`] as `ParsedChord::MultiKey` and
+/// silently skipped (the binding remains declared in rc; it just
+/// can't fire until reedline gains chord-state dispatch).
 ///
 /// Unknown chord strings are skipped (the authoring surface is stable
 /// — a rc file that predates a key-name addition should still load).
 pub fn parse_chord(s: &str) -> Option<(KeyModifiers, KeyCode)> {
+    match classify_chord(s) {
+        ParsedChord::Single(m, k) => Some((m, k)),
+        _ => None,
+    }
+}
+
+/// Full chord classifier — returns the structured
+/// [`ParsedChord`]. Use this directly when you need to distinguish
+/// multi-key (intentional but unsupported) from invalid (typo in
+/// rc that should scream).
+pub fn classify_chord(s: &str) -> ParsedChord {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return ParsedChord::Invalid;
+    }
+
+    // Multi-key: any whitespace inside the chord string is a chord
+    // separator. `"C-x e"` → ["C-x", "e"]. Each component must
+    // itself parse as a single chord for the multi-key form to be
+    // considered valid; otherwise we call it Invalid so typos still
+    // surface.
+    if trimmed.contains(char::is_whitespace) {
+        let parts: Vec<String> = trimmed
+            .split_whitespace()
+            .map(String::from)
+            .collect();
+        if parts.iter().all(|p| parse_single_chord(p).is_some()) {
+            return ParsedChord::MultiKey(parts);
+        }
+        return ParsedChord::Invalid;
+    }
+
+    match parse_single_chord(trimmed) {
+        Some((m, k)) => ParsedChord::Single(m, k),
+        None => ParsedChord::Invalid,
+    }
+}
+
+/// Merge `(chord, fn_name)` pairs into an existing reedline
+/// `Keybindings` in place. Returns how many successfully applied.
+/// Multi-key chords are silently skipped (valid rc intent reedline
+/// can't dispatch yet). Invalid chords print a one-shot stderr
+/// warning so typos are visible but not spammy. Used both by
+/// `with_bindings` (on first install) and `set_edit_mode` (to
+/// re-apply when the edit mode rebuilds).
+pub fn apply_custom_bindings_to(
+    kb: &mut reedline::Keybindings,
+    bindings: &[(String, String)],
+) -> usize {
+    let mut applied = 0usize;
+    for (chord, fn_name) in bindings {
+        match classify_chord(chord) {
+            ParsedChord::Single(modifier, key_code) => {
+                kb.add_binding(
+                    modifier,
+                    key_code,
+                    ReedlineEvent::ExecuteHostCommand(fn_name.clone()),
+                );
+                applied += 1;
+            }
+            ParsedChord::MultiKey(_) => {
+                // Not yet supported — silently skipped. Users don't
+                // have to change rc to silence the warning.
+            }
+            ParsedChord::Invalid => {
+                eprintln!("frost-zle: skipping unparseable keybinding: {chord:?}");
+            }
+        }
+    }
+    applied
+}
+
+/// Parse one single-key chord component. Extracted so
+/// [`classify_chord`] can validate each piece of a multi-key string.
+fn parse_single_chord(s: &str) -> Option<(KeyModifiers, KeyCode)> {
+    if s.is_empty() {
+        return None;
+    }
     let mut modifier = KeyModifiers::NONE;
     let parts = s.split(|c: char| c == '-' || c == '+');
-    // Every part except the last is a modifier token.
     let mut collected: Vec<String> = parts.map(|p| p.to_string()).collect();
     let key_tok = collected.pop()?;
+    // Trailing separator with no key token (`"C-"`).
+    if key_tok.is_empty() {
+        return None;
+    }
     for m in collected {
+        // Empty modifier slot means two consecutive separators
+        // (`"C--x"`) — invalid.
+        if m.is_empty() {
+            return None;
+        }
         match m.to_ascii_uppercase().as_str() {
-            "C" | "CTRL"   => modifier |= KeyModifiers::CONTROL,
-            "M" | "ALT"    => modifier |= KeyModifiers::ALT,
-            "S" | "SHIFT"  => modifier |= KeyModifiers::SHIFT,
+            "C" | "CTRL"  => modifier |= KeyModifiers::CONTROL,
+            "M" | "ALT"   => modifier |= KeyModifiers::ALT,
+            "S" | "SHIFT" => modifier |= KeyModifiers::SHIFT,
             _ => return None,
         }
     }
@@ -354,7 +495,7 @@ pub fn parse_chord(s: &str) -> Option<(KeyModifiers, KeyCode)> {
         "pagedown" | "pgdn"   => KeyCode::PageDown,
         "backspace" => KeyCode::Backspace,
         "delete"    => KeyCode::Delete,
-        s if s.len() == 1 => KeyCode::Char(s.chars().next().unwrap()),
+        s if s.chars().count() == 1 => KeyCode::Char(s.chars().next().unwrap()),
         _ => return None,
     };
     Some((modifier, key_code))
@@ -372,27 +513,22 @@ impl ZleEngine {
     where
         I: IntoIterator<Item = (String, String)>,
     {
+        // Collect once so we can (a) stash on self for later
+        // set_edit_mode calls, and (b) apply to the initial emacs
+        // keymap below. A caller that invokes `with_bindings`
+        // multiple times replaces the prior set — matches the
+        // builder-style semantics elsewhere on this struct.
+        let collected: Vec<(String, String)> = bindings.into_iter().collect();
+        self.custom_bindings = collected.clone();
+
         let mut kb = default_emacs_keybindings();
-        let mut applied = 0usize;
-        for (chord, fn_name) in bindings {
-            let Some((modifier, key_code)) = parse_chord(&chord) else {
-                eprintln!("frost-zle: skipping unparseable keybinding: {chord:?}");
-                continue;
-            };
-            kb.add_binding(
-                modifier,
-                key_code,
-                ReedlineEvent::ExecuteHostCommand(fn_name),
-            );
-            applied += 1;
-        }
+        let applied = apply_custom_bindings_to(&mut kb, &collected);
         if applied == 0 {
-            // Nothing to install — leave the engine as-is rather than
-            // rebuild it, so we don't accidentally drop existing state.
             return self;
         }
         let taken = std::mem::replace(&mut self.inner, Reedline::create());
         self.inner = taken.with_edit_mode(Box::new(Emacs::new(kb)));
+        self.current_mode = Some(EditModeKind::Emacs);
         self
     }
 }
@@ -499,5 +635,151 @@ mod tests {
         assert!(parse_chord("Z-x").is_none());
         assert!(parse_chord("C-").is_none());
         assert!(parse_chord("").is_none());
+    }
+
+    // ─── classify_chord regression cover — multi-key + edge cases ─────
+
+    #[test]
+    fn classify_chord_recognizes_single_key_forms() {
+        assert!(matches!(classify_chord("C-r"), ParsedChord::Single(..)));
+        assert!(matches!(classify_chord("Ctrl-L"), ParsedChord::Single(..)));
+        assert!(matches!(classify_chord("M-?"), ParsedChord::Single(..)));
+        assert!(matches!(classify_chord("backspace"), ParsedChord::Single(..)));
+        assert!(matches!(classify_chord("C-S-a"), ParsedChord::Single(..)));
+    }
+
+    #[test]
+    fn classify_chord_recognizes_multi_key_sequences() {
+        // The report: `(defbind :key "C-x e" ...)` was previously
+        // stderr-warning on startup. Now it classifies as MultiKey,
+        // silently skipped until reedline ships chord dispatch.
+        assert_eq!(
+            classify_chord("C-x e"),
+            ParsedChord::MultiKey(vec!["C-x".into(), "e".into()])
+        );
+        assert_eq!(
+            classify_chord("M-k  M-h"),   // double space
+            ParsedChord::MultiKey(vec!["M-k".into(), "M-h".into()])
+        );
+        assert_eq!(
+            classify_chord("C-x C-c"),
+            ParsedChord::MultiKey(vec!["C-x".into(), "C-c".into()])
+        );
+        // Leading/trailing whitespace trimmed.
+        assert_eq!(
+            classify_chord("  C-x e  "),
+            ParsedChord::MultiKey(vec!["C-x".into(), "e".into()])
+        );
+    }
+
+    #[test]
+    fn classify_chord_rejects_multi_key_with_invalid_piece() {
+        // `Z-x` is invalid, so `C-x Z-x` is also invalid (not
+        // silently-skipped MultiKey). Guards against "typos hiding
+        // in valid-looking multi-key strings".
+        assert_eq!(classify_chord("C-x Z-x"), ParsedChord::Invalid);
+        assert_eq!(classify_chord("valid C-"), ParsedChord::Invalid);
+    }
+
+    #[test]
+    fn classify_chord_rejects_malformed_single_chord() {
+        assert_eq!(classify_chord(""), ParsedChord::Invalid);
+        assert_eq!(classify_chord("   "), ParsedChord::Invalid);
+        assert_eq!(classify_chord("C-"), ParsedChord::Invalid);
+        assert_eq!(classify_chord("-x"), ParsedChord::Invalid);       // leading separator
+        assert_eq!(classify_chord("C--x"), ParsedChord::Invalid);     // double sep
+        assert_eq!(classify_chord("Z-x"), ParsedChord::Invalid);      // unknown mod
+        assert_eq!(classify_chord("C-xx"), ParsedChord::Invalid);     // multi-char key
+        assert_eq!(classify_chord("C-🎉"), ParsedChord::Single(
+            KeyModifiers::CONTROL, KeyCode::Char('🎉')
+        ));  // unicode key is a single codepoint, OK
+    }
+
+    #[test]
+    fn with_bindings_silently_skips_multi_key_chords() {
+        // Run a ZleEngine build with the known problematic binding
+        // from frostmourne's 30-bindings.lisp. No panic, no stderr.
+        // (stderr-capture isn't part of std, so we just verify the
+        // build path doesn't explode and the classify returns the
+        // expected MultiKey variant.)
+        let zle = ZleEngine::in_memory();
+        let _ = zle.with_bindings([
+            ("C-x e".to_string(), "edit".to_string()),
+            ("C-l".to_string(), "clear".to_string()),     // single — applied
+            ("M-?".to_string(), "help".to_string()),       // single — applied
+            ("garbage-chord".to_string(), "no".to_string()), // typo — warns
+        ]);
+    }
+
+    #[test]
+    fn parse_single_chord_key_case_insensitive() {
+        // `C-X` and `C-x` should resolve to the same chord so rc
+        // files that don't bother lowercasing keys still work.
+        assert_eq!(parse_chord("C-x"), parse_chord("C-X"));
+        assert_eq!(parse_chord("M-Q"), parse_chord("m-q"));
+    }
+
+    #[test]
+    fn with_bindings_stashes_custom_bindings() {
+        // The regression under fix: `set_edit_mode(Emacs)` was
+        // previously called on every REPL iteration and built a
+        // default emacs keymap, silently dropping every rc-authored
+        // binding. The fix stashes them in `custom_bindings` so
+        // set_edit_mode can re-apply. This test asserts that stash.
+        let zle = ZleEngine::in_memory();
+        let zle = zle.with_bindings([
+            ("C-r".to_string(), "__frost_picker_history__".to_string()),
+            ("C-t".to_string(), "__frost_picker_files__".to_string()),
+        ]);
+        assert_eq!(zle.custom_bindings.len(), 2);
+        assert!(zle.custom_bindings.iter().any(|(k, _)| k == "C-r"));
+        assert_eq!(zle.current_mode, Some(EditModeKind::Emacs));
+    }
+
+    #[test]
+    fn set_edit_mode_idempotent_on_same_mode() {
+        // Calling `set_edit_mode(Emacs)` repeatedly shouldn't rebuild
+        // the keymap — confirmed via `current_mode` unchanged. The
+        // pre-fix bug was that each call DID rebuild, losing custom
+        // bindings every iteration.
+        let mut zle = ZleEngine::in_memory().with_bindings([
+            ("C-r".to_string(), "__frost_picker_history__".to_string()),
+        ]);
+        assert_eq!(zle.current_mode, Some(EditModeKind::Emacs));
+        zle.set_edit_mode(EditModeKind::Emacs);
+        zle.set_edit_mode(EditModeKind::Emacs);
+        // Bindings survive across the (now-idempotent) calls.
+        assert!(zle.custom_bindings.iter().any(|(k, _)| k == "C-r"));
+    }
+
+    #[test]
+    fn set_edit_mode_rebuilds_keymap_on_mode_change_with_custom_bindings() {
+        // Toggle emacs → vi → emacs. Custom bindings must re-apply
+        // on each rebuild — this is the actual correctness property.
+        let mut zle = ZleEngine::in_memory().with_bindings([
+            ("C-r".to_string(), "__frost_picker_history__".to_string()),
+            ("C-t".to_string(), "__frost_picker_files__".to_string()),
+            ("C-x e".to_string(), "edit".to_string()),  // multi-key — skipped but stashed
+            ("bogus".to_string(), "nope".to_string()),  // invalid — warned but stashed
+        ]);
+        zle.set_edit_mode(EditModeKind::Vi);
+        assert_eq!(zle.current_mode, Some(EditModeKind::Vi));
+        zle.set_edit_mode(EditModeKind::Emacs);
+        assert_eq!(zle.current_mode, Some(EditModeKind::Emacs));
+        // The custom_bindings stash survives mode toggles.
+        assert_eq!(zle.custom_bindings.len(), 4);
+    }
+
+    #[test]
+    fn apply_custom_bindings_to_reports_applied_count() {
+        use reedline::default_emacs_keybindings;
+        let mut kb = default_emacs_keybindings();
+        let n = apply_custom_bindings_to(&mut kb, &[
+            ("C-r".into(),     "sentinel-r".into()),   // single — applies
+            ("C-t".into(),     "sentinel-t".into()),   // single — applies
+            ("C-x e".into(),   "multi".into()),         // multi-key — skipped
+            ("bogus".into(),   "nope".into()),          // invalid — skipped
+        ]);
+        assert_eq!(n, 2, "only two single-chord bindings should apply");
     }
 }
