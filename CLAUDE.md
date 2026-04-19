@@ -25,7 +25,7 @@ nix run .#compat                    # zsh compat suite
 | `frost-builtins` | 53+ builtins (echo, cd, typeset, printf, trap, etc.) | `Builtin`, `BuiltinRegistry`, `BuiltinAction`, `ShellEnvironment` |
 | `frost-options` | ~113 shell options (GLOB, EXTENDED_GLOB, ERR_EXIT, ...) | `Options`, `ShellOption` |
 | `frost-glob` | Zsh-compatible glob matching + filesystem expansion (wired into executor) | `GlobOptions`, `match_pattern()`, `expand_pattern()` |
-| `frost-zle` | Line editor (stub — will wrap reedline) | — |
+| `frost-zle` | Interactive line editor (reedline) + persistent history + multi-line continuation | `ZleEngine`, `FrostPrompt`, `ReadLineOutcome`, `InputStatus` |
 | `frost-complete` | Completion engine (stub) | — |
 | `frost-compat` | Zsh test suite runner | — |
 
@@ -79,11 +79,11 @@ Brace expansion runs on expanded strings in `expand_word_multi()`.
 - `[[ ]]` conditionals with file/string/integer/regex tests
 
 ### Not Yet Implemented
+- Tab completion (frost-complete still a stub)
 - Process substitution `<(cmd)` / `>(cmd)` execution
 - Structured `${}` parser (uses raw-text fallback)
 - Full alias expansion in executor
-- ZLE / line editing / completion
-- History expansion
+- History expansion (`!!`, `!$`, `!n`) — history *storage* works, expansion doesn't
 - `emulate` (stub)
 - Namerefs, MULTIOS
 
