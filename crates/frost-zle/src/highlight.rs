@@ -47,6 +47,109 @@ use reedline::{Highlighter, StyledText};
 pub struct FrostHighlighter {
     known: HashSet<String>,
     check_paths: bool,
+    palette: Palette,
+}
+
+/// Color palette for each highlighted token category. All fields
+/// default to the frost-native Nord-adjacent values; consumers
+/// override via [`FrostHighlighter::with_palette`] (typically fed by
+/// a rc-authored `(deftheme …)` spec translated via
+/// [`Palette::from_hex_slots`]).
+#[derive(Debug, Clone)]
+pub struct Palette {
+    pub command: Style,
+    pub unknown_command: Style,
+    pub reserved: Style,
+    pub string: Style,
+    pub variable: Style,
+    pub operator: Style,
+    pub comment: Style,
+    pub glob: Style,
+    pub number: Style,
+    pub tilde: Style,
+    pub broken_path: Style,
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        Self {
+            command:         Style::new().fg(Color::Green),
+            unknown_command: Style::new().fg(Color::Yellow),
+            reserved:        Style::new().bold().fg(Color::Magenta),
+            string:          Style::new().fg(Color::Cyan),
+            variable:        Style::new().fg(Color::Yellow),
+            operator:        Style::new().fg(Color::LightRed),
+            comment:         Style::new().fg(Color::DarkGray).italic(),
+            glob:            Style::new().fg(Color::Yellow),
+            number:          Style::new().fg(Color::Blue),
+            tilde:           Style::new().fg(Color::Magenta),
+            broken_path:     Style::new().fg(Color::Red),
+        }
+    }
+}
+
+impl Palette {
+    /// Build a palette from per-slot hex strings. Unset / unparseable
+    /// slots fall back to the default palette's entry for that slot.
+    /// Accepts `#RRGGBB` and `#RGB` shorthand; named colors aren't
+    /// supported here (rc-authors stick to hex for terminal-truecolor
+    /// precision).
+    pub fn from_hex_slots(slots: PaletteSlots<'_>) -> Self {
+        let d = Self::default();
+        Self {
+            command:         slots.command.and_then(parse_hex_style).unwrap_or(d.command),
+            unknown_command: slots.unknown_command.and_then(parse_hex_style).unwrap_or(d.unknown_command),
+            reserved:        slots.reserved.and_then(parse_hex_style).map(|s| s.bold()).unwrap_or(d.reserved),
+            string:          slots.string.and_then(parse_hex_style).unwrap_or(d.string),
+            variable:        slots.variable.and_then(parse_hex_style).unwrap_or(d.variable),
+            operator:        slots.operator.and_then(parse_hex_style).unwrap_or(d.operator),
+            comment:         slots.comment.and_then(parse_hex_style).map(|s| s.italic()).unwrap_or(d.comment),
+            glob:            slots.glob.and_then(parse_hex_style).unwrap_or(d.glob),
+            number:          slots.number.and_then(parse_hex_style).unwrap_or(d.number),
+            tilde:           slots.tilde.and_then(parse_hex_style).unwrap_or(d.tilde),
+            broken_path:     slots.broken_path.and_then(parse_hex_style).unwrap_or(d.broken_path),
+        }
+    }
+}
+
+/// Thin borrowed view over a `ThemeSpec` for `from_hex_slots`. Keeps
+/// frost-zle free of a direct dep on frost-lisp's domain types while
+/// still accepting the rc-declared color palette slot-by-slot.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct PaletteSlots<'a> {
+    pub command: Option<&'a str>,
+    pub unknown_command: Option<&'a str>,
+    pub reserved: Option<&'a str>,
+    pub string: Option<&'a str>,
+    pub variable: Option<&'a str>,
+    pub operator: Option<&'a str>,
+    pub comment: Option<&'a str>,
+    pub glob: Option<&'a str>,
+    pub number: Option<&'a str>,
+    pub tilde: Option<&'a str>,
+    pub broken_path: Option<&'a str>,
+}
+
+/// Parse `#RRGGBB` / `#RGB` → `Style` with that foreground. Returns
+/// `None` for unparseable input so the caller can fall back.
+pub fn parse_hex_style(hex: &str) -> Option<Style> {
+    let hex = hex.strip_prefix('#').unwrap_or(hex);
+    let (r, g, b) = match hex.len() {
+        6 => (
+            u8::from_str_radix(&hex[0..2], 16).ok()?,
+            u8::from_str_radix(&hex[2..4], 16).ok()?,
+            u8::from_str_radix(&hex[4..6], 16).ok()?,
+        ),
+        3 => {
+            let ch = |i: usize| -> Option<u8> {
+                let digit = u8::from_str_radix(&hex[i..=i], 16).ok()?;
+                Some(digit * 17) // 0xN → 0xNN (0*17=0, F*17=FF)
+            };
+            (ch(0)?, ch(1)?, ch(2)?)
+        }
+        _ => return None,
+    };
+    Some(Style::new().fg(Color::Rgb(r, g, b)))
 }
 
 impl FrostHighlighter {
@@ -56,6 +159,7 @@ impl FrostHighlighter {
         Self {
             known: HashSet::new(),
             check_paths: false,
+            palette: Palette::default(),
         }
     }
 
@@ -70,7 +174,16 @@ impl FrostHighlighter {
         Self {
             known: names.into_iter().map(Into::into).collect(),
             check_paths: false,
+            palette: Palette::default(),
         }
+    }
+
+    /// Install a rc-authored palette. Typically wired from the
+    /// `(deftheme …)` accumulation in `ApplySummary::theme`. Fields
+    /// the theme doesn't set stay at the Nord default.
+    pub fn with_palette(mut self, palette: Palette) -> Self {
+        self.palette = palette;
+        self
     }
 
     /// Enable fish-style broken-path highlighting. Path-looking
@@ -178,7 +291,7 @@ impl Highlighter for FrostHighlighter {
             }
 
             let raw = line[start..end].to_string();
-            let mut style = style_for_token(&tok, at_command_start, &self.known);
+            let mut style = style_for_token(&tok, at_command_start, &self.known, &self.palette);
 
             // Path-existence override. Only at non-command position
             // (command-position words are already styled as green/
@@ -193,7 +306,7 @@ impl Highlighter for FrostHighlighter {
             {
                 if let Some(resolved) = resolve_path_for_check(&raw) {
                     if !resolved.exists() {
-                        style = Style::new().fg(Color::Red);
+                        style = self.palette.broken_path;
                     }
                 }
             }
@@ -286,20 +399,25 @@ fn is_command_breaker(kind: TokenKind) -> bool {
     )
 }
 
-fn style_for_token(tok: &Token, at_command_start: bool, known: &HashSet<String>) -> Style {
+fn style_for_token(
+    tok: &Token,
+    at_command_start: bool,
+    known: &HashSet<String>,
+    palette: &Palette,
+) -> Style {
     // Reserved words first — they can sit where a command would.
     if tok.kind.is_reserved_word() {
-        return Style::new().bold().fg(Color::Magenta);
+        return palette.reserved;
     }
 
     match tok.kind {
         // Strings — the full tokenized literal including quotes.
         TokenKind::SingleQuoted
         | TokenKind::DoubleQuoted
-        | TokenKind::DollarSingleQuoted => Style::new().fg(Color::Cyan),
+        | TokenKind::DollarSingleQuoted => palette.string,
 
         // Numbers (arithmetic contexts).
-        TokenKind::Number => Style::new().fg(Color::Blue),
+        TokenKind::Number => palette.number,
 
         // Expansion markers — the `$` / `${` / `$(` / `$((` head. The
         // interior of `${...}` comes back as separate tokens; they'll
@@ -308,10 +426,9 @@ fn style_for_token(tok: &Token, at_command_start: bool, known: &HashSet<String>)
         | TokenKind::DollarBrace
         | TokenKind::DollarParen
         | TokenKind::DollarDoubleParen
-        | TokenKind::Backtick => Style::new().fg(Color::Yellow),
+        | TokenKind::Backtick => palette.variable,
 
-        // Command separators / logical ops / redirects — bright red for
-        // immediate visual separation.
+        // Command separators / logical ops / redirects.
         TokenKind::Pipe
         | TokenKind::PipeAmpersand
         | TokenKind::OrOr
@@ -339,17 +456,17 @@ fn style_for_token(tok: &Token, at_command_start: bool, known: &HashSet<String>)
         | TokenKind::FdGreater
         | TokenKind::FdLess
         | TokenKind::FdDoubleGreater
-        | TokenKind::FdDup => Style::new().fg(Color::LightRed),
+        | TokenKind::FdDup => palette.operator,
 
         // Globs (outside a string).
-        TokenKind::Star | TokenKind::Question => Style::new().fg(Color::Yellow),
+        TokenKind::Star | TokenKind::Question => palette.glob,
 
         // Tilde expansion.
-        TokenKind::Tilde => Style::new().fg(Color::Magenta),
+        TokenKind::Tilde => palette.tilde,
 
         // Comments — dim italic; the lexer emits a single Comment token
         // covering the whole `# …` run.
-        TokenKind::Comment => Style::new().fg(Color::DarkGray).italic(),
+        TokenKind::Comment => palette.comment,
 
         // Plain word — command-vs-argument distinction. At command
         // position, check first for reserved-word text (the lexer
@@ -358,11 +475,11 @@ fn style_for_token(tok: &Token, at_command_start: bool, known: &HashSet<String>)
         TokenKind::Word => {
             if at_command_start {
                 if is_reserved_word_text(tok.text.as_str()) {
-                    Style::new().bold().fg(Color::Magenta)
+                    palette.reserved
                 } else if known.contains(tok.text.as_str()) {
-                    Style::new().fg(Color::Green)
+                    palette.command
                 } else {
-                    Style::new().fg(Color::Yellow)
+                    palette.unknown_command
                 }
             } else {
                 Style::default()
@@ -421,7 +538,7 @@ mod tests {
                 out.push((Style::default(), line[prev_end..start].to_string()));
             }
             if end > line.len() { break; }
-            out.push((style_for_token(&tok, at_cmd, &h.known), line[start..end].to_string()));
+            out.push((style_for_token(&tok, at_cmd, &h.known, &h.palette), line[start..end].to_string()));
             if is_command_breaker(tok.kind) {
                 at_cmd = true;
             } else if matches!(tok.kind, TokenKind::Word) {
@@ -486,6 +603,51 @@ mod tests {
         // both `ls` and `wc` should be green since both are known.
         assert_eq!(find("ls").0.foreground, Some(Color::Green));
         assert_eq!(find("wc").0.foreground, Some(Color::Green));
+    }
+
+    #[test]
+    fn parse_hex_style_rrggbb_and_rgb() {
+        // Full form.
+        let s = parse_hex_style("#FF8800").unwrap();
+        assert_eq!(s.foreground, Some(Color::Rgb(0xFF, 0x88, 0x00)));
+        // Leading-# optional.
+        let s = parse_hex_style("A3BE8C").unwrap();
+        assert_eq!(s.foreground, Some(Color::Rgb(0xA3, 0xBE, 0x8C)));
+        // Short form expands via × 17.
+        let s = parse_hex_style("#F80").unwrap();
+        assert_eq!(s.foreground, Some(Color::Rgb(0xFF, 0x88, 0x00)));
+    }
+
+    #[test]
+    fn parse_hex_style_rejects_garbage() {
+        assert!(parse_hex_style("#GGGGGG").is_none());
+        assert!(parse_hex_style("#12345").is_none()); // 5 chars
+        assert!(parse_hex_style("").is_none());
+        assert!(parse_hex_style("notahex").is_none());
+    }
+
+    #[test]
+    fn palette_from_hex_slots_overrides_only_set_slots() {
+        let p = Palette::from_hex_slots(PaletteSlots {
+            command: Some("#00FF00"),
+            ..Default::default()
+        });
+        assert_eq!(p.command.foreground, Some(Color::Rgb(0, 255, 0)));
+        // Unset slot retains default (Style::new().fg(Color::Yellow) for
+        // unknown_command).
+        let d = Palette::default();
+        assert_eq!(p.unknown_command.foreground, d.unknown_command.foreground);
+    }
+
+    #[test]
+    fn highlighter_uses_custom_palette_for_command() {
+        let mut p = Palette::default();
+        p.command = Style::new().fg(Color::Rgb(1, 2, 3));
+        let h = FrostHighlighter::with_known(["echo"]).with_palette(p);
+        let segs = render(&h, "echo hi");
+        // First segment = "echo" at command position, known name.
+        assert_eq!(segs[0].1, "echo");
+        assert_eq!(segs[0].0.foreground, Some(Color::Rgb(1, 2, 3)));
     }
 
     #[test]

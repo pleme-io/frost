@@ -498,6 +498,7 @@ fn interactive(
     rc_flags: Vec<frost_lisp::FlagSpec>,
     rc_positionals: Vec<frost_lisp::PositSpec>,
     rc_abbreviations: std::collections::HashMap<String, String>,
+    rc_theme: frost_lisp::ThemeSpec,
 ) {
     // Ignore SIGINT in the shell process itself; reedline handles Ctrl-C
     // by aborting the current line buffer, not killing frost.
@@ -532,8 +533,25 @@ fn interactive(
         .chain(env.functions.keys().cloned())
         .chain(rc_completions.keys().cloned())
         .collect();
+    // Theme → palette. Default Nord baseline merged with anything
+    // rc-authored via `(deftheme …)`, then translated from hex
+    // strings to reedline `Style` values.
+    let palette = frost_zle::Palette::from_hex_slots(frost_zle::PaletteSlots {
+        command:         rc_theme.command.as_deref(),
+        unknown_command: rc_theme.unknown_command.as_deref(),
+        reserved:        rc_theme.reserved.as_deref(),
+        string:          rc_theme.string.as_deref(),
+        variable:        rc_theme.variable.as_deref(),
+        operator:        rc_theme.operator.as_deref(),
+        comment:         rc_theme.comment.as_deref(),
+        glob:            rc_theme.glob.as_deref(),
+        number:          rc_theme.number.as_deref(),
+        tilde:           None, // Nord default — no separate slot yet
+        broken_path:     rc_theme.broken_path.as_deref(),
+    });
     let highlighter = Box::new(
         frost_zle::FrostHighlighter::with_known(known_commands)
+            .with_palette(palette)
             // Fish-style broken-path red — stat tokens that look
             // like paths on every keystroke. The cost is a single
             // `stat(2)` per path-looking arg; negligible for a
@@ -543,7 +561,7 @@ fn interactive(
     let mut zle = zle_base
         .with_completer(completer)
         .with_highlighter(highlighter)
-        .with_history_hints()
+        .with_history_hints(rc_theme.hint.as_deref())
         .with_bindings(rc_binds);
     // Separate in-process history for `!` expansion — reedline owns the
     // user-facing navigation buffer, frost-history owns the expansion
@@ -756,6 +774,7 @@ fn main() {
         rc_flags,
         rc_positionals,
         rc_abbreviations,
+        rc_theme,
     ) = match frost_lisp::load_rc(&rc_path, &mut env) {
         Ok(summary) => {
             if summary != frost_lisp::ApplySummary::default() {
@@ -774,6 +793,7 @@ fn main() {
                 summary.flags,
                 summary.positionals,
                 summary.abbreviations,
+                summary.theme,
             )
         }
         Err(e) => {
@@ -787,6 +807,7 @@ fn main() {
                 Vec::new(),
                 Vec::new(),
                 std::collections::HashMap::new(),
+                frost_lisp::nord_default(),
             )
         }
     };
@@ -823,6 +844,7 @@ fn main() {
             rc_flags,
             rc_positionals,
             rc_abbreviations,
+            rc_theme,
         );
         0
     } else {
