@@ -753,10 +753,30 @@ impl<'a> Parser<'a> {
                     parts.push(WordPart::Literal(CompactString::from("=")));
                 }
                 TokenKind::Dollar => {
-                    if self.pos < self.tokens.len() && self.peek().span.start == end_pos && self.kind() == TokenKind::Word {
+                    let adjacent = self.pos < self.tokens.len()
+                        && self.peek().span.start == end_pos;
+                    if adjacent && (self.kind() == TokenKind::Word || self.kind() == TokenKind::Number) {
                         let name_tok = self.advance();
                         end_pos = name_tok.span.end;
                         parts.push(WordPart::DollarVar(name_tok.text.clone()));
+                    } else if adjacent && matches!(
+                        self.kind(),
+                        TokenKind::Question | TokenKind::Bang | TokenKind::At | TokenKind::Star
+                    ) {
+                        // Special parameters: $?, $!, $@, $*. Mirror the
+                        // initial-token handling so `rc=$?` and similar
+                        // compound words get DollarVar rather than falling
+                        // through to Literal("$") + Glob(?).
+                        let special_tok = self.advance();
+                        end_pos = special_tok.span.end;
+                        let name = match special_tok.kind {
+                            TokenKind::Question => "?",
+                            TokenKind::Bang     => "!",
+                            TokenKind::At       => "@",
+                            TokenKind::Star     => "*",
+                            _ => unreachable!(),
+                        };
+                        parts.push(WordPart::DollarVar(CompactString::from(name)));
                     } else {
                         parts.push(WordPart::Literal(CompactString::from("$")));
                     }
