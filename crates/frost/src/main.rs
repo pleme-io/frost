@@ -162,6 +162,12 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
     };
     let completer = Box::new(frost_complete::FrostCompleter::with_default_builtins());
     let mut zle = zle_base.with_completer(completer);
+    // Separate in-process history for `!` expansion — reedline owns the
+    // user-facing navigation buffer, frost-history owns the expansion
+    // buffer. They read the same file so `!!` sees the same commands the
+    // user could up-arrow to.
+    let mut history = frost_history::History::from_file(&history_path)
+        .unwrap_or_else(|_| frost_history::History::new());
 
     loop {
         // Re-read PS1 / PS2 each iteration so variable changes mid-session
@@ -206,7 +212,23 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
             Ok(ReadLineOutcome::Input(line)) => {
                 let trimmed = line.trim();
                 if trimmed.is_empty() { continue; }
-                run(&line, env);
+                // `!`-expansion before parse. zsh's default is on
+                // (`setopt BANG_HIST`); once we add a `NoBangHist` option to
+                // frost-options, gate here. Until then, always expand.
+                // zsh echoes the expanded line when it differs — so do we.
+                let (to_run, expansion_failed) = match frost_history::expand(&line, &history) {
+                    Ok((expanded, changed)) => {
+                        if changed { println!("{expanded}"); }
+                        (expanded, false)
+                    }
+                    Err(e) => {
+                        eprintln!("frost: {e}");
+                        (line.clone(), true)
+                    }
+                };
+                if expansion_failed { continue; }
+                let _ = history.push(to_run.clone());
+                run(&to_run, env);
             }
             Ok(ReadLineOutcome::Interrupted) => {
                 // Match zsh: Ctrl-C just discards the current line.

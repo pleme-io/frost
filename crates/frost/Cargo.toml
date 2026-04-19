@@ -21,6 +21,7 @@ frost-options = { workspace = true }
 frost-zle = { workspace = true }
 frost-complete = { workspace = true }
 frost-prompt = { workspace = true }
+frost-history = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

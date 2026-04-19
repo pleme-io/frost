@@ -471,6 +471,7 @@ dependencies = [
  "frost-compat",
  "frost-complete",
  "frost-exec",
+ "frost-history",
  "frost-lexer",
  "frost-options",
  "frost-parser",
@@ -551,6 +552,14 @@ name = "frost-glob"
 version = "0.1.0"
 dependencies = [
  "insta",
+ "pretty_assertions",
+ "thiserror",
+]
+
+[[package]]
+name = "frost-history"
+version = "0.1.0"
+dependencies = [
  "pretty_assertions",
  "thiserror",
 ]
