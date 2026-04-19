@@ -248,6 +248,7 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
                 match run(&to_run, env) {
                     RunOutcome::Completed(_) => {}
                     RunOutcome::Exit(code) => {
+                        run_exit_trap(env);
                         std::process::exit(code);
                     }
                 }
@@ -263,6 +264,8 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
             }
         }
     }
+    // Fall-through exit (Ctrl-D / read error) also fires EXIT trap.
+    run_exit_trap(env);
 }
 
 fn main() {
@@ -316,6 +319,9 @@ fn main() {
         }
     };
 
+    // EXIT trap fires for every graceful exit path, including `-c`,
+    // script-file, and non-interactive stdin modes. matches zsh.
+    run_exit_trap(&mut env);
     process::exit(code);
 }
 
@@ -337,6 +343,18 @@ fn run_hook(name: &str, env: &mut frost_exec::ShellEnv) {
     // time; the function body itself is pre-parsed and cached in
     // `env.functions`.
     let _ = run(name, env);
+}
+
+/// Dispatch the `EXIT` pseudo-signal trap, authored via
+/// `(deftrap :signal "EXIT" :body …)` in the rc file. Invoked right
+/// before the shell terminates — for the interactive loop's graceful-
+/// exit paths (Ctrl-D on empty prompt, `exit` builtin, read error).
+/// `process::abort` and kill -9 do NOT run this, matching zsh.
+fn run_exit_trap(env: &mut frost_exec::ShellEnv) {
+    let name = "__frost_trap_EXIT";
+    if env.functions.contains_key(name) {
+        let _ = run(name, env);
+    }
 }
 
 #[cfg(test)]
