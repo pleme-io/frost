@@ -24,7 +24,9 @@ use std::path::{Path, PathBuf};
 
 use reedline::{Completer, Span, Suggestion};
 
+mod forge;
 mod tree;
+pub use forge::{emit_lisp, parse_fish, ForgeError, ForgeOutput};
 pub use tree::{CompletionNode, CompletionTree, FlagNode, PositNode};
 // Re-export the Lisp-side spec types so consumers don't need a direct
 // frost-lisp dep for the common "wire specs into the completer" path.

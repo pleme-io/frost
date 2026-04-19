@@ -1685,12 +1685,28 @@ rec {
         crateName = "frost-complete";
         version = "0.1.0";
         edition = "2024";
+        crateBin = [
+          {
+            name = "frost-complete-forge";
+            path = "src/bin/forge.rs";
+            requiredFeatures = [ ];
+          }
+        ];
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/frost-complete; };
         libName = "frost_complete";
         authors = [
           "pleme-io"
         ];
         dependencies = [
+          {
+            name = "clap";
+            packageId = "clap";
+            features = [ "derive" ];
+          }
+          {
+            name = "frost-lisp";
+            packageId = "frost-lisp";
+          }
           {
             name = "frost-options";
             packageId = "frost-options";
