@@ -20,7 +20,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
-use frost_complete::{emit_lisp, parse_fish, ForgeError, ForgeOutput};
+use frost_complete::{emit_lisp, parse_fish, parse_skim_yaml, ForgeError, ForgeOutput};
 
 /// One-stop error type for the forge binary.
 #[derive(Debug)]
@@ -81,14 +81,30 @@ enum Cmd {
         /// Tool name (e.g. `git`, `kubectl`).
         tool: String,
     },
+    /// Parse a `pleme-io/skim-tab` curated YAML spec (as found in
+    /// `skim-tab/specs/*.yaml`) and emit frost-lisp (def*) forms.
+    /// Each entry in the spec's `commands:` list emits a parallel
+    /// branch (aliases get their own tree).
+    Yaml {
+        /// Path to a skim-tab YAML spec.
+        path: PathBuf,
+    },
+    /// Parse every `*.yaml` file in a directory as a skim-tab spec.
+    /// Useful for batch-generating Lisp from `pleme-io/skim-tab/specs/`.
+    YamlDir {
+        /// Directory of skim-tab YAML specs.
+        dir: PathBuf,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
     let result = match cli.cmd {
-        Cmd::Fish { path }     => from_file(&path),
-        Cmd::FishDir { dir }   => from_dir(&dir),
-        Cmd::Tool { tool }     => from_tool(&tool),
+        Cmd::Fish { path }      => from_file(&path),
+        Cmd::FishDir { dir }    => from_dir(&dir),
+        Cmd::Tool { tool }      => from_tool(&tool),
+        Cmd::Yaml { path }      => from_yaml_file(&path),
+        Cmd::YamlDir { dir }    => from_yaml_dir(&dir),
     };
     match result {
         Ok(out) => {
@@ -125,6 +141,38 @@ fn from_dir(dir: &Path) -> Result<ForgeOutput> {
             source,
         })?;
         let out = parse_fish(&src)?;
+        combined.subcmds.extend(out.subcmds);
+        combined.flags.extend(out.flags);
+        combined.positionals.extend(out.positionals);
+    }
+    combined.sort();
+    Ok(combined)
+}
+
+fn from_yaml_file(path: &Path) -> Result<ForgeOutput> {
+    let src = std::fs::read_to_string(path).map_err(|source| CliError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(parse_skim_yaml(&src)?)
+}
+
+fn from_yaml_dir(dir: &Path) -> Result<ForgeOutput> {
+    let mut combined = ForgeOutput::default();
+    let entries = std::fs::read_dir(dir).map_err(|source| CliError::Io {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).map_err(|source| CliError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let out = parse_skim_yaml(&src)?;
         combined.subcmds.extend(out.subcmds);
         combined.flags.extend(out.flags);
         combined.positionals.extend(out.positionals);
