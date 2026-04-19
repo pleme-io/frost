@@ -1,9 +1,64 @@
 use std::io::IsTerminal;
 use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use clap::Parser as ClapParser;
 
 use frost_zle::{EditModeKind, InputStatus, ReadLineOutcome, ZleEngine};
+
+/// Bitmask of signals that fired since the last check. Set by the
+/// signal handler (which must be async-signal-safe — `fetch_or` on
+/// `AtomicU64` is) and drained by the REPL between commands.
+static PENDING_SIGNALS: AtomicU64 = AtomicU64::new(0);
+
+/// Signals frost explicitly traps on behalf of rc-authored
+/// `(deftrap :signal …)` forms. `SIGINT` is handled separately by
+/// reedline (Ctrl-C on an interactive prompt) so it's not in this list.
+/// If a user binds `deftrap INT` they'll still get the trap via the
+/// explicit `check_pending_traps(env)` call inside the REPL loop after
+/// the signal is recorded — but only when received during a running
+/// external child, not during read_line.
+const TRAPPED_SIGNALS: &[libc::c_int] = &[
+    libc::SIGUSR1, libc::SIGUSR2, libc::SIGTERM, libc::SIGHUP, libc::SIGWINCH,
+];
+
+extern "C" fn signal_forwarder(sig: libc::c_int) {
+    // Only async-signal-safe operations here. Atomic fetch_or is fine.
+    if sig > 0 && (sig as usize) < 64 {
+        PENDING_SIGNALS.fetch_or(1u64 << sig, Ordering::SeqCst);
+    }
+}
+
+/// Install `sigaction` forwarders for every signal in `TRAPPED_SIGNALS`.
+/// Idempotent — safe to call once at interactive-mode entry.
+fn install_signal_traps() {
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = signal_forwarder as usize;
+        libc::sigemptyset(&mut action.sa_mask);
+        action.sa_flags = libc::SA_RESTART;
+        for &sig in TRAPPED_SIGNALS {
+            libc::sigaction(sig, &action, std::ptr::null_mut());
+        }
+    }
+}
+
+/// Drain the pending-signal bitmask and fire any rc-authored traps.
+/// Called between REPL iterations so traps see a well-defined shell
+/// state rather than interrupting mid-execution.
+fn check_pending_traps(env: &mut frost_exec::ShellEnv) {
+    let pending = PENDING_SIGNALS.swap(0, Ordering::SeqCst);
+    if pending == 0 { return; }
+    for sig in 1..64i32 {
+        if pending & (1u64 << sig) == 0 { continue; }
+        let name = frost_exec::trap::signal_number_to_name(sig);
+        if name == "UNKNOWN" { continue; }
+        let fn_name = format!("__frost_trap_{name}");
+        if env.functions.contains_key(&fn_name) {
+            let _ = run(&fn_name, env);
+        }
+    }
+}
 
 #[derive(ClapParser)]
 #[command(name = "frost", version, about = "A zsh-compatible shell")]
@@ -162,6 +217,7 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
     unsafe {
         libc::signal(libc::SIGINT, libc::SIG_IGN);
     }
+    install_signal_traps();
 
     let history_path = frost_zle::default_history_path();
     let zle_base = match ZleEngine::new(&history_path, 10_000) {
@@ -181,6 +237,10 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
         .unwrap_or_else(|_| frost_history::History::new());
 
     loop {
+        // Drain and dispatch any signals delivered while we were
+        // waiting / running. Fires `deftrap`-authored handlers.
+        check_pending_traps(env);
+
         // `precmd` hook — runs before the next prompt is drawn. Authored
         // via `(defhook :event "precmd" :body …)` in the rc file.
         run_hook("__frost_hook_precmd", env);
