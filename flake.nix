@@ -166,7 +166,7 @@
           fi
         '';
 
-        # nix run .#ci — run all checks sequentially (test + clippy + fmt)
+        # nix run .#ci — run all checks sequentially (test + clippy + fmt + attest)
         ci = mkApp "ci" ''
           set -euo pipefail
           echo "╔════════════════════════════════╗"
@@ -174,16 +174,26 @@
           echo "╚════════════════════════════════╝"
           echo ""
 
-          echo "── [1/3] cargo test ──"
+          echo "── [1/4] cargo test ──"
           cargo test --workspace 2>&1
           echo ""
 
-          echo "── [2/3] cargo clippy ──"
+          echo "── [2/4] cargo clippy ──"
           cargo clippy --workspace -- -D warnings 2>&1
           echo ""
 
-          echo "── [3/3] cargo fmt --check ──"
+          echo "── [3/4] cargo fmt --check ──"
           cargo fmt --check --all 2>&1
+          echo ""
+
+          echo "── [4/4] frost-verify attestation ──"
+          if [ -f "$PWD/manifest.json" ]; then
+            cargo build -p frost-verify --quiet 2>&1
+            root=$(target/debug/frost-verify --manifest "$PWD/manifest.json" --root)
+            echo "manifest root: $root"
+          else
+            echo "(no manifest.json — skipping attestation)"
+          fi
           echo ""
 
           echo "✓ all checks passed"

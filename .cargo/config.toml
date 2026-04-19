@@ -1,0 +1,4 @@
+# Delegate git fetches to the system git CLI so SSH keys and credential
+# helpers work for private repos (e.g. pleme-io git deps in workspace).
+[net]
+git-fetch-with-cli = true

@@ -497,6 +497,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "frost-spec"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tatara-lisp",
+]
+
+[[package]]
 name = "frost-verify"
 version = "0.1.0"
 dependencies = [
@@ -978,6 +987,28 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tatara-lisp"
+version = "0.2.0"
+source = "git+ssh://git@github.com/pleme-io/tatara?rev=a1062f8069bb336a87cb9b2c68a85885665e3234#a1062f8069bb336a87cb9b2c68a85885665e3234"
+dependencies = [
+ "blake3",
+ "serde",
+ "serde_json",
+ "tatara-lisp-derive",
+ "thiserror",
+]
+
+[[package]]
+name = "tatara-lisp-derive"
+version = "0.2.0"
+source = "git+ssh://git@github.com/pleme-io/tatara?rev=a1062f8069bb336a87cb9b2c68a85885665e3234#a1062f8069bb336a87cb9b2c68a85885665e3234"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
