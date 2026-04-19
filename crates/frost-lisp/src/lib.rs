@@ -89,6 +89,11 @@ pub struct ApplySummary {
     /// `frost-complete::FrostCompleter` without re-parsing the JSON
     /// blobs we also wrote to shell vars.
     pub completion_map: std::collections::HashMap<String, Vec<String>>,
+
+    /// chord (`"C-l"`, `"M-?"`) → function-name pairs from every
+    /// `(defbind …)` form. The REPL hands these to `ZleEngine::with_bindings`
+    /// which registers them with reedline.
+    pub bind_map: Vec<(String, String)>,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -193,6 +198,7 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
     for b in binds {
         let fn_name = bind_function_name(&b.key);
         install_body_as_function(env, &fn_name, &b.action);
+        summary.bind_map.push((b.key.clone(), fn_name));
         summary.binds += 1;
     }
 
