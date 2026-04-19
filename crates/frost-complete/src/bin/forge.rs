@@ -20,7 +20,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
-use frost_complete::{emit_lisp, parse_fish, parse_skim_yaml, ForgeError, ForgeOutput};
+use frost_complete::{
+    emit_lisp, parse_fish, parse_skim_yaml, parse_zsh_compdef, ForgeError, ForgeOutput,
+};
 
 /// One-stop error type for the forge binary.
 #[derive(Debug)]
@@ -95,6 +97,21 @@ enum Cmd {
         /// Directory of skim-tab YAML specs.
         dir: PathBuf,
     },
+    /// Parse a zsh completion script — matches files in
+    /// `/usr/share/zsh/*/functions/Completion/**/_*`, `site-functions`,
+    /// oh-my-zsh's `completions/`, etc. Extracts `#compdef` + the
+    /// `_arguments` spec strings.
+    Zsh {
+        /// Path to a zsh completion file (conventionally `_<tool>`).
+        path: PathBuf,
+    },
+    /// Parse every completion file in a directory — zsh convention is
+    /// files named `_*` (no extension). Recurses one level so it
+    /// works on `site-functions/` layouts.
+    ZshDir {
+        /// Directory of zsh completion files.
+        dir: PathBuf,
+    },
 }
 
 fn main() {
@@ -105,6 +122,8 @@ fn main() {
         Cmd::Tool { tool }      => from_tool(&tool),
         Cmd::Yaml { path }      => from_yaml_file(&path),
         Cmd::YamlDir { dir }    => from_yaml_dir(&dir),
+        Cmd::Zsh { path }       => from_zsh_file(&path),
+        Cmd::ZshDir { dir }     => from_zsh_dir(&dir),
     };
     match result {
         Ok(out) => {
@@ -176,6 +195,46 @@ fn from_yaml_dir(dir: &Path) -> Result<ForgeOutput> {
         combined.subcmds.extend(out.subcmds);
         combined.flags.extend(out.flags);
         combined.positionals.extend(out.positionals);
+    }
+    combined.sort();
+    Ok(combined)
+}
+
+fn from_zsh_file(path: &Path) -> Result<ForgeOutput> {
+    let src = std::fs::read_to_string(path).map_err(|source| CliError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(parse_zsh_compdef(&src)?)
+}
+
+fn from_zsh_dir(dir: &Path) -> Result<ForgeOutput> {
+    let mut combined = ForgeOutput::default();
+    let entries = std::fs::read_dir(dir).map_err(|source| CliError::Io {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // zsh completion files are conventionally named `_<tool>`
+        // with no extension. Skip everything else.
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with('_') || name_str.contains('.') {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).map_err(|source| CliError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        // Empty / parse-failing files are non-fatal — large zsh
+        // completion trees often include helper files we don't
+        // want to abort the whole directory over.
+        if let Ok(out) = parse_zsh_compdef(&src) {
+            combined.subcmds.extend(out.subcmds);
+            combined.flags.extend(out.flags);
+            combined.positionals.extend(out.positionals);
+        }
     }
     combined.sort();
     Ok(combined)
