@@ -28,6 +28,7 @@ nix run .#compat                    # zsh compat suite
 | `frost-zle` | Interactive line editor (reedline) + persistent history + multi-line continuation | `ZleEngine`, `FrostPrompt`, `ReadLineOutcome`, `InputStatus` |
 | `frost-complete` | Tab completion (commands + filenames, reedline-backed) | `FrostCompleter`, `default_builtin_list` |
 | `frost-compat` | Zsh test suite runner | — |
+| `frost-lisp` | Tatara-Lisp authoring bridge — rc file declarations become shell state | `AliasSpec`, `EnvSpec`, `OptionSetSpec`, `PromptSpec`, `HookSpec`, `TrapSpec`, `BindSpec`, `CompletionSpec`, `FunctionSpec`, `apply_source`, `load_rc` |
 
 ## Architecture
 
@@ -81,6 +82,26 @@ Brace expansion runs on expanded strings in `expand_word_multi()`.
 ### Not Yet Implemented
 - Per-command argument completion (compsys `_arguments`, `compdef` specs)
 - `^str^repl^` quick substitution + `:s/…/…/` history modifiers
+
+### Tatara-Lisp rc file (`~/.frostrc.lisp`, or `$FROSTRC`)
+
+Every shell-state concept is declaratively authorable via
+[`frost-lisp`](crates/frost-lisp). The rc loader runs at startup;
+recognized forms:
+
+```lisp
+(defalias :name "ll"  :value "ls -la")
+(defopts  :enable ("extendedglob" "promptsubst") :disable ("beep"))
+(defenv   :name "EDITOR" :value "blnvim" :export #t)
+(defprompt :ps1 "%F{green}%n%f %# " :prompt-subst #t)
+(defhook  :event "precmd" :body "echo")
+(deftrap  :signal "INT"  :body "echo interrupted")
+(defbind  :key "C-x e"   :action "edit-line-in-editor")
+(defcompletion :command "git" :args ("status" "diff" "log"))
+(defun    :name "mkcd" :body "mkdir -p \"$1\" && cd \"$1\"")
+```
+
+See `crates/frost-lisp/examples/rc.lisp` for the full showcase.
 - Structured `${}` parser (uses raw-text fallback)
 - Full alias expansion in executor
 - History expansion (`!!`, `!$`, `!n`) — history *storage* works, expansion doesn't
