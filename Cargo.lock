@@ -473,6 +473,7 @@ dependencies = [
  "frost-exec",
  "frost-history",
  "frost-lexer",
+ "frost-lisp",
  "frost-options",
  "frost-parser",
  "frost-prompt",
@@ -573,6 +574,19 @@ dependencies = [
  "compact_str",
  "insta",
  "pretty_assertions",
+ "thiserror",
+]
+
+[[package]]
+name = "frost-lisp"
+version = "0.1.0"
+dependencies = [
+ "frost-exec",
+ "frost-options",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tatara-lisp",
  "thiserror",
 ]
 

@@ -268,6 +268,25 @@ fn main() {
 
     let mut env = frost_exec::ShellEnv::new();
 
+    // Tatara-Lisp rc file — declarative authoring surface for aliases,
+    // options, env vars, and (future) prompt/hook/binding/completion.
+    // Missing file is not an error; parse/apply errors print a warning
+    // so frost still starts even if the rc has a bug.
+    let rc_path = frost_lisp::default_rc_path();
+    match frost_lisp::load_rc(&rc_path, &mut env) {
+        Ok(summary) if summary == frost_lisp::ApplySummary::default() => { /* no rc, silent */ }
+        Ok(summary) => {
+            tracing::debug!(
+                ?summary,
+                rc = %rc_path.display(),
+                "loaded frost-lisp rc file"
+            );
+        }
+        Err(e) => {
+            eprintln!("frost: warning: failed to load {}: {e}", rc_path.display());
+        }
+    }
+
     let code = if let Some(cmd) = &cli.command {
         unwrap_outcome(run(cmd, &mut env))
     } else if let Some(path) = &cli.file {

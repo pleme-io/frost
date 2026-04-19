@@ -1,0 +1,20 @@
+[package]
+name = "frost-lisp"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Bridge between tatara-lisp and frost shell state — Lisp-authored aliases, options, env vars, prompt, hooks, completions, and keybindings"
+
+[dependencies]
+frost-exec = { workspace = true }
+frost-options = { workspace = true }
+tatara-lisp = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
