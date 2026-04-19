@@ -12,6 +12,7 @@ description = "Zsh completion system"
 frost-zle = { workspace = true }
 frost-options = { workspace = true }
 thiserror = { workspace = true }
+reedline = "0.42"
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

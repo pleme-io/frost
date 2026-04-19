@@ -21,9 +21,13 @@
 use std::path::{Path, PathBuf};
 
 use reedline::{
-    FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch,
-    PromptHistorySearchStatus, Reedline, Signal,
+    Completer, FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch,
+    PromptHistorySearchStatus, Reedline, ReedlineMenu, Signal,
 };
+
+// Re-export so downstream crates can write completers without adding a
+// direct `reedline` dep.
+pub use reedline::{Completer as CompleterTrait, Suggestion, Span as CompletionSpan};
 
 pub type ZleResult<T> = Result<T, ZleError>;
 
@@ -135,6 +139,19 @@ impl ZleEngine {
             inner: Reedline::create(),
             prompt: FrostPrompt::default(),
         }
+    }
+
+    /// Replace the completer. The provided completer implements reedline's
+    /// `Completer` trait and is consulted on every Tab press. Pair this with
+    /// a completion menu so suggestions are rendered below the prompt.
+    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
+        let menu = ReedlineMenu::EngineCompleter(Box::new(
+            reedline::ColumnarMenu::default(),
+        ));
+        self.inner = std::mem::replace(&mut self.inner, Reedline::create())
+            .with_completer(completer)
+            .with_menu(menu);
+        self
     }
 
     /// Update PS1 / PS2. Callers should pre-expand any `PROMPT_SUBST`

@@ -153,13 +153,15 @@ fn interactive(env: &mut frost_exec::ShellEnv) {
     }
 
     let history_path = frost_zle::default_history_path();
-    let mut zle = match ZleEngine::new(&history_path, 10_000) {
+    let zle_base = match ZleEngine::new(&history_path, 10_000) {
         Ok(z) => z,
         Err(e) => {
             eprintln!("frost: ZLE init failed ({e}); falling back to in-memory history");
             ZleEngine::in_memory()
         }
     };
+    let completer = Box::new(frost_complete::FrostCompleter::with_default_builtins());
+    let mut zle = zle_base.with_completer(completer);
 
     loop {
         let outcome = zle.read_line(|src| {

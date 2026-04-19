@@ -469,6 +469,7 @@ dependencies = [
  "clap",
  "frost-builtins",
  "frost-compat",
+ "frost-complete",
  "frost-exec",
  "frost-lexer",
  "frost-options",
@@ -507,6 +508,7 @@ dependencies = [
  "frost-zle",
  "insta",
  "pretty_assertions",
+ "reedline",
  "thiserror",
 ]
 
