@@ -247,17 +247,130 @@ fn run(input: &str, env: &mut frost_exec::ShellEnv) -> RunOutcome {
     let tokens = tokenize(input);
     let mut parser = frost_parser::Parser::new(&tokens);
     let program = parser.parse();
+    // Snapshot the known names BEFORE dispatching — the executor
+    // borrows `env` mutably, so we can't build the did-you-mean
+    // suggestion from inside the match arm. A tiny Vec clone per
+    // command is negligible; the suggestion path only hits on
+    // CommandNotFound, which is a human-visible error anyway.
+    // PATH binaries are folded in so typos like `gti → git` land
+    // (git isn't an alias/builtin by default; it's a PATH binary).
+    let mut known: Vec<String> = env.aliases.keys().cloned()
+        .chain(env.functions.keys().cloned())
+        .chain(frost_complete::default_builtin_list().iter().map(|s| s.to_string()))
+        .collect();
+    if let Ok(path) = env.get_var("PATH").map(str::to_string).ok_or(()) {
+        known.extend(path_executables(&path));
+    }
     let mut executor = frost_exec::Executor::new(env);
     match executor.execute_program(&program) {
         Ok(status) => RunOutcome::Completed(status),
         Err(frost_exec::ExecError::ControlFlow(frost_exec::ControlFlow::Exit(code))) => {
             RunOutcome::Exit(code)
         }
+        Err(frost_exec::ExecError::CommandNotFound(name)) => {
+            eprintln!("frost: command not found: {name}");
+            let suggestions = did_you_mean(&name, &known);
+            if !suggestions.is_empty() {
+                eprintln!("frost: did you mean {}?", suggestions.join(", "));
+            }
+            // zsh convention for command-not-found is 127.
+            RunOutcome::Completed(127)
+        }
         Err(e) => {
             eprintln!("frost: {e}");
             RunOutcome::Completed(1)
         }
     }
+}
+
+/// Levenshtein-based "did you mean" suggestions. Returns up to 3
+/// closest matches with edit distance ≤ 2 (so typos like `gti` →
+/// `git` land, but unrelated names don't). Sorted by:
+///   1. edit distance (ascending) — closer first
+///   2. shared-character count (descending) — transpositions like
+///      `gti ↔ git` share 3 chars, random distance-2 matches
+///      share far fewer, so the real typo bubbles up
+///   3. common-prefix length (descending) — additional tiebreak
+///      that favors typos which preserve early chars
+///   4. alphabetical — deterministic final tie-break
+fn did_you_mean(typed: &str, names: &[String]) -> Vec<String> {
+    let typed_chars: Vec<char> = typed.chars().collect();
+    let typed_set: std::collections::HashSet<char> = typed_chars.iter().copied().collect();
+    let mut scored: Vec<(usize, usize, usize, &String)> = names
+        .iter()
+        .map(|n| {
+            let d = levenshtein(typed, n);
+            let shared = n.chars().filter(|c| typed_set.contains(c)).count();
+            let prefix = common_prefix_len(&typed_chars, n);
+            (d, shared, prefix, n)
+        })
+        .filter(|(d, _, _, _)| *d <= 2 && *d > 0)
+        .collect();
+    scored.sort_by(|a, b| {
+        a.0.cmp(&b.0)                // distance asc
+            .then(b.1.cmp(&a.1))     // shared-chars desc
+            .then(b.2.cmp(&a.2))     // prefix desc
+            .then(a.3.cmp(b.3))      // alpha
+    });
+    scored.into_iter().take(3).map(|(_, _, _, n)| n.clone()).collect()
+}
+
+fn common_prefix_len(a: &[char], b: &str) -> usize {
+    a.iter()
+        .zip(b.chars())
+        .take_while(|(x, y)| *x == y)
+        .count()
+}
+
+/// Enumerate every executable file reachable via `path` (colon-
+/// separated). Read-once-per-error-path — we don't cache because
+/// `did_you_mean` isn't hot. Returns deduped names.
+fn path_executables(path: &str) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for dir in path.split(':').filter(|p| !p.is_empty()) {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if let Ok(meta) = entry.metadata() {
+                if !meta.is_file() {
+                    continue;
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if meta.permissions().mode() & 0o111 == 0 {
+                        continue;
+                    }
+                }
+                seen.insert(name_str.into_owned());
+            }
+        }
+    }
+    seen.into_iter().collect()
+}
+
+/// Classic edit-distance. O(a*b) in characters — fine at shell-
+/// command scale (typically ≤ 16 chars; upper bound in practice is
+/// the few dozen chars of a builtin/alias name).
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() { return b.len(); }
+    if b.is_empty() { return a.len(); }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr: Vec<usize> = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1)
+                .min(curr[j] + 1)
+                .min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
 }
 
 fn tokenize(input: &str) -> Vec<frost_lexer::Token> {
@@ -751,7 +864,60 @@ fn run_exit_trap(env: &mut frost_exec::ShellEnv) {
 
 #[cfg(test)]
 mod tests {
-    use super::is_complete;
+    use super::{did_you_mean, is_complete, levenshtein};
+
+    #[test]
+    fn levenshtein_known_cases() {
+        assert_eq!(levenshtein("", ""), 0);
+        assert_eq!(levenshtein("", "abc"), 3);
+        assert_eq!(levenshtein("abc", ""), 3);
+        assert_eq!(levenshtein("kitten", "sitting"), 3);
+        assert_eq!(levenshtein("git", "gti"), 2);   // transposition = 2 edits
+        assert_eq!(levenshtein("ls", "ls"), 0);
+        assert_eq!(levenshtein("l", "ls"), 1);
+        assert_eq!(levenshtein("helloo", "hello"), 1);
+    }
+
+    #[test]
+    fn did_you_mean_surfaces_close_matches() {
+        let names: Vec<String> = ["git", "ls", "echo", "cd", "cat"]
+            .iter().map(|s| s.to_string()).collect();
+        // `gti` → close to `git` (distance 2 via double swap).
+        let s = did_you_mean("gti", &names);
+        assert!(s.contains(&"git".to_string()), "{s:?}");
+        // `l` → distance 1 from `ls`.
+        let s2 = did_you_mean("l", &names);
+        assert!(s2.contains(&"ls".to_string()), "{s2:?}");
+    }
+
+    #[test]
+    fn did_you_mean_ignores_unrelated() {
+        let names: Vec<String> = ["git", "ls", "echo"]
+            .iter().map(|s| s.to_string()).collect();
+        // Nothing close to "completely-unrelated".
+        let s = did_you_mean("completely-unrelated", &names);
+        assert!(s.is_empty(), "{s:?}");
+    }
+
+    #[test]
+    fn did_you_mean_prefers_prefix_matches() {
+        // When multiple candidates have the same edit distance,
+        // the ones that share a longer prefix with the typed text
+        // should rank higher — `gti` → `git` beats `gti` → `tr`
+        // even though both are distance 2.
+        let names: Vec<String> = ["tr", "fi", "git", "gem"]
+            .iter().map(|s| s.to_string()).collect();
+        let s = did_you_mean("gti", &names);
+        assert_eq!(s[0], "git", "top suggestion should be git, got {s:?}");
+    }
+
+    #[test]
+    fn did_you_mean_caps_at_three_suggestions() {
+        let names: Vec<String> = ["gxt", "git", "gxxt", "gjt", "gzt", "gyt"]
+            .iter().map(|s| s.to_string()).collect();
+        let s = did_you_mean("got", &names);
+        assert!(s.len() <= 3, "got {} suggestions: {s:?}", s.len());
+    }
 
     #[test]
     fn simple_commands_are_complete() {
