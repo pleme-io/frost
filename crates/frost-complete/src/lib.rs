@@ -36,6 +36,10 @@ pub struct FrostCompleter {
     /// current command. Populated from `(defcompletion :command … :args …)`
     /// forms in the user's rc (see `frost-lisp::ApplySummary::completion_map`).
     arg_completions: HashMap<String, Vec<String>>,
+    /// Per-command description for the command itself (shown on Tab when
+    /// the user is still typing the command name). Populated from
+    /// `(defcompletion :description …)`.
+    command_descriptions: HashMap<String, String>,
 }
 
 impl FrostCompleter {
@@ -43,6 +47,7 @@ impl FrostCompleter {
         Self {
             builtins: builtins.into_iter().collect(),
             arg_completions: HashMap::new(),
+            command_descriptions: HashMap::new(),
         }
     }
 
@@ -63,6 +68,12 @@ impl FrostCompleter {
     /// anything not in the list.
     pub fn with_arg_completions(mut self, map: HashMap<String, Vec<String>>) -> Self {
         self.arg_completions = map;
+        self
+    }
+
+    /// Install per-command descriptions (shown on Tab at command position).
+    pub fn with_descriptions(mut self, map: HashMap<String, String>) -> Self {
+        self.command_descriptions = map;
         self
     }
 }
@@ -99,9 +110,17 @@ impl Completer for FrostCompleter {
                 // For directories we leave it to the user so they can keep typing
                 // the next path component directly.
                 let append_whitespace = !value.ends_with('/');
+                // Only show description at command position — for arg/file
+                // completions the user has already picked a command, the
+                // repetition would be noise.
+                let description = if ctx.is_command_position {
+                    self.command_descriptions.get(&value).cloned()
+                } else {
+                    None
+                };
                 Suggestion {
                     value,
-                    description: None,
+                    description,
                     style: None,
                     extra: None,
                     span,

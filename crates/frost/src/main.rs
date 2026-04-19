@@ -215,6 +215,7 @@ fn interactive(
     env: &mut frost_exec::ShellEnv,
     rc_completions: std::collections::HashMap<String, Vec<String>>,
     rc_binds: Vec<(String, String)>,
+    rc_descriptions: std::collections::HashMap<String, String>,
 ) {
     // Ignore SIGINT in the shell process itself; reedline handles Ctrl-C
     // by aborting the current line buffer, not killing frost.
@@ -233,7 +234,8 @@ fn interactive(
     };
     let completer = Box::new(
         frost_complete::FrostCompleter::with_default_builtins()
-            .with_arg_completions(rc_completions),
+            .with_arg_completions(rc_completions)
+            .with_descriptions(rc_descriptions),
     );
     let mut zle = zle_base
         .with_completer(completer)
@@ -351,7 +353,7 @@ fn main() {
     // functions. Missing file is not an error; parse/apply errors print
     // a warning so frost still starts even if the rc has a bug.
     let rc_path = frost_lisp::default_rc_path();
-    let (rc_completions, rc_binds) = match frost_lisp::load_rc(&rc_path, &mut env) {
+    let (rc_completions, rc_binds, rc_descriptions) = match frost_lisp::load_rc(&rc_path, &mut env) {
         Ok(summary) => {
             if summary != frost_lisp::ApplySummary::default() {
                 tracing::debug!(
@@ -360,11 +362,11 @@ fn main() {
                     "loaded frost-lisp rc file"
                 );
             }
-            (summary.completion_map, summary.bind_map)
+            (summary.completion_map, summary.bind_map, summary.completion_descriptions)
         }
         Err(e) => {
             eprintln!("frost: warning: failed to load {}: {e}", rc_path.display());
-            (std::collections::HashMap::new(), Vec::new())
+            (std::collections::HashMap::new(), Vec::new(), std::collections::HashMap::new())
         }
     };
 
@@ -379,7 +381,7 @@ fn main() {
             }
         }
     } else if std::io::stdin().is_terminal() {
-        interactive(&mut env, rc_completions, rc_binds);
+        interactive(&mut env, rc_completions, rc_binds, rc_descriptions);
         0
     } else {
         // Non-interactive stdin (e.g., `frost < script.sh`) — slurp it.

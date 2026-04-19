@@ -128,6 +128,13 @@ impl Default for History {
 /// returns `HistoryError::NoMatch` and the caller should reject the line
 /// (zsh prints `event not found`).
 pub fn expand(input: &str, history: &History) -> HistoryResult<(String, bool)> {
+    // Quick substitution: a line beginning with `^old^new^` (the trailing
+    // `^` is optional) means "take the previous command, replace the first
+    // occurrence of `old` with `new`, and run that". Zsh classic.
+    if let Some(quick) = try_quick_substitution(input, history)? {
+        return Ok((quick, true));
+    }
+
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
     let mut i = 0usize;
@@ -177,6 +184,36 @@ pub fn expand(input: &str, history: &History) -> HistoryResult<(String, bool)> {
     }
 
     Ok((out, changed))
+}
+
+/// `^old^new^` quick substitution. Only fires when the input begins with
+/// a `^` (zsh requires column 0). Returns:
+///
+/// * `Ok(Some(expanded))` — substitution applied.
+/// * `Ok(None)` — not a quick-sub pattern; caller should continue with
+///   normal `!` expansion.
+/// * `Err` — pattern matched but no previous command, or the `old` text
+///   wasn't found in it.
+fn try_quick_substitution(input: &str, history: &History) -> HistoryResult<Option<String>> {
+    if !input.starts_with('^') { return Ok(None); }
+    let rest = &input[1..];
+    let Some(mid) = rest.find('^') else { return Ok(None); };
+    let old_txt = &rest[..mid];
+    if old_txt.is_empty() { return Ok(None); }
+    let tail = &rest[mid + 1..];
+    // Trailing `^` is optional. Also accept anything after that second `^`
+    // as the new text (ending at another `^` or end-of-input).
+    let (new_txt, trailing) = match tail.find('^') {
+        Some(i) => (&tail[..i], &tail[i + 1..]),
+        None    => (tail, ""),
+    };
+    let prev = history.previous().ok_or_else(|| HistoryError::NoMatch("^".into()))?;
+    if !prev.contains(old_txt) {
+        return Err(HistoryError::NoMatch(format!("^{old_txt}^")));
+    }
+    // Zsh: substitute FIRST occurrence only.
+    let replaced = prev.replacen(old_txt, new_txt, 1);
+    Ok(Some(format!("{replaced}{trailing}")))
 }
 
 fn parse_ref(tail: &[u8], history: &History) -> HistoryResult<(String, usize)> {
@@ -405,5 +442,66 @@ mod tests {
     fn empty_history_bangs_fail() {
         let h = History::new();
         assert!(matches!(expand("!!", &h), Err(HistoryError::NoMatch(_))));
+    }
+
+    // ── quick substitution ^old^new^ ────────────────────────────────
+
+    #[test]
+    fn quick_sub_basic() {
+        let h = hist(&["echo helo world"]);
+        let (out, changed) = expand("^helo^hello^", &h).unwrap();
+        assert_eq!(out, "echo hello world");
+        assert!(changed);
+    }
+
+    #[test]
+    fn quick_sub_trailing_caret_optional() {
+        let h = hist(&["sed -i s/foo/bra/ readme"]);
+        let (out, _) = expand("^bra^bar", &h).unwrap();
+        assert_eq!(out, "sed -i s/foo/bar/ readme");
+    }
+
+    #[test]
+    fn quick_sub_only_first_occurrence() {
+        let h = hist(&["echo foo foo"]);
+        let (out, _) = expand("^foo^bar^", &h).unwrap();
+        assert_eq!(out, "echo bar foo");
+    }
+
+    #[test]
+    fn quick_sub_preserves_trailing_text() {
+        let h = hist(&["echo hi"]);
+        let (out, _) = expand("^hi^hello^ there", &h).unwrap();
+        assert_eq!(out, "echo hello there");
+    }
+
+    #[test]
+    fn quick_sub_unknown_pattern_errors() {
+        let h = hist(&["echo hi"]);
+        assert!(matches!(expand("^xx^yy^", &h), Err(HistoryError::NoMatch(_))));
+    }
+
+    #[test]
+    fn quick_sub_empty_history_errors() {
+        let h = History::new();
+        assert!(matches!(expand("^a^b^", &h), Err(HistoryError::NoMatch(_))));
+    }
+
+    #[test]
+    fn lone_caret_is_literal() {
+        let h = hist(&["previous"]);
+        // No second `^` to close the pattern → not a quick-sub, pass through.
+        let (out, changed) = expand("^", &h).unwrap();
+        assert_eq!(out, "^");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn caret_with_empty_old_passes_through() {
+        let h = hist(&["previous"]);
+        // `^^` means "replace empty with empty" — not useful, don't intercept.
+        let (out, changed) = expand("^^", &h).unwrap();
+        assert_eq!(out, "^^");
+        assert!(!changed);
     }
 }

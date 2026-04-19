@@ -94,6 +94,10 @@ pub struct ApplySummary {
     /// `(defbind …)` form. The REPL hands these to `ZleEngine::with_bindings`
     /// which registers them with reedline.
     pub bind_map: Vec<(String, String)>,
+
+    /// command → description string from `(defcompletion :description …)`.
+    /// Shown in the completion menu at command position.
+    pub completion_descriptions: std::collections::HashMap<String, String>,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -213,6 +217,9 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
         let payload = serde_json::to_string(&c).unwrap_or_default();
         env.set_var(&var, &payload);
         summary.completion_map.insert(c.command.clone(), c.args.clone());
+        if let Some(desc) = c.description.clone() {
+            summary.completion_descriptions.insert(c.command.clone(), desc);
+        }
         summary.completions += 1;
     }
 
