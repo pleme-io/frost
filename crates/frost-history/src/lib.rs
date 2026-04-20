@@ -25,7 +25,7 @@
 //! other contexts (double-quoted, bare) expand. `\!` escapes a `!`.
 //! Anchors `^str^repl^` (quick substitution) are future work.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub type HistoryResult<T> = Result<T, HistoryError>;
 

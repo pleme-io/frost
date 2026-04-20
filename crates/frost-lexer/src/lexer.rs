@@ -409,6 +409,7 @@ fn is_meta(b: u8) -> bool {
 }
 
 /// Tokenize an entire source string into a Vec of tokens.
+#[allow(dead_code)] // Tatara-lisp/debug tooling calls this; the runtime uses the streaming API.
 pub fn tokenize(src: &[u8]) -> Vec<Token> {
     let mut lexer = Lexer::new(src);
     let mut tokens = Vec::new();

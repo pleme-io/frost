@@ -6,6 +6,7 @@ pub struct Cursor<'src> {
     pos: usize,
 }
 
+#[allow(dead_code)] // Library-style helpers; currently-unused variants round out the Cursor API.
 impl<'src> Cursor<'src> {
     pub fn new(src: &'src [u8]) -> Self {
         Self { src, pos: 0 }

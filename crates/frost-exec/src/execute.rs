@@ -1577,10 +1577,9 @@ fn simple_pattern_match(pattern: &str, text: &str) -> bool {
         return pattern == text;
     }
     // Basic wildcard matching
-    let mut pi = pattern.chars().peekable();
-    let mut ti = text.chars().peekable();
-
-    match_pattern(&mut pi.collect::<Vec<_>>(), &ti.collect::<Vec<_>>())
+    let pi: Vec<char> = pattern.chars().collect();
+    let ti: Vec<char> = text.chars().collect();
+    match_pattern(&pi, &ti)
 }
 
 fn match_pattern(pattern: &[char], text: &[char]) -> bool {

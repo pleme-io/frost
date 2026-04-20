@@ -220,6 +220,7 @@ impl<'a> Parser<'a> {
     ///
     /// Returns true for patterns like `{1..5}`, `{a,b,c}`, `{01..10}`.
     /// These have `}` within a few tokens with no newlines/semis.
+    #[allow(dead_code)] // Retained for the brace-expansion disambiguator rework.
     fn looks_like_brace_expansion(&self) -> bool {
         // Look ahead from after the `{` for a quick `}` with content that
         // looks like brace expansion (no newlines, semis, pipes, etc.)
