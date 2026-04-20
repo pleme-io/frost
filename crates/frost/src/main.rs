@@ -125,7 +125,11 @@ enum PickerOutcome {
 /// widget is a built-in edit-buffer operation — edit-line spawns
 /// `$EDITOR` on the current buffer, clear-screen repaints, etc. The
 /// sentinel is the full string including leading/trailing `__`.
-fn dispatch_widget(sentinel: &str, zle: &mut frost_zle::ZleEngine) {
+fn dispatch_widget(
+    sentinel: &str,
+    zle: &mut frost_zle::ZleEngine,
+    history: &frost_history::History,
+) {
     let Some(name) = sentinel
         .strip_prefix("__frost_widget_")
         .and_then(|s| s.strip_suffix("__"))
@@ -145,10 +149,73 @@ fn dispatch_widget(sentinel: &str, zle: &mut frost_zle::ZleEngine) {
         "kill-buffer" | "kill_buffer" | "clear-buffer" => {
             zle.inject_prefill("");
         }
+        "insert-last-arg" | "insert_last_arg" | "last-arg" => {
+            widget_insert_last_arg(zle, history);
+        }
         _ => {
             eprintln!("frost: unknown widget: {name}");
         }
     }
+}
+
+/// insert-last-arg widget (classic M-. in bash/zsh): append the last
+/// word of the most recent history entry onto the current buffer.
+/// A space separator is added between the existing buffer and the
+/// appended word unless the buffer is empty or already ends with
+/// whitespace.
+fn widget_insert_last_arg(zle: &mut frost_zle::ZleEngine, history: &frost_history::History) {
+    let Some(prev) = history.previous() else { return; };
+    let last = last_argument(prev);
+    if last.is_empty() { return; }
+    let existing = zle.current_buffer_contents().unwrap_or_default();
+    let sep = if existing.is_empty() || existing.ends_with(char::is_whitespace) {
+        ""
+    } else {
+        " "
+    };
+    zle.inject_prefill(&format!("{existing}{sep}{last}"));
+}
+
+/// Extract the last argument of a command line — the last
+/// whitespace-delimited token, preserving quoted groups as single
+/// units. `echo "hello world"` → `"hello world"`; `ls -la /tmp` →
+/// `/tmp`. Empty string when `cmd` is empty / whitespace-only.
+///
+/// Quoting: consume from the right; if the terminal character is
+/// a quote, backscan for the matching one; else grab up to the
+/// first whitespace break. Matches zsh's `!$` modifier shape.
+fn last_argument(cmd: &str) -> String {
+    let trimmed = cmd.trim_end();
+    if trimmed.is_empty() { return String::new(); }
+    let bytes = trimmed.as_bytes();
+    // Detect trailing quoted group.
+    let last = bytes[bytes.len() - 1];
+    if last == b'"' || last == b'\'' {
+        // Walk back to the matching opener.
+        let quote = last;
+        let mut i = bytes.len() - 2;
+        while i > 0 {
+            if bytes[i] == quote {
+                return trimmed[i..].to_string();
+            }
+            if i == 0 { break; }
+            i -= 1;
+        }
+        if bytes[0] == quote {
+            return trimmed.to_string();
+        }
+        // Unbalanced — fall through to whitespace split.
+    }
+    // Unquoted: split on last whitespace.
+    let mut i = trimmed.len();
+    while i > 0 {
+        let c = bytes[i - 1];
+        if c == b' ' || c == b'\t' {
+            return trimmed[i..].to_string();
+        }
+        i -= 1;
+    }
+    trimmed.to_string()
 }
 
 /// copy-to-clipboard widget — pipe the current edit buffer to the
@@ -875,7 +942,7 @@ fn interactive(
                         if let Some((_, _, stored)) = found {
                             let stored = stored.clone();
                             if frost_lisp::is_widget_action(&stored) {
-                                dispatch_widget(&stored, &mut zle);
+                                dispatch_widget(&stored, &mut zle, &history);
                             } else {
                                 match run(&stored, env) {
                                     RunOutcome::Completed(_) => {}
@@ -895,7 +962,7 @@ fn interactive(
                 // Intercept BEFORE the picker / sentinel passes since widget
                 // names share the sentinel namespace with them.
                 if frost_lisp::is_widget_action(trimmed) {
-                    dispatch_widget(trimmed, &mut zle);
+                    dispatch_widget(trimmed, &mut zle, &history);
                     continue;
                 }
 
@@ -1168,7 +1235,45 @@ fn run_exit_trap(env: &mut frost_exec::ShellEnv) {
 
 #[cfg(test)]
 mod tests {
-    use super::{did_you_mean, format_chord, is_complete, levenshtein};
+    use super::{did_you_mean, format_chord, is_complete, last_argument, levenshtein};
+
+    #[test]
+    fn last_argument_plain_split() {
+        assert_eq!(last_argument("ls -la /tmp"), "/tmp");
+        assert_eq!(last_argument("single"), "single");
+        assert_eq!(last_argument(""), "");
+        assert_eq!(last_argument("   "), "");
+    }
+
+    #[test]
+    fn last_argument_trims_trailing_whitespace() {
+        assert_eq!(last_argument("echo hi\n"), "hi");
+        assert_eq!(last_argument("ls foo  "), "foo");
+    }
+
+    #[test]
+    fn last_argument_preserves_trailing_quoted_group() {
+        assert_eq!(
+            last_argument(r#"echo "hello world""#),
+            r#""hello world""#
+        );
+        assert_eq!(
+            last_argument("grep 'needs quoting'"),
+            "'needs quoting'"
+        );
+    }
+
+    #[test]
+    fn last_argument_single_quoted_string_only() {
+        assert_eq!(last_argument(r#""wholething""#), r#""wholething""#);
+    }
+
+    #[test]
+    fn last_argument_unbalanced_quote_falls_back_to_whitespace() {
+        // Only one `"` at the end means no match — we fall through
+        // to whitespace split, returning just the `"` token.
+        assert_eq!(last_argument(r#"echo a b ""#), r#"""#);
+    }
 
     #[test]
     fn format_chord_bare_letter() {

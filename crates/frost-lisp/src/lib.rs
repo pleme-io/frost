@@ -61,7 +61,10 @@ pub use path::{apply_path, expand_vars, PathSpec};
 pub use picker::{is_valid_action, picker_sentinel, PickerSpec, VALID_ACTIONS};
 pub use prompt::PromptSpec;
 pub use source::SourceSpec;
-pub use theme::{merge_theme, nord_default, ThemeSpec};
+pub use theme::{
+    catppuccin_mocha, gruvbox_dark, merge_theme, nord_default, preset_by_name, tokyo_night,
+    ThemeSpec,
+};
 pub use trap::TrapSpec;
 
 use frost_exec::ShellEnv;
@@ -665,10 +668,21 @@ fn apply_source_with_context(
     // cumulative theme (Nord base at init). Partial specs work:
     // only the slots the user names override; everything else stays
     // at the prior value. Multiple forms compose left-to-right in
-    // source order.
+    // source order. If `:name` matches a built-in preset
+    // (nord / gruvbox-dark / tokyo-night / catppuccin-mocha) the
+    // preset seeds the merge BEFORE the user's slot overrides —
+    // so `(deftheme :name "gruvbox-dark" :hint "#FF0000")` gives
+    // you gruvbox with a red hint.
     let themes: Vec<ThemeSpec> =
         tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
     for t in themes {
+        // If the name maps to a preset, pull the preset in first
+        // (under the existing theme), then overlay the user's
+        // partial spec on top.
+        let preset = t.name.as_deref().and_then(theme::preset_by_name);
+        if let Some(p) = preset {
+            summary.theme = merge_theme(std::mem::take(&mut summary.theme), p);
+        }
         summary.theme = merge_theme(std::mem::take(&mut summary.theme), t);
     }
 
@@ -1241,6 +1255,34 @@ mod tests {
             apply_source(src, &mut env),
             Err(LispError::UnknownPickerAction(_))
         ));
+    }
+
+    #[test]
+    fn apply_deftheme_preset_name_resolves_to_preset_palette() {
+        // `(deftheme :name "gruvbox-dark")` — no slot overrides —
+        // should yield the gruvbox-dark palette verbatim. Assert a
+        // gruvbox-specific color that's NOT in the Nord default.
+        let mut env = ShellEnv::new();
+        let src = r#"(deftheme :name "gruvbox-dark")"#;
+        let s = apply_source(src, &mut env).unwrap();
+        // gruvbox command green is #B8BB26; Nord's was #A3BE8C.
+        assert_eq!(s.theme.command.as_deref(), Some("#B8BB26"));
+        assert_eq!(s.theme.name.as_deref(), Some("gruvbox-dark"));
+    }
+
+    #[test]
+    fn apply_deftheme_preset_name_plus_overrides_layered_correctly() {
+        // Preset seeds then user slots overlay — `:hint "#FF0000"`
+        // should win even though gruvbox-dark also sets :hint.
+        let mut env = ShellEnv::new();
+        let src = r##"
+            (deftheme :name "tokyo-night" :hint "#FF0000")
+        "##;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.theme.hint.as_deref(), Some("#FF0000"),
+            "user slot override should win over preset value");
+        // Non-overridden tokyo-night colors come through.
+        assert_eq!(s.theme.reserved.as_deref(), Some("#BB9AF7"));
     }
 
     #[test]
