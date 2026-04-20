@@ -140,10 +140,85 @@ fn dispatch_widget(sentinel: &str, zle: &mut frost_zle::ZleEngine) {
             print!("\x1b[2J\x1b[H");
             let _ = std::io::Write::flush(&mut std::io::stdout());
         }
+        "copy-to-clipboard" | "copy_to_clipboard" | "copy" => widget_copy_to_clipboard(zle),
+        "paste-from-clipboard" | "paste_from_clipboard" | "paste" => widget_paste_from_clipboard(zle),
+        "kill-buffer" | "kill_buffer" | "clear-buffer" => {
+            zle.inject_prefill("");
+        }
         _ => {
             eprintln!("frost: unknown widget: {name}");
         }
     }
+}
+
+/// copy-to-clipboard widget — pipe the current edit buffer to the
+/// platform's clipboard tool. Darwin: `pbcopy`. Linux with X11:
+/// `xclip -selection clipboard`. Linux with Wayland: `wl-copy`.
+/// Fall back silently if none is available (no user-visible
+/// change, better than a hard error mid-key-chord).
+fn widget_copy_to_clipboard(zle: &frost_zle::ZleEngine) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let buffer = zle.current_buffer_contents().unwrap_or_default();
+    // Candidate tool invocations in priority order. First one that
+    // spawns and accepts stdin wins.
+    let candidates: &[(&str, &[&str])] = &[
+        ("pbcopy", &[]),                           // macOS
+        ("wl-copy", &[]),                          // Wayland
+        ("xclip",   &["-selection", "clipboard"]),  // X11
+        ("xsel",    &["--clipboard", "--input"]),   // X11 alt
+    ];
+    for (bin, args) in candidates {
+        let Ok(mut child) = Command::new(bin)
+            .args(*args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            continue;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(buffer.as_bytes());
+        }
+        let _ = child.wait();
+        return;
+    }
+    eprintln!("frost: copy-to-clipboard: no clipboard tool found (tried pbcopy / wl-copy / xclip / xsel)");
+}
+
+/// paste-from-clipboard widget — read from the platform clipboard
+/// and inject into the next read_line. Counterpart to
+/// copy-to-clipboard, same tool-priority list.
+fn widget_paste_from_clipboard(zle: &mut frost_zle::ZleEngine) {
+    use std::process::Command;
+
+    let candidates: &[(&str, &[&str])] = &[
+        ("pbpaste",  &[]),
+        ("wl-paste", &[]),
+        ("xclip",    &["-selection", "clipboard", "-o"]),
+        ("xsel",     &["--clipboard", "--output"]),
+    ];
+    for (bin, args) in candidates {
+        let Ok(output) = Command::new(bin).args(*args).output() else { continue };
+        if !output.status.success() { continue; }
+        let Ok(text) = String::from_utf8(output.stdout) else { continue };
+        // Strip trailing newlines that some paste tools append; users
+        // can hit Enter themselves if they want to submit.
+        let text = text.trim_end_matches('\n');
+        // Preserve anything already typed — inject ON TOP of current
+        // buffer (like paste at end of line) rather than replacing.
+        let existing = zle.current_buffer_contents().unwrap_or_default();
+        let combined = if existing.is_empty() {
+            text.to_string()
+        } else {
+            format!("{existing}{text}")
+        };
+        zle.inject_prefill(&combined);
+        return;
+    }
+    eprintln!("frost: paste-from-clipboard: no clipboard tool found (tried pbpaste / wl-paste / xclip / xsel)");
 }
 
 /// edit-line widget (emacs/zsh/bash C-x e parity): write the current
