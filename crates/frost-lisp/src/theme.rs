@@ -103,6 +103,76 @@ pub fn nord_default() -> ThemeSpec {
     }
 }
 
+/// Gruvbox Dark — the second-most-popular terminal palette after
+/// Nord. Official color table from morhetz/gruvbox.
+pub fn gruvbox_dark() -> ThemeSpec {
+    ThemeSpec {
+        name:            Some("gruvbox-dark".into()),
+        command:         Some("#B8BB26".into()), // bright green
+        unknown_command: Some("#FABD2F".into()), // bright yellow
+        string:          Some("#83A598".into()), // bright blue
+        variable:        Some("#FABD2F".into()),
+        reserved:        Some("#D3869B".into()), // bright purple
+        operator:        Some("#FB4934".into()), // bright red
+        comment:         Some("#928374".into()), // neutral gray
+        hint:            Some("#928374".into()),
+        broken_path:     Some("#FB4934".into()),
+        glob:            Some("#FABD2F".into()),
+        number:          Some("#83A598".into()),
+    }
+}
+
+/// Tokyo Night — folke/tokyonight.nvim port. Cooler blues + violets.
+pub fn tokyo_night() -> ThemeSpec {
+    ThemeSpec {
+        name:            Some("tokyo-night".into()),
+        command:         Some("#9ECE6A".into()), // green
+        unknown_command: Some("#E0AF68".into()), // yellow
+        string:          Some("#7DCFFF".into()), // cyan
+        variable:        Some("#E0AF68".into()),
+        reserved:        Some("#BB9AF7".into()), // purple
+        operator:        Some("#F7768E".into()), // red/pink
+        comment:         Some("#565F89".into()), // muted blue-gray
+        hint:            Some("#565F89".into()),
+        broken_path:     Some("#F7768E".into()),
+        glob:            Some("#E0AF68".into()),
+        number:          Some("#FF9E64".into()), // orange
+    }
+}
+
+/// Catppuccin Mocha — catppuccin/catppuccin's flagship dark flavor.
+pub fn catppuccin_mocha() -> ThemeSpec {
+    ThemeSpec {
+        name:            Some("catppuccin-mocha".into()),
+        command:         Some("#A6E3A1".into()), // green
+        unknown_command: Some("#F9E2AF".into()), // yellow
+        string:          Some("#94E2D5".into()), // teal
+        variable:        Some("#F9E2AF".into()),
+        reserved:        Some("#CBA6F7".into()), // mauve
+        operator:        Some("#F38BA8".into()), // pink/red
+        comment:         Some("#6C7086".into()), // overlay0
+        hint:            Some("#6C7086".into()),
+        broken_path:     Some("#F38BA8".into()),
+        glob:            Some("#F9E2AF".into()),
+        number:          Some("#FAB387".into()), // peach
+    }
+}
+
+/// Look up a preset by name — used by the rc to match a user's
+/// `(deftheme :name "…")` shorthand against the shipped tables.
+/// Returns `None` when the name doesn't match a preset, at which
+/// point consumers fall back to treating the spec as a raw
+/// hex-slot override on top of Nord.
+pub fn preset_by_name(name: &str) -> Option<ThemeSpec> {
+    match name {
+        "nord" => Some(nord_default()),
+        "gruvbox" | "gruvbox-dark" => Some(gruvbox_dark()),
+        "tokyo-night" | "tokyonight" | "tokyo" => Some(tokyo_night()),
+        "catppuccin" | "catppuccin-mocha" | "mocha" => Some(catppuccin_mocha()),
+        _ => None,
+    }
+}
+
 /// Merge a partial [`ThemeSpec`] onto a base (typically
 /// [`nord_default`]). Used by `apply_source` so users can ship a
 /// theme with only the slots they want to override.
@@ -165,5 +235,38 @@ mod tests {
         let base = nord_default();
         let merged = merge_theme(base.clone(), ThemeSpec::default());
         assert_eq!(merged, base);
+    }
+
+    #[test]
+    fn preset_by_name_covers_shipped_themes() {
+        assert!(preset_by_name("nord").is_some());
+        assert!(preset_by_name("gruvbox").is_some());
+        assert!(preset_by_name("gruvbox-dark").is_some());
+        assert!(preset_by_name("tokyo-night").is_some());
+        assert!(preset_by_name("tokyonight").is_some());
+        assert!(preset_by_name("catppuccin").is_some());
+        assert!(preset_by_name("catppuccin-mocha").is_some());
+        assert!(preset_by_name("mocha").is_some());
+        // Unknown name returns None.
+        assert!(preset_by_name("solarized").is_none());
+        assert!(preset_by_name("").is_none());
+    }
+
+    #[test]
+    fn each_preset_fills_every_slot() {
+        for spec in [nord_default(), gruvbox_dark(), tokyo_night(), catppuccin_mocha()] {
+            assert!(spec.name.is_some(), "theme without a name");
+            assert!(spec.command.is_some());
+            assert!(spec.unknown_command.is_some());
+            assert!(spec.string.is_some());
+            assert!(spec.variable.is_some());
+            assert!(spec.reserved.is_some());
+            assert!(spec.operator.is_some());
+            assert!(spec.comment.is_some());
+            assert!(spec.hint.is_some());
+            assert!(spec.broken_path.is_some());
+            assert!(spec.glob.is_some());
+            assert!(spec.number.is_some());
+        }
     }
 }
