@@ -409,6 +409,7 @@ impl<'a> ArithParser<'a> {
         tok
     }
 
+    #[allow(dead_code)] // Symmetric helper to `advance`; kept for future debug asserts.
     fn expect(&mut self, expected: &Token) {
         let tok = self.advance();
         debug_assert_eq!(&tok, expected, "expected {expected:?}, got {tok:?}");
