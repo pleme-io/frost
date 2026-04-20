@@ -19,7 +19,11 @@ static PENDING_SIGNALS: AtomicU64 = AtomicU64::new(0);
 /// the signal is recorded — but only when received during a running
 /// external child, not during read_line.
 const TRAPPED_SIGNALS: &[libc::c_int] = &[
-    libc::SIGUSR1, libc::SIGUSR2, libc::SIGTERM, libc::SIGHUP, libc::SIGWINCH,
+    libc::SIGUSR1,
+    libc::SIGUSR2,
+    libc::SIGTERM,
+    libc::SIGHUP,
+    libc::SIGWINCH,
 ];
 
 extern "C" fn signal_forwarder(sig: libc::c_int) {
@@ -48,11 +52,17 @@ fn install_signal_traps() {
 /// state rather than interrupting mid-execution.
 fn check_pending_traps(env: &mut frost_exec::ShellEnv) {
     let pending = PENDING_SIGNALS.swap(0, Ordering::SeqCst);
-    if pending == 0 { return; }
+    if pending == 0 {
+        return;
+    }
     for sig in 1..64i32 {
-        if pending & (1u64 << sig) == 0 { continue; }
+        if pending & (1u64 << sig) == 0 {
+            continue;
+        }
         let name = frost_exec::trap::signal_number_to_name(sig);
-        if name == "UNKNOWN" { continue; }
+        if name == "UNKNOWN" {
+            continue;
+        }
         let fn_name = format!("__frost_trap_{name}");
         if env.functions.contains_key(&fn_name) {
             let _ = run(&fn_name, env);
@@ -66,6 +76,11 @@ struct Cli {
     /// Execute the given string as a command
     #[arg(short = 'c')]
     command: Option<String>,
+
+    /// Health-check: load the rc, report summary + bundled tool +
+    /// mark-path probe results, then exit. 0 = all green, 1 = gaps.
+    #[arg(long)]
+    doctor: bool,
 
     /// Script file to execute
     file: Option<String>,
@@ -120,6 +135,198 @@ enum PickerOutcome {
     Splice { text: String, submit: bool },
 }
 
+/// `frost --doctor` — load the rc, probe the environment, emit a
+/// colorized report. Returns an exit code: 0 = all green, 1 = at
+/// least one warning. ANSI color codes are inlined; no dep on
+/// nu-ansi-term for frost binary simplicity.
+fn run_doctor(_initial_env: &frost_exec::ShellEnv) -> i32 {
+    use std::fmt::Write as _;
+    let bold = "\x1b[1m";
+    let green = "\x1b[32m";
+    let yellow = "\x1b[33m";
+    let red = "\x1b[31m";
+    let reset = "\x1b[0m";
+    let mut out = String::new();
+    let mut any_warnings = false;
+
+    let _ = writeln!(
+        out,
+        "{bold}frost doctor{reset} — v{}",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    // ── rc load ──────────────────────────────────────────────────
+    let rc_path = frost_lisp::default_rc_path();
+    let mut env = frost_exec::ShellEnv::new();
+    let (summary, load_err) = match frost_lisp::load_rc(&rc_path, &mut env) {
+        Ok(s) => (s, None),
+        Err(e) => (frost_lisp::ApplySummary::default(), Some(e.to_string())),
+    };
+    let _ = writeln!(out, "\n{bold}rc{reset}");
+    let _ = writeln!(out, "  path: {}", rc_path.display());
+    if let Some(e) = &load_err {
+        any_warnings = true;
+        let _ = writeln!(out, "  {red}load failed:{reset} {e}");
+    } else {
+        let _ = writeln!(
+            out,
+            "  {green}loaded{reset}  aliases={} env={} hooks={} binds={} pickers={} \
+             subcmds={} flags={} positionals={} marks={} integrations={} abbreviations={}",
+            summary.aliases,
+            summary.env_vars,
+            summary.hooks,
+            summary.binds,
+            summary.pickers.len(),
+            summary.subcmds.len(),
+            summary.flags.len(),
+            summary.positionals.len(),
+            summary.marks.len(),
+            summary.integrations,
+            summary.abbreviations.len(),
+        );
+    }
+
+    // ── bundled tools ────────────────────────────────────────────
+    let _ = writeln!(out, "\n{bold}bundled tools{reset}");
+    let canonical: &[&str] = &[
+        "sk",
+        "skim-history",
+        "skim-files",
+        "skim-cd",
+        "skim-content",
+        "zoxide",
+        "atuin",
+        "starship",
+        "direnv",
+        "fd",
+        "rg",
+        "bat",
+        "delta",
+        "eza",
+        "jq",
+        "git",
+        "tig",
+        "blx-ls",
+        "kubectl",
+        "kubecolor",
+        "helm",
+        "flux",
+        "k9s",
+        "stern",
+        "aws",
+        "gcloud",
+        "az",
+    ];
+    let mut missing: Vec<&str> = Vec::new();
+    for tool in canonical {
+        if path_probe(tool).is_none() {
+            missing.push(*tool);
+        }
+    }
+    if missing.is_empty() {
+        let _ = writeln!(
+            out,
+            "  {green}all {} bundled tools on PATH{reset}",
+            canonical.len()
+        );
+    } else {
+        any_warnings = true;
+        let _ = writeln!(
+            out,
+            "  {yellow}{}/{}  on PATH; missing:{reset} {}",
+            canonical.len() - missing.len(),
+            canonical.len(),
+            missing.join(", ")
+        );
+    }
+
+    // ── marks ────────────────────────────────────────────────────
+    if !summary.marks.is_empty() {
+        let _ = writeln!(out, "\n{bold}marks{reset}");
+        let mut keys: Vec<&String> = summary.marks.keys().collect();
+        keys.sort();
+        for k in keys {
+            let path = &summary.marks[k];
+            let exists = std::path::Path::new(path).exists();
+            let tag = if exists {
+                format!("{green}✓{reset}")
+            } else {
+                any_warnings = true;
+                format!("{yellow}?{reset}")
+            };
+            let _ = writeln!(out, "  {tag} {k:<12} → {path}");
+        }
+    }
+
+    // ── pickers ──────────────────────────────────────────────────
+    if !summary.pickers.is_empty() {
+        let _ = writeln!(out, "\n{bold}pickers{reset}");
+        for p in &summary.pickers {
+            let have = path_probe(&p.binary).is_some();
+            let tag = if have {
+                format!("{green}✓{reset}")
+            } else {
+                any_warnings = true;
+                format!("{yellow}?{reset}")
+            };
+            let _ = writeln!(out, "  {tag} {:<4} → {:<20} ({})", p.key, p.binary, p.name);
+        }
+    }
+
+    // ── widgets ──────────────────────────────────────────────────
+    let _ = writeln!(out, "\n{bold}widgets{reset}");
+    for name in [
+        "edit-line",
+        "clear-screen",
+        "copy-to-clipboard",
+        "paste-from-clipboard",
+        "kill-buffer",
+        "insert-last-arg",
+        "toggle-sudo",
+    ] {
+        let _ = writeln!(out, "  {green}●{reset} __frost_widget_{name}__");
+    }
+
+    // ── summary ──────────────────────────────────────────────────
+    let _ = writeln!(out);
+    if any_warnings {
+        let _ = writeln!(
+            out,
+            "{yellow}warnings present — frost runs but some features may not work{reset}"
+        );
+    } else {
+        let _ = writeln!(out, "{green}all green{reset}");
+    }
+
+    print!("{out}");
+    if any_warnings { 1 } else { 0 }
+}
+
+/// Lightweight PATH probe — true when `name` resolves to an
+/// executable file on any $PATH entry. Used by `frost doctor` to
+/// report which bundled tools are reachable. Non-unix fallback
+/// skips the permission bit check.
+fn path_probe(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var("PATH").ok()?;
+    for dir in path.split(':').filter(|p| !p.is_empty()) {
+        let candidate = std::path::Path::new(dir).join(name);
+        if let Ok(meta) = std::fs::metadata(&candidate) {
+            if !meta.is_file() {
+                continue;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if meta.permissions().mode() & 0o111 == 0 {
+                    continue;
+                }
+            }
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 /// Widget dispatch — `__frost_widget_<name>__` sentinels rc-authored
 /// via `(defbind :key "X" :action "__frost_widget_<name>__")`. Each
 /// widget is a built-in edit-buffer operation — edit-line spawns
@@ -145,7 +352,9 @@ fn dispatch_widget(
             let _ = std::io::Write::flush(&mut std::io::stdout());
         }
         "copy-to-clipboard" | "copy_to_clipboard" | "copy" => widget_copy_to_clipboard(zle),
-        "paste-from-clipboard" | "paste_from_clipboard" | "paste" => widget_paste_from_clipboard(zle),
+        "paste-from-clipboard" | "paste_from_clipboard" | "paste" => {
+            widget_paste_from_clipboard(zle)
+        }
         "kill-buffer" | "kill_buffer" | "clear-buffer" => {
             zle.inject_prefill("");
         }
@@ -179,9 +388,13 @@ fn widget_toggle_sudo(zle: &mut frost_zle::ZleEngine) {
 /// appended word unless the buffer is empty or already ends with
 /// whitespace.
 fn widget_insert_last_arg(zle: &mut frost_zle::ZleEngine, history: &frost_history::History) {
-    let Some(prev) = history.previous() else { return; };
+    let Some(prev) = history.previous() else {
+        return;
+    };
     let last = last_argument(prev);
-    if last.is_empty() { return; }
+    if last.is_empty() {
+        return;
+    }
     let existing = zle.current_buffer_contents().unwrap_or_default();
     let sep = if existing.is_empty() || existing.ends_with(char::is_whitespace) {
         ""
@@ -201,7 +414,9 @@ fn widget_insert_last_arg(zle: &mut frost_zle::ZleEngine, history: &frost_histor
 /// first whitespace break. Matches zsh's `!$` modifier shape.
 fn last_argument(cmd: &str) -> String {
     let trimmed = cmd.trim_end();
-    if trimmed.is_empty() { return String::new(); }
+    if trimmed.is_empty() {
+        return String::new();
+    }
     let bytes = trimmed.as_bytes();
     // Detect trailing quoted group.
     let last = bytes[bytes.len() - 1];
@@ -213,7 +428,9 @@ fn last_argument(cmd: &str) -> String {
             if bytes[i] == quote {
                 return trimmed[i..].to_string();
             }
-            if i == 0 { break; }
+            if i == 0 {
+                break;
+            }
             i -= 1;
         }
         if bytes[0] == quote {
@@ -246,10 +463,10 @@ fn widget_copy_to_clipboard(zle: &frost_zle::ZleEngine) {
     // Candidate tool invocations in priority order. First one that
     // spawns and accepts stdin wins.
     let candidates: &[(&str, &[&str])] = &[
-        ("pbcopy", &[]),                           // macOS
-        ("wl-copy", &[]),                          // Wayland
-        ("xclip",   &["-selection", "clipboard"]),  // X11
-        ("xsel",    &["--clipboard", "--input"]),   // X11 alt
+        ("pbcopy", &[]),                         // macOS
+        ("wl-copy", &[]),                        // Wayland
+        ("xclip", &["-selection", "clipboard"]), // X11
+        ("xsel", &["--clipboard", "--input"]),   // X11 alt
     ];
     for (bin, args) in candidates {
         let Ok(mut child) = Command::new(bin)
@@ -267,7 +484,9 @@ fn widget_copy_to_clipboard(zle: &frost_zle::ZleEngine) {
         let _ = child.wait();
         return;
     }
-    eprintln!("frost: copy-to-clipboard: no clipboard tool found (tried pbcopy / wl-copy / xclip / xsel)");
+    eprintln!(
+        "frost: copy-to-clipboard: no clipboard tool found (tried pbcopy / wl-copy / xclip / xsel)"
+    );
 }
 
 /// paste-from-clipboard widget — read from the platform clipboard
@@ -277,15 +496,21 @@ fn widget_paste_from_clipboard(zle: &mut frost_zle::ZleEngine) {
     use std::process::Command;
 
     let candidates: &[(&str, &[&str])] = &[
-        ("pbpaste",  &[]),
+        ("pbpaste", &[]),
         ("wl-paste", &[]),
-        ("xclip",    &["-selection", "clipboard", "-o"]),
-        ("xsel",     &["--clipboard", "--output"]),
+        ("xclip", &["-selection", "clipboard", "-o"]),
+        ("xsel", &["--clipboard", "--output"]),
     ];
     for (bin, args) in candidates {
-        let Ok(output) = Command::new(bin).args(*args).output() else { continue };
-        if !output.status.success() { continue; }
-        let Ok(text) = String::from_utf8(output.stdout) else { continue };
+        let Ok(output) = Command::new(bin).args(*args).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let Ok(text) = String::from_utf8(output.stdout) else {
+            continue;
+        };
         // Strip trailing newlines that some paste tools append; users
         // can hit Enter themselves if they want to submit.
         let text = text.trim_end_matches('\n');
@@ -300,7 +525,9 @@ fn widget_paste_from_clipboard(zle: &mut frost_zle::ZleEngine) {
         zle.inject_prefill(&combined);
         return;
     }
-    eprintln!("frost: paste-from-clipboard: no clipboard tool found (tried pbpaste / wl-paste / xclip / xsel)");
+    eprintln!(
+        "frost: paste-from-clipboard: no clipboard tool found (tried pbpaste / wl-paste / xclip / xsel)"
+    );
 }
 
 /// edit-line widget (emacs/zsh/bash C-x e parity): write the current
@@ -317,10 +544,7 @@ fn widget_edit_line(zle: &mut frost_zle::ZleEngine) {
 
     // Tempfile — `.frost-edit-line-<pid>.sh` in the system temp dir.
     // Deletion best-effort on exit (editor may be interrupted).
-    let path = std::env::temp_dir().join(format!(
-        "frost-edit-line-{}.sh",
-        std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("frost-edit-line-{}.sh", std::process::id()));
     {
         let Ok(mut f) = std::fs::File::create(&path) else {
             eprintln!("frost: edit-line: cannot create {}", path.display());
@@ -332,10 +556,7 @@ fn widget_edit_line(zle: &mut frost_zle::ZleEngine) {
     // Run editor, letting it own the terminal. `.sh` extension hints
     // syntax-highlighting to most editors. Parse editor into argv so
     // `$EDITOR="nvim --clean"` works.
-    let argv: Vec<String> = editor
-        .split_whitespace()
-        .map(String::from)
-        .collect();
+    let argv: Vec<String> = editor.split_whitespace().map(String::from).collect();
     let Some((bin, rest)) = argv.split_first() else {
         eprintln!("frost: edit-line: EDITOR is empty");
         let _ = std::fs::remove_file(&path);
@@ -377,7 +598,9 @@ fn read_one_chord() -> Option<String> {
     let _ = terminal::enable_raw_mode();
     let result = loop {
         match event::read() {
-            Ok(Event::Key(KeyEvent { code, modifiers, .. })) => break format_chord(code, modifiers),
+            Ok(Event::Key(KeyEvent {
+                code, modifiers, ..
+            })) => break format_chord(code, modifiers),
             Ok(_) => continue, // resize / paste / focus — wait for a real key
             Err(_) => break None,
         }
@@ -391,29 +614,36 @@ fn read_one_chord() -> Option<String> {
 /// reverse of `frost_zle::parse_chord`. Returns `None` if the code
 /// is something we don't have a canonical spelling for (function
 /// keys, media keys, etc.).
-fn format_chord(code: crossterm::event::KeyCode, modifiers: crossterm::event::KeyModifiers) -> Option<String> {
+fn format_chord(
+    code: crossterm::event::KeyCode,
+    modifiers: crossterm::event::KeyModifiers,
+) -> Option<String> {
     use crossterm::event::{KeyCode, KeyModifiers};
     let key_name = match code {
         KeyCode::Char(' ') => "space".into(),
-        KeyCode::Char(c)   => c.to_string(),
-        KeyCode::Tab       => "tab".into(),
-        KeyCode::Enter     => "enter".into(),
-        KeyCode::Esc       => "esc".into(),
-        KeyCode::Up        => "up".into(),
-        KeyCode::Down      => "down".into(),
-        KeyCode::Left      => "left".into(),
-        KeyCode::Right     => "right".into(),
-        KeyCode::Home      => "home".into(),
-        KeyCode::End       => "end".into(),
-        KeyCode::PageUp    => "pageup".into(),
-        KeyCode::PageDown  => "pagedown".into(),
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Tab => "tab".into(),
+        KeyCode::Enter => "enter".into(),
+        KeyCode::Esc => "esc".into(),
+        KeyCode::Up => "up".into(),
+        KeyCode::Down => "down".into(),
+        KeyCode::Left => "left".into(),
+        KeyCode::Right => "right".into(),
+        KeyCode::Home => "home".into(),
+        KeyCode::End => "end".into(),
+        KeyCode::PageUp => "pageup".into(),
+        KeyCode::PageDown => "pagedown".into(),
         KeyCode::Backspace => "backspace".into(),
-        KeyCode::Delete    => "delete".into(),
+        KeyCode::Delete => "delete".into(),
         _ => return None,
     };
     let mut parts: Vec<&str> = Vec::new();
-    if modifiers.contains(KeyModifiers::CONTROL) { parts.push("C"); }
-    if modifiers.contains(KeyModifiers::ALT)     { parts.push("M"); }
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        parts.push("C");
+    }
+    if modifiers.contains(KeyModifiers::ALT) {
+        parts.push("M");
+    }
     if modifiers.contains(KeyModifiers::SHIFT) && key_name.chars().count() > 1 {
         // Shift on bare letters is encoded via case of the char;
         // only explicit-name keys (tab, up, …) need the "S-" prefix.
@@ -471,10 +701,16 @@ fn run_skim_tab_picker(
         cmd.env(k, v);
     }
     let output = cmd.output().ok()?;
-    if !output.status.success() { return None; }
+    if !output.status.success() {
+        return None;
+    }
     let selection = String::from_utf8(output.stdout).ok()?;
     let trimmed = selection.trim();
-    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 impl PickerAction {
@@ -483,10 +719,10 @@ impl PickerAction {
     /// here so the REPL doesn't assume Lisp-side success.
     fn from_str(s: &str) -> Option<Self> {
         match s {
-            "replace"   => Some(Self::Replace),
-            "append"    => Some(Self::Append),
+            "replace" => Some(Self::Replace),
+            "append" => Some(Self::Append),
             "cd-submit" => Some(Self::CdSubmit),
-            "submit"    => Some(Self::Submit),
+            "submit" => Some(Self::Submit),
             _ => None,
         }
     }
@@ -528,15 +764,18 @@ fn dispatch_picker_sentinel(
     };
 
     let outcome = match action {
-        PickerAction::Replace | PickerAction::Append => {
-            PickerOutcome::Splice { text: sel, submit: false }
-        }
-        PickerAction::CdSubmit => {
-            PickerOutcome::Splice { text: format!("cd {sel}"), submit: true }
-        }
-        PickerAction::Submit => {
-            PickerOutcome::Splice { text: sel, submit: true }
-        }
+        PickerAction::Replace | PickerAction::Append => PickerOutcome::Splice {
+            text: sel,
+            submit: false,
+        },
+        PickerAction::CdSubmit => PickerOutcome::Splice {
+            text: format!("cd {sel}"),
+            submit: true,
+        },
+        PickerAction::Submit => PickerOutcome::Splice {
+            text: sel,
+            submit: true,
+        },
     };
     Some((outcome, action))
 }
@@ -560,9 +799,16 @@ fn run(input: &str, env: &mut frost_exec::ShellEnv) -> RunOutcome {
     // CommandNotFound, which is a human-visible error anyway.
     // PATH binaries are folded in so typos like `gti → git` land
     // (git isn't an alias/builtin by default; it's a PATH binary).
-    let mut known: Vec<String> = env.aliases.keys().cloned()
+    let mut known: Vec<String> = env
+        .aliases
+        .keys()
+        .cloned()
         .chain(env.functions.keys().cloned())
-        .chain(frost_complete::default_builtin_list().iter().map(|s| s.to_string()))
+        .chain(
+            frost_complete::default_builtin_list()
+                .iter()
+                .map(|s| s.to_string()),
+        )
         .collect();
     if let Ok(path) = env.get_var("PATH").map(str::to_string).ok_or(()) {
         known.extend(path_executables(&path));
@@ -613,19 +859,20 @@ fn did_you_mean(typed: &str, names: &[String]) -> Vec<String> {
         .filter(|(d, _, _, _)| *d <= 2 && *d > 0)
         .collect();
     scored.sort_by(|a, b| {
-        a.0.cmp(&b.0)                // distance asc
-            .then(b.1.cmp(&a.1))     // shared-chars desc
-            .then(b.2.cmp(&a.2))     // prefix desc
-            .then(a.3.cmp(b.3))      // alpha
+        a.0.cmp(&b.0) // distance asc
+            .then(b.1.cmp(&a.1)) // shared-chars desc
+            .then(b.2.cmp(&a.2)) // prefix desc
+            .then(a.3.cmp(b.3)) // alpha
     });
-    scored.into_iter().take(3).map(|(_, _, _, n)| n.clone()).collect()
+    scored
+        .into_iter()
+        .take(3)
+        .map(|(_, _, _, n)| n.clone())
+        .collect()
 }
 
 fn common_prefix_len(a: &[char], b: &str) -> usize {
-    a.iter()
-        .zip(b.chars())
-        .take_while(|(x, y)| *x == y)
-        .count()
+    a.iter().zip(b.chars()).take_while(|(x, y)| *x == y).count()
 }
 
 /// Enumerate every executable file reachable via `path` (colon-
@@ -634,7 +881,9 @@ fn common_prefix_len(a: &[char], b: &str) -> usize {
 fn path_executables(path: &str) -> Vec<String> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for dir in path.split(':').filter(|p| !p.is_empty()) {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
@@ -662,17 +911,19 @@ fn path_executables(path: &str) -> Vec<String> {
 fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
-    if a.is_empty() { return b.len(); }
-    if b.is_empty() { return a.len(); }
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     let mut curr: Vec<usize> = vec![0; b.len() + 1];
     for (i, ca) in a.iter().enumerate() {
         curr[0] = i + 1;
         for (j, cb) in b.iter().enumerate() {
             let cost = if ca == cb { 0 } else { 1 };
-            curr[j + 1] = (prev[j + 1] + 1)
-                .min(curr[j] + 1)
-                .min(prev[j] + cost);
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -702,7 +953,8 @@ fn tokenize(input: &str) -> Vec<frost_lexer::Token> {
 /// to be cheap and never panic.
 fn is_complete(src: &str) -> bool {
     // Trailing backslash → classic line continuation
-    if src.trim_end_matches(|c: char| c == ' ' || c == '\t')
+    if src
+        .trim_end_matches(|c: char| c == ' ' || c == '\t')
         .ends_with('\\')
     {
         return false;
@@ -722,7 +974,9 @@ fn is_complete(src: &str) -> bool {
     while i < bytes.len() {
         let c = bytes[i];
         if in_single {
-            if c == b'\'' { in_single = false; }
+            if c == b'\'' {
+                in_single = false;
+            }
             i += 1;
             continue;
         }
@@ -731,29 +985,57 @@ fn is_complete(src: &str) -> bool {
                 i += 2;
                 continue;
             }
-            if c == b'"' { in_double = false; }
+            if c == b'"' {
+                in_double = false;
+            }
             i += 1;
             continue;
         }
         match c {
-            b'\'' => { in_single = true; i += 1; }
-            b'"' => { in_double = true; i += 1; }
-            b'\\' if i + 1 < bytes.len() => { i += 2; }
-            b'(' => { paren += 1; i += 1; }
-            b')' => { paren -= 1; i += 1; }
-            b'[' => { bracket += 1; i += 1; }
-            b']' => { bracket -= 1; i += 1; }
-            b'{' => { brace += 1; i += 1; }
-            b'}' => { brace -= 1; i += 1; }
+            b'\'' => {
+                in_single = true;
+                i += 1;
+            }
+            b'"' => {
+                in_double = true;
+                i += 1;
+            }
+            b'\\' if i + 1 < bytes.len() => {
+                i += 2;
+            }
+            b'(' => {
+                paren += 1;
+                i += 1;
+            }
+            b')' => {
+                paren -= 1;
+                i += 1;
+            }
+            b'[' => {
+                bracket += 1;
+                i += 1;
+            }
+            b']' => {
+                bracket -= 1;
+                i += 1;
+            }
+            b'{' => {
+                brace += 1;
+                i += 1;
+            }
+            b'}' => {
+                brace -= 1;
+                i += 1;
+            }
             b'#' => {
                 // Line comment — skip to newline
-                while i < bytes.len() && bytes[i] != b'\n' { i += 1; }
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
             }
             c if c.is_ascii_alphabetic() || c == b'_' => {
                 let start = i;
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-                {
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                     i += 1;
                 }
                 // Only treat this as a keyword at a command-start boundary:
@@ -763,7 +1045,9 @@ fn is_complete(src: &str) -> bool {
                         bytes[start - 1],
                         b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b'{'
                     );
-                if !is_command_start { continue; }
+                if !is_command_start {
+                    continue;
+                }
                 let word = &src[start..i];
                 match word {
                     "if" => kw.push("fi"),
@@ -772,13 +1056,21 @@ fn is_complete(src: &str) -> bool {
                     // Intermediate markers — do/then/else/elif/in live
                     // inside an already-open construct; no stack change.
                     "do" | "then" | "else" | "elif" | "in" => {}
-                    "fi" if kw.last().copied() == Some("fi") => { kw.pop(); }
-                    "done" if kw.last().copied() == Some("done") => { kw.pop(); }
-                    "esac" if kw.last().copied() == Some("esac") => { kw.pop(); }
+                    "fi" if kw.last().copied() == Some("fi") => {
+                        kw.pop();
+                    }
+                    "done" if kw.last().copied() == Some("done") => {
+                        kw.pop();
+                    }
+                    "esac" if kw.last().copied() == Some("esac") => {
+                        kw.pop();
+                    }
                     _ => {}
                 }
             }
-            _ => { i += 1; }
+            _ => {
+                i += 1;
+            }
         }
     }
 
@@ -786,12 +1078,7 @@ fn is_complete(src: &str) -> bool {
     // `case x in a) … esac` legitimately has more `)` than `(`, and `a}` /
     // `b]` alone aren't real user input at the prompt — so negative counts
     // shouldn't cause us to hang in continuation mode.
-    !in_single
-        && !in_double
-        && paren <= 0
-        && brace <= 0
-        && bracket <= 0
-        && kw.is_empty()
+    !in_single && !in_double && paren <= 0 && brace <= 0 && bracket <= 0 && kw.is_empty()
 }
 
 fn interactive(
@@ -844,17 +1131,17 @@ fn interactive(
     // rc-authored via `(deftheme …)`, then translated from hex
     // strings to reedline `Style` values.
     let palette = frost_zle::Palette::from_hex_slots(frost_zle::PaletteSlots {
-        command:         rc_theme.command.as_deref(),
+        command: rc_theme.command.as_deref(),
         unknown_command: rc_theme.unknown_command.as_deref(),
-        reserved:        rc_theme.reserved.as_deref(),
-        string:          rc_theme.string.as_deref(),
-        variable:        rc_theme.variable.as_deref(),
-        operator:        rc_theme.operator.as_deref(),
-        comment:         rc_theme.comment.as_deref(),
-        glob:            rc_theme.glob.as_deref(),
-        number:          rc_theme.number.as_deref(),
-        tilde:           None, // Nord default — no separate slot yet
-        broken_path:     rc_theme.broken_path.as_deref(),
+        reserved: rc_theme.reserved.as_deref(),
+        string: rc_theme.string.as_deref(),
+        variable: rc_theme.variable.as_deref(),
+        operator: rc_theme.operator.as_deref(),
+        comment: rc_theme.comment.as_deref(),
+        glob: rc_theme.glob.as_deref(),
+        number: rc_theme.number.as_deref(),
+        tilde: None, // Nord default — no separate slot yet
+        broken_path: rc_theme.broken_path.as_deref(),
     });
     let highlighter = Box::new(
         frost_zle::FrostHighlighter::with_known(known_commands)
@@ -932,12 +1219,18 @@ fn interactive(
         zle.set_edit_mode(wanted);
 
         let outcome = zle.read_line(|src| {
-            if is_complete(src) { InputStatus::Complete } else { InputStatus::Incomplete }
+            if is_complete(src) {
+                InputStatus::Complete
+            } else {
+                InputStatus::Incomplete
+            }
         });
         match outcome {
             Ok(ReadLineOutcome::Input(line)) => {
                 let trimmed = line.trim();
-                if trimmed.is_empty() { continue; }
+                if trimmed.is_empty() {
+                    continue;
+                }
 
                 // Multi-key chord prefix sentinel (`__frost_chord_prefix_C-x__`)
                 // — reedline fired the first chord; we read one more
@@ -951,9 +1244,9 @@ fn interactive(
                     .and_then(|s| s.strip_suffix("__"))
                 {
                     if let Some(second_chord) = read_one_chord() {
-                        let found = rc_multi_key.iter().find(|(p, r, _)| {
-                            p == first_chord && *r == second_chord
-                        });
+                        let found = rc_multi_key
+                            .iter()
+                            .find(|(p, r, _)| p == first_chord && *r == second_chord);
                         if let Some((_, _, stored)) = found {
                             let stored = stored.clone();
                             if frost_lisp::is_widget_action(&stored) {
@@ -993,12 +1286,9 @@ fn interactive(
                 // it here and pass as `--query` for immediate narrowing
                 // — blzsh `skim-history-widget` parity.
                 let query = zle.current_buffer_contents();
-                if let Some((outcome, action)) = dispatch_picker_sentinel(
-                    trimmed,
-                    query.as_deref(),
-                    &history_path,
-                    &rc_pickers,
-                ) {
+                if let Some((outcome, action)) =
+                    dispatch_picker_sentinel(trimmed, query.as_deref(), &history_path, &rc_pickers)
+                {
                     let PickerOutcome::Splice { text, submit } = outcome else {
                         continue;
                     };
@@ -1065,7 +1355,9 @@ fn interactive(
                 // zsh echoes the expanded line when it differs — so do we.
                 let (to_run, expansion_failed) = match frost_history::expand(&line, &history) {
                     Ok((expanded, changed)) => {
-                        if changed { println!("{expanded}"); }
+                        if changed {
+                            println!("{expanded}");
+                        }
                         (expanded, false)
                     }
                     Err(e) => {
@@ -1073,7 +1365,9 @@ fn interactive(
                         (line.clone(), true)
                     }
                 };
-                if expansion_failed { continue; }
+                if expansion_failed {
+                    continue;
+                }
                 let _ = history.push(to_run.clone());
                 // `preexec` — after input is accepted, before execution.
                 run_hook("__frost_hook_preexec", env);
@@ -1164,6 +1458,15 @@ fn main() {
         }
     };
 
+    // `frost --doctor` — health check + surface dump. Runs instead
+    // of the normal dispatch since we want a consistent, mostly-
+    // side-effect-free report.
+    if cli.doctor {
+        let code = run_doctor(&env);
+        run_exit_trap(&mut env);
+        process::exit(code);
+    }
+
     let code = if let Some(cmd) = &cli.command {
         // Apply abbreviation expansion even in -c mode so scripts
         // that source the same rc get the same short-form behavior.
@@ -1171,8 +1474,7 @@ fn main() {
         // command; compound commands like `gcm a; gcm b` only get
         // the first `gcm` expanded, matching fish's line-granular
         // abbreviation semantics.
-        let (cmd_expanded, changed) =
-            frost_lisp::expand_abbreviation(cmd, &rc_abbreviations);
+        let (cmd_expanded, changed) = frost_lisp::expand_abbreviation(cmd, &rc_abbreviations);
         if changed {
             println!("{cmd_expanded}");
         }
@@ -1229,7 +1531,9 @@ fn unwrap_outcome(outcome: RunOutcome) -> i32 {
 /// lifecycle hooks (`precmd`, `preexec`, `chpwd`). Errors are swallowed
 /// so a broken hook can't kill the interactive loop.
 fn run_hook(name: &str, env: &mut frost_exec::ShellEnv) {
-    if !env.functions.contains_key(name) { return; }
+    if !env.functions.contains_key(name) {
+        return;
+    }
     // Synthesize a call: `<name>` with no args. Cheap to re-parse each
     // time; the function body itself is pre-parsed and cached in
     // `env.functions`.
@@ -1268,14 +1572,8 @@ mod tests {
 
     #[test]
     fn last_argument_preserves_trailing_quoted_group() {
-        assert_eq!(
-            last_argument(r#"echo "hello world""#),
-            r#""hello world""#
-        );
-        assert_eq!(
-            last_argument("grep 'needs quoting'"),
-            "'needs quoting'"
-        );
+        assert_eq!(last_argument(r#"echo "hello world""#), r#""hello world""#);
+        assert_eq!(last_argument("grep 'needs quoting'"), "'needs quoting'");
     }
 
     #[test]
@@ -1358,7 +1656,7 @@ mod tests {
         assert_eq!(levenshtein("", "abc"), 3);
         assert_eq!(levenshtein("abc", ""), 3);
         assert_eq!(levenshtein("kitten", "sitting"), 3);
-        assert_eq!(levenshtein("git", "gti"), 2);   // transposition = 2 edits
+        assert_eq!(levenshtein("git", "gti"), 2); // transposition = 2 edits
         assert_eq!(levenshtein("ls", "ls"), 0);
         assert_eq!(levenshtein("l", "ls"), 1);
         assert_eq!(levenshtein("helloo", "hello"), 1);
@@ -1367,7 +1665,9 @@ mod tests {
     #[test]
     fn did_you_mean_surfaces_close_matches() {
         let names: Vec<String> = ["git", "ls", "echo", "cd", "cat"]
-            .iter().map(|s| s.to_string()).collect();
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         // `gti` → close to `git` (distance 2 via double swap).
         let s = did_you_mean("gti", &names);
         assert!(s.contains(&"git".to_string()), "{s:?}");
@@ -1379,7 +1679,9 @@ mod tests {
     #[test]
     fn did_you_mean_ignores_unrelated() {
         let names: Vec<String> = ["git", "ls", "echo"]
-            .iter().map(|s| s.to_string()).collect();
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         // Nothing close to "completely-unrelated".
         let s = did_you_mean("completely-unrelated", &names);
         assert!(s.is_empty(), "{s:?}");
@@ -1392,7 +1694,9 @@ mod tests {
         // should rank higher — `gti` → `git` beats `gti` → `tr`
         // even though both are distance 2.
         let names: Vec<String> = ["tr", "fi", "git", "gem"]
-            .iter().map(|s| s.to_string()).collect();
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let s = did_you_mean("gti", &names);
         assert_eq!(s[0], "git", "top suggestion should be git, got {s:?}");
     }
@@ -1400,7 +1704,9 @@ mod tests {
     #[test]
     fn did_you_mean_caps_at_three_suggestions() {
         let names: Vec<String> = ["gxt", "git", "gxxt", "gjt", "gzt", "gyt"]
-            .iter().map(|s| s.to_string()).collect();
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let s = did_you_mean("got", &names);
         assert!(s.len() <= 3, "got {} suggestions: {s:?}", s.len());
     }
