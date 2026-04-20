@@ -159,6 +159,17 @@ pub struct ApplySummary {
     /// highlighter / hinter / broken-path coloring) read from here
     /// so color changes are a one-form edit instead of a Rust patch.
     pub theme: ThemeSpec,
+
+    /// Two-key chord continuations from `(defbind :key "C-x e" …)` /
+    /// `(defbind :key "M-k M-h" …)`. Entries are
+    /// `(first_chord, second_chord, fn_name)`. The REPL binds the
+    /// FIRST chord to a synthetic `__frost_chord_prefix_<first>__`
+    /// sentinel; when that fires it reads ONE more key via
+    /// crossterm, looks up the `(first, second)` pair here, and
+    /// invokes `fn_name` as a shell function (same execution path as
+    /// any single-chord defbind). 3+ key chords (`"C-x y z"`) are
+    /// still silently dropped — rare in practice; can extend later.
+    pub multi_key_bindings: Vec<(String, String, String)>,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -480,16 +491,52 @@ fn apply_source_with_context(
         summary.traps += 1;
     }
 
-    // Keybindings — stored as `__frost_bind_<KEY>`. ZLE wire-up is a
-    // follow-up; this establishes the authoring surface so a rc file can
-    // declare its key map without waiting on the dispatcher.
+    // Keybindings — single-chord bindings land under `__frost_bind_<KEY>`
+    // and are bound via reedline; multi-key (`"C-x e"`) bindings install
+    // a synthetic prefix sentinel + record the second-chord continuation
+    // in `multi_key_bindings` so the REPL can crossterm-read the second
+    // key and dispatch. 3+ key sequences remain dropped — rare + complex.
     let binds: Vec<BindSpec> =
         tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let mut chord_prefixes_emitted: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     for b in binds {
-        let fn_name = bind_function_name(&b.key);
-        install_body_as_function(env, &fn_name, &b.action);
-        summary.bind_map.push((b.key.clone(), fn_name));
-        summary.binds += 1;
+        match frost_chord_kind(&b.key) {
+            ChordKind::Single => {
+                let fn_name = bind_function_name(&b.key);
+                install_body_as_function(env, &fn_name, &b.action);
+                summary.bind_map.push((b.key.clone(), fn_name));
+                summary.binds += 1;
+            }
+            ChordKind::TwoKey { first, second } => {
+                // Function name encodes both chords so multiple
+                // (C-x e) vs (C-x a) entries don't collide.
+                let fn_name = format!(
+                    "__frost_bind_{}_{}",
+                    sanitize_chord(&first),
+                    sanitize_chord(&second),
+                );
+                install_body_as_function(env, &fn_name, &b.action);
+                summary.multi_key_bindings.push((
+                    first.clone(),
+                    second.clone(),
+                    fn_name,
+                ));
+                // Bind the first chord to the prefix sentinel once
+                // per unique first-chord (`C-x e` and `C-x a` share
+                // `__frost_chord_prefix_C-x__`).
+                if chord_prefixes_emitted.insert(first.clone()) {
+                    let sentinel = chord_prefix_sentinel(&first);
+                    summary.bind_map.push((first, sentinel));
+                }
+                summary.binds += 1;
+            }
+            ChordKind::Unsupported => {
+                // Invalid or 3+-key chord — silently skip. The chord
+                // classifier warns at the ZLE boundary if it's truly
+                // malformed; here we just don't register.
+            }
+        }
     }
 
     // Per-command completions — stored as a JSON-serialized CompletionSpec
@@ -579,6 +626,51 @@ fn apply_source_with_context(
     Ok(summary)
 }
 
+/// Classify a chord string for routing through the defbind pipeline.
+/// Returns the shape without running the full frost-zle classifier
+/// (which lives in a downstream crate). Whitespace-separated chord
+/// sequences with exactly two parts become `TwoKey`; single chords
+/// return `Single`. Everything else is `Unsupported`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ChordKind {
+    Single,
+    TwoKey { first: String, second: String },
+    Unsupported,
+}
+
+fn frost_chord_kind(s: &str) -> ChordKind {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return ChordKind::Unsupported;
+    }
+    if trimmed.contains(char::is_whitespace) {
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() == 2 {
+            return ChordKind::TwoKey {
+                first: parts[0].to_string(),
+                second: parts[1].to_string(),
+            };
+        }
+        return ChordKind::Unsupported;
+    }
+    ChordKind::Single
+}
+
+/// Sentinel string emitted to reedline for the first chord of a
+/// two-key binding. The REPL's dispatcher pattern-matches on this
+/// to know "a chord continuation is expected next".
+pub fn chord_prefix_sentinel(first_chord: &str) -> String {
+    format!("__frost_chord_prefix_{}__", first_chord)
+}
+
+/// Strip chord separators so a chord string is safe as part of a
+/// function-name identifier. `"C-x"` → `"C-x"` (kept), whitespace
+/// collapsed. Mostly cosmetic — the identifier just has to be
+/// consistent for the function registry.
+fn sanitize_chord(chord: &str) -> String {
+    chord.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
 /// Fold a nested-source's summary into the outer one. Hook / trap /
 /// alias counts sum; the map-shaped fields (completion_map,
 /// completion_descriptions) extend; vec-shaped (bind_map, subcmds,
@@ -614,6 +706,7 @@ fn merge_summary(dst: &mut ApplySummary, src: ApplySummary) {
     // outer file's `deftheme` passes AFTER this merge), consistent
     // with last-writer-wins.
     dst.theme = theme::merge_theme(std::mem::take(&mut dst.theme), src.theme);
+    dst.multi_key_bindings.extend(src.multi_key_bindings);
 }
 
 /// Resolve a `(defsource :path …)` string against the sourcing file's
@@ -918,13 +1011,59 @@ mod tests {
     }
 
     #[test]
+    fn apply_defbind_two_key_populates_multi_key_bindings_and_prefix_sentinel() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defbind :key "C-x e" :action "exec $EDITOR")
+            (defbind :key "C-x a" :action "echo another")
+            (defbind :key "C-l"   :action "clear")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        // Single-chord C-l goes through the normal bind_map entry.
+        assert!(s.bind_map.iter().any(|(k, fn_name)|
+            k == "C-l" && fn_name.starts_with("__frost_bind_")
+        ));
+        // Two-key: ONE prefix sentinel regardless of how many share
+        // the C-x prefix (both "C-x e" and "C-x a" add continuations
+        // but only one prefix entry).
+        let prefix_entries: Vec<_> = s.bind_map.iter()
+            .filter(|(_, fn_name)| fn_name.starts_with("__frost_chord_prefix_"))
+            .collect();
+        assert_eq!(prefix_entries.len(), 1,
+            "expected exactly one prefix sentinel, got {prefix_entries:?}");
+        assert_eq!(prefix_entries[0].0, "C-x");
+        assert_eq!(prefix_entries[0].1, "__frost_chord_prefix_C-x__");
+
+        // The continuation table has both entries.
+        assert_eq!(s.multi_key_bindings.len(), 2);
+        assert!(s.multi_key_bindings.iter().any(|(f, r, _)| f == "C-x" && r == "e"));
+        assert!(s.multi_key_bindings.iter().any(|(f, r, _)| f == "C-x" && r == "a"));
+
+        // Each continuation fn_name is registered in env.functions.
+        for (_, _, fn_name) in &s.multi_key_bindings {
+            assert!(env.functions.contains_key(fn_name),
+                "continuation function {fn_name} not registered");
+        }
+    }
+
+    #[test]
+    fn chord_prefix_sentinel_round_trips() {
+        assert_eq!(chord_prefix_sentinel("C-x"), "__frost_chord_prefix_C-x__");
+        assert_eq!(chord_prefix_sentinel("M-k"), "__frost_chord_prefix_M-k__");
+    }
+
+    #[test]
     fn apply_bind_registers_function() {
+        // Multi-key (C-x e) now routes through the two-key pipeline:
+        // the function registers under __frost_bind_C-x_e, a prefix
+        // sentinel is emitted into bind_map for C-x, and the
+        // continuation lands in multi_key_bindings.
         let mut env = ShellEnv::new();
         let src = r#"(defbind :key "C-x e" :action "echo fire")"#;
         let s = apply_source(src, &mut env).unwrap();
         assert_eq!(s.binds, 1);
-        // Canonicalized key: whitespace stripped, uppercased.
-        assert!(env.functions.contains_key("__frost_bind_C-XE"));
+        assert!(env.functions.contains_key("__frost_bind_C-x_e"));
+        assert_eq!(s.multi_key_bindings.len(), 1);
     }
 
     #[test]
