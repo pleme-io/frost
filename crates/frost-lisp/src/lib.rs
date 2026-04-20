@@ -37,6 +37,7 @@ mod env;
 mod function;
 mod hook;
 mod integration;
+mod mark;
 mod option;
 mod path;
 mod picker;
@@ -54,6 +55,7 @@ pub use env::EnvSpec;
 pub use function::FunctionSpec;
 pub use hook::{hook_function_name, HookSpec};
 pub use integration::{lookup_integration, IntegrationSpec, KNOWN_INTEGRATIONS};
+pub use mark::{expand_mark_path, shell_quote_path, MarkSpec};
 pub use option::OptionSetSpec;
 pub use path::{apply_path, expand_vars, PathSpec};
 pub use picker::{is_valid_action, picker_sentinel, PickerSpec, VALID_ACTIONS};
@@ -170,6 +172,13 @@ pub struct ApplySummary {
     /// any single-chord defbind). 3+ key chords (`"C-x y z"`) are
     /// still silently dropped — rare in practice; can extend later.
     pub multi_key_bindings: Vec<(String, String, String)>,
+
+    /// Directory bookmarks from `(defmark …)` forms. Map of name →
+    /// resolved-absolute path. Applied as cd-aliases so `defmark
+    /// :name "code"` becomes the `code` alias that cd's there.
+    /// Preserved in the summary for introspection (future widgets
+    /// like a mark picker, a `marks` builtin).
+    pub marks: std::collections::HashMap<String, String>,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -612,6 +621,20 @@ fn apply_source_with_context(
         summary.abbreviations.insert(a.name, a.expansion);
     }
 
+    // Directory bookmarks — expand the path once at rc-load (tilde
+    // + $VAR) and register a cd-alias that holds the resolved
+    // absolute path. Also stash in the summary's `marks` map for
+    // downstream consumers.
+    let marks: Vec<MarkSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for m in marks {
+        let resolved = mark::expand_mark_path(&m.path);
+        let quoted = mark::shell_quote_path(&resolved);
+        env.aliases.insert(m.name.clone(), format!("cd {quoted}"));
+        summary.aliases += 1;
+        summary.marks.insert(m.name, resolved);
+    }
+
     // Theme overlays — each `(deftheme …)` form merges onto the
     // cumulative theme (Nord base at init). Partial specs work:
     // only the slots the user names override; everything else stays
@@ -707,6 +730,7 @@ fn merge_summary(dst: &mut ApplySummary, src: ApplySummary) {
     // with last-writer-wins.
     dst.theme = theme::merge_theme(std::mem::take(&mut dst.theme), src.theme);
     dst.multi_key_bindings.extend(src.multi_key_bindings);
+    dst.marks.extend(src.marks);
 }
 
 /// Resolve a `(defsource :path …)` string against the sourcing file's
@@ -1195,6 +1219,25 @@ mod tests {
         let s = apply_source(src, &mut env).unwrap();
         assert_eq!(s.theme.hint.as_deref(), Some("#222222"));
         assert_eq!(s.theme.command.as_deref(), Some("#333333"));
+    }
+
+    #[test]
+    fn apply_defmark_registers_alias_and_records_mark() {
+        // Set a sentinel env var so the test is deterministic.
+        unsafe { std::env::set_var("X_MARK_TEST_HOME", "/tmp/marktest"); }
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defmark :name "tmpmark" :path "$X_MARK_TEST_HOME/sub")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        // Alias registered.
+        assert_eq!(
+            env.aliases.get("tmpmark").map(String::as_str),
+            Some("cd '/tmp/marktest/sub'")
+        );
+        // Summary map has the mark.
+        assert_eq!(s.marks.get("tmpmark").map(String::as_str), Some("/tmp/marktest/sub"));
+        unsafe { std::env::remove_var("X_MARK_TEST_HOME"); }
     }
 
     #[test]
