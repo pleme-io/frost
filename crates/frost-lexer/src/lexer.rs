@@ -106,6 +106,7 @@ impl<'src> Lexer<'src> {
                 self.cursor.advance();
                 TokenKind::At
             }
+            b'0'..=b'9' if self.peek_fd_redirect_suffix().is_some() => self.lex_fd_redirect(),
             _ => self.lex_word(),
         };
 
@@ -328,6 +329,78 @@ impl<'src> Lexer<'src> {
         }
     }
 
+    /// Look-ahead: the current cursor byte is a digit — is this the
+    /// start of a fd-prefixed redirect (`2>`, `2>>`, `2<`, `2>&`)? If
+    /// so, return the resulting `TokenKind` without moving the cursor.
+    /// A digit with whitespace or a non-redirect char after is NOT an
+    /// fd-prefix — that's a regular word/argument.
+    fn peek_fd_redirect_suffix(&self) -> Option<TokenKind> {
+        // Count the digit run starting at the cursor.
+        let mut i = 0;
+        while let Some(b) = self.cursor.peek_nth(i) {
+            if b.is_ascii_digit() {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        if i == 0 {
+            return None;
+        }
+        // Peek past the digit run for the operator.
+        match self.cursor.peek_nth(i)? {
+            b'>' => match self.cursor.peek_nth(i + 1) {
+                Some(b'>') => Some(TokenKind::FdDoubleGreater),
+                Some(b'&') => Some(TokenKind::FdDup),
+                _ => Some(TokenKind::FdGreater),
+            },
+            b'<' => match self.cursor.peek_nth(i + 1) {
+                Some(b'&') => Some(TokenKind::FdDup),
+                _ => Some(TokenKind::FdLess),
+            },
+            _ => None,
+        }
+    }
+
+    /// Consume a fd-prefixed redirect token (`2>`, `2>>`, `2<`, `2>&`,
+    /// `2<&`). Cursor is positioned at the first digit; advances past
+    /// the full operator. The token text captures the fd digits + op
+    /// so the parser's `parse_fd_prefix` can recover the fd number.
+    fn lex_fd_redirect(&mut self) -> TokenKind {
+        // Consume digit run.
+        self.cursor.eat_while(|b| b.is_ascii_digit());
+        let kind = match self.cursor.peek() {
+            Some(b'>') => {
+                self.cursor.advance();
+                match self.cursor.peek() {
+                    Some(b'>') => {
+                        self.cursor.advance();
+                        TokenKind::FdDoubleGreater
+                    }
+                    Some(b'&') => {
+                        self.cursor.advance();
+                        TokenKind::FdDup
+                    }
+                    _ => TokenKind::FdGreater,
+                }
+            }
+            Some(b'<') => {
+                self.cursor.advance();
+                match self.cursor.peek() {
+                    Some(b'&') => {
+                        self.cursor.advance();
+                        TokenKind::FdDup
+                    }
+                    _ => TokenKind::FdLess,
+                }
+            }
+            // Peek-predicate guaranteed we'd see one of the above.
+            _ => unreachable!("peek_fd_redirect_suffix agreed but lex_fd_redirect saw nothing"),
+        };
+        self.command_position = false;
+        kind
+    }
+
     fn lex_word(&mut self) -> TokenKind {
         loop {
             self.cursor.eat_while(|b| !is_meta(b));
@@ -468,11 +541,60 @@ mod tests {
                 TokenKind::Word,
                 TokenKind::Greater,
                 TokenKind::Word,
-                TokenKind::Word,       // 2 as word
-                TokenKind::AmpGreater, // >& (from the >&)
-                TokenKind::Word,       // 1
+                TokenKind::FdDup, // 2>& — lexed as one fd-prefixed op
+                TokenKind::Word,  // 1
                 TokenKind::Eof,
             ]
+        );
+    }
+
+    #[test]
+    fn fd_prefix_redirects() {
+        // Regression for the `cat foo 2>/dev/null` bug where `2` was
+        // swallowed as a word argument. Each form below must produce
+        // one fd-prefixed token, not a digit-word + operator.
+        assert_eq!(
+            kinds("cmd 2>/dev/null"),
+            vec![
+                TokenKind::Word,
+                TokenKind::FdGreater,
+                TokenKind::Word,
+                TokenKind::Eof,
+            ],
+            "2> must be a single FdGreater token",
+        );
+        assert_eq!(
+            kinds("cmd 2>>log"),
+            vec![
+                TokenKind::Word,
+                TokenKind::FdDoubleGreater,
+                TokenKind::Word,
+                TokenKind::Eof,
+            ],
+            "2>> must be a single FdDoubleGreater token",
+        );
+        assert_eq!(
+            kinds("cmd 2<input"),
+            vec![
+                TokenKind::Word,
+                TokenKind::FdLess,
+                TokenKind::Word,
+                TokenKind::Eof,
+            ],
+            "2< must be a single FdLess token",
+        );
+        // A digit followed by whitespace is NOT an fd-prefix — it's
+        // just an argument.
+        assert_eq!(
+            kinds("cmd 2 > out"),
+            vec![
+                TokenKind::Word,
+                TokenKind::Word,
+                TokenKind::Greater,
+                TokenKind::Word,
+                TokenKind::Eof,
+            ],
+            "digit-space-greater must NOT be an fd redirect",
         );
     }
 

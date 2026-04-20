@@ -632,8 +632,13 @@ impl<'a> Parser<'a> {
                 parts.push(WordPart::SingleQuoted(inner));
             }
             TokenKind::DoubleQuoted | TokenKind::DollarSingleQuoted => {
+                // Wrap in WordPart::DoubleQuoted so the expansion engine
+                // can distinguish `"$x"` from `$x` — quoted empties
+                // must be preserved as one arg (`[ -n "" ]` = 3 args)
+                // while unquoted unset expansion collapses. Stripping
+                // the wrapper would lose that provenance.
                 let inner = strip_quotes(&tok.text, '"');
-                parts.extend(parse_double_quoted_parts(&inner));
+                parts.push(WordPart::DoubleQuoted(parse_double_quoted_parts(&inner)));
             }
             TokenKind::Dollar => {
                 // $VAR — the next token should be the variable name
@@ -876,8 +881,10 @@ impl<'a> Parser<'a> {
                     parts.push(WordPart::SingleQuoted(inner));
                 }
                 TokenKind::DoubleQuoted | TokenKind::DollarSingleQuoted => {
+                    // See matching comment above — wrap, don't flatten,
+                    // so quoted-empty preservation survives expansion.
                     let inner = strip_quotes(&next.text, '"');
-                    parts.extend(parse_double_quoted_parts(&inner));
+                    parts.push(WordPart::DoubleQuoted(parse_double_quoted_parts(&inner)));
                 }
                 _ => {
                     parts.push(WordPart::Literal(next.text.clone()));
@@ -1902,13 +1909,33 @@ mod tests {
         let p = parse(r#"echo "hello $name""#);
         let cmd = first_simple(&p);
         assert_eq!(cmd.words.len(), 2);
+        // The whole `"hello $name"` is one DoubleQuoted part whose
+        // inner list carries the literal + DollarVar. Preserving the
+        // wrapper lets the expander distinguish quoted from unquoted
+        // so `[ -n "" ]` keeps three arguments.
         let parts = &cmd.words[1].parts;
-        // Should contain at least a literal and a DollarVar
-        assert!(
-            parts
-                .iter()
-                .any(|p| matches!(p, WordPart::DollarVar(n) if n.as_str() == "name"))
+        assert_eq!(
+            parts.len(),
+            1,
+            "outer word should have one DoubleQuoted part"
         );
+        match &parts[0] {
+            WordPart::DoubleQuoted(inner) => {
+                assert!(
+                    inner
+                        .iter()
+                        .any(|p| matches!(p, WordPart::Literal(s) if s.contains("hello"))),
+                    "inner should carry the literal",
+                );
+                assert!(
+                    inner
+                        .iter()
+                        .any(|p| matches!(p, WordPart::DollarVar(n) if n.as_str() == "name")),
+                    "inner should carry the DollarVar",
+                );
+            }
+            other => panic!("expected DoubleQuoted wrapper, got {other:?}"),
+        }
     }
 
     #[test]
