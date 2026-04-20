@@ -120,6 +120,90 @@ enum PickerOutcome {
     Splice { text: String, submit: bool },
 }
 
+/// Widget dispatch — `__frost_widget_<name>__` sentinels rc-authored
+/// via `(defbind :key "X" :action "__frost_widget_<name>__")`. Each
+/// widget is a built-in edit-buffer operation — edit-line spawns
+/// `$EDITOR` on the current buffer, clear-screen repaints, etc. The
+/// sentinel is the full string including leading/trailing `__`.
+fn dispatch_widget(sentinel: &str, zle: &mut frost_zle::ZleEngine) {
+    let Some(name) = sentinel
+        .strip_prefix("__frost_widget_")
+        .and_then(|s| s.strip_suffix("__"))
+    else {
+        return;
+    };
+    match name {
+        "edit_line" | "edit-line" => widget_edit_line(zle),
+        "clear" | "clear-screen" => {
+            // Reedline handles Ctrl-L natively, but exposing it as
+            // a widget means users can bind any chord to "clear".
+            print!("\x1b[2J\x1b[H");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+        }
+        _ => {
+            eprintln!("frost: unknown widget: {name}");
+        }
+    }
+}
+
+/// edit-line widget (emacs/zsh/bash C-x e parity): write the current
+/// edit buffer to a tempfile, spawn `$EDITOR` on it, and when the
+/// editor exits, splice the edited contents back into the next
+/// read_line via `inject_prefill`. Trailing newlines trimmed so a
+/// `:wq` in vim doesn't drop a stray Enter into the buffer.
+fn widget_edit_line(zle: &mut frost_zle::ZleEngine) {
+    use std::io::Write;
+    let buffer = zle.current_buffer_contents().unwrap_or_default();
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| "vi".to_string());
+
+    // Tempfile — `.frost-edit-line-<pid>.sh` in the system temp dir.
+    // Deletion best-effort on exit (editor may be interrupted).
+    let path = std::env::temp_dir().join(format!(
+        "frost-edit-line-{}.sh",
+        std::process::id()
+    ));
+    {
+        let Ok(mut f) = std::fs::File::create(&path) else {
+            eprintln!("frost: edit-line: cannot create {}", path.display());
+            return;
+        };
+        let _ = f.write_all(buffer.as_bytes());
+    }
+
+    // Run editor, letting it own the terminal. `.sh` extension hints
+    // syntax-highlighting to most editors. Parse editor into argv so
+    // `$EDITOR="nvim --clean"` works.
+    let argv: Vec<String> = editor
+        .split_whitespace()
+        .map(String::from)
+        .collect();
+    let Some((bin, rest)) = argv.split_first() else {
+        eprintln!("frost: edit-line: EDITOR is empty");
+        let _ = std::fs::remove_file(&path);
+        return;
+    };
+    let status = std::process::Command::new(bin)
+        .args(rest)
+        .arg(&path)
+        .status();
+    if !status.map(|s| s.success()).unwrap_or(false) {
+        // Editor errored or was canceled — keep the previous
+        // buffer by not injecting anything. Clean up tempfile.
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+
+    // Slurp the edited contents. If the editor wrote anything, that's
+    // the new buffer; trim trailing \n because editors like vim
+    // append one on save.
+    let edited = std::fs::read_to_string(&path).unwrap_or_default();
+    let _ = std::fs::remove_file(&path);
+    let trimmed = edited.trim_end_matches('\n').to_string();
+    zle.inject_prefill(&trimmed);
+}
+
 /// Read one additional keystroke after a `__frost_chord_prefix_*__`
 /// sentinel fires and format it as a chord string matching the rc's
 /// `(defbind :key "C-x e" …)` second-chord spelling. Briefly
@@ -701,9 +785,10 @@ fn interactive(
                 // Multi-key chord prefix sentinel (`__frost_chord_prefix_C-x__`)
                 // — reedline fired the first chord; we read one more
                 // keystroke via crossterm, format it as a chord string,
-                // look up (first, second) in rc_multi_key, and invoke
-                // the stored continuation function via the normal run
-                // path. No-match or non-key event falls through silently.
+                // look up (first, second) in rc_multi_key, and either
+                // dispatch to a widget (if the stored action is a
+                // widget sentinel) or invoke the stored continuation
+                // function via the normal run path.
                 if let Some(first_chord) = trimmed
                     .strip_prefix("__frost_chord_prefix_")
                     .and_then(|s| s.strip_suffix("__"))
@@ -712,17 +797,30 @@ fn interactive(
                         let found = rc_multi_key.iter().find(|(p, r, _)| {
                             p == first_chord && *r == second_chord
                         });
-                        if let Some((_, _, fn_name)) = found {
-                            let fn_name = fn_name.clone();
-                            match run(&fn_name, env) {
-                                RunOutcome::Completed(_) => {}
-                                RunOutcome::Exit(code) => {
-                                    run_exit_trap(env);
-                                    std::process::exit(code);
+                        if let Some((_, _, stored)) = found {
+                            let stored = stored.clone();
+                            if frost_lisp::is_widget_action(&stored) {
+                                dispatch_widget(&stored, &mut zle);
+                            } else {
+                                match run(&stored, env) {
+                                    RunOutcome::Completed(_) => {}
+                                    RunOutcome::Exit(code) => {
+                                        run_exit_trap(env);
+                                        std::process::exit(code);
+                                    }
                                 }
                             }
                         }
                     }
+                    continue;
+                }
+
+                // Single-chord widget sentinels (`__frost_widget_<name>__`)
+                // from a `(defbind :key "C-l" :action "__frost_widget_clear__")`.
+                // Intercept BEFORE the picker / sentinel passes since widget
+                // names share the sentinel namespace with them.
+                if frost_lisp::is_widget_action(trimmed) {
+                    dispatch_widget(trimmed, &mut zle);
                     continue;
                 }
 
