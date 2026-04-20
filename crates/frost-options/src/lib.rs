@@ -251,8 +251,7 @@ impl Options {
     /// Check if a name represents a negated option (starts with "no").
     pub fn is_negated(name: &str) -> bool {
         let normalized = normalize_option_name(name);
-        normalized.starts_with("no")
-            && Self::from_name(&normalized[2..]).is_some()
+        normalized.starts_with("no") && Self::from_name(&normalized[2..]).is_some()
     }
 }
 

@@ -27,7 +27,7 @@ use reedline::{Completer, Span, Suggestion};
 mod forge;
 mod tree;
 pub use forge::{
-    emit_lisp, parse_fish, parse_skim_yaml, parse_zsh_compdef, ForgeError, ForgeOutput,
+    ForgeError, ForgeOutput, emit_lisp, parse_fish, parse_skim_yaml, parse_zsh_compdef,
 };
 pub use tree::{CompletionNode, CompletionTree, FlagNode, PositNode};
 // Re-export the Lisp-side spec types so consumers don't need a direct
@@ -89,11 +89,7 @@ impl FrostCompleter {
     /// for the completer to be useful even if the caller hasn't plumbed
     /// through the real `BuiltinRegistry`.
     pub fn with_default_builtins() -> Self {
-        Self::new(
-            default_builtin_list()
-                .iter()
-                .map(|s| (*s).to_string()),
-        )
+        Self::new(default_builtin_list().iter().map(|s| (*s).to_string()))
     }
 
     /// Replace the rc-authored per-command argument completion map.
@@ -115,7 +111,10 @@ impl FrostCompleter {
 impl Completer for FrostCompleter {
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
         let ctx = current_word(line, pos);
-        let span = Span { start: ctx.word_start, end: pos };
+        let span = Span {
+            start: ctx.word_start,
+            end: pos,
+        };
 
         // Command-name position: list builtins + aliases + functions +
         // PATH executables matching the prefix, with per-command
@@ -161,11 +160,7 @@ impl Completer for FrostCompleter {
         let mut out: Vec<String> = Vec::new();
         if let Some(cmd_name) = first_word(line) {
             if let Some(args) = self.arg_completions.get(cmd_name) {
-                out.extend(
-                    args.iter()
-                        .filter(|a| a.starts_with(&ctx.word))
-                        .cloned(),
-                );
+                out.extend(args.iter().filter(|a| a.starts_with(&ctx.word)).cloned());
             }
         }
         out.extend(filename_candidates(&ctx.word));
@@ -347,16 +342,81 @@ fn value_kind_candidates(kind: &ValueKind, prefix: &str, span: Span) -> Vec<Sugg
 /// with the full registry.
 pub fn default_builtin_list() -> &'static [&'static str] {
     &[
-        "alias", "bg", "bindkey", "break", "builtin", "case", "cd", "command",
-        "continue", "declare", "dirs", "disable", "do", "done", "echo", "elif",
-        "else", "enable", "esac", "eval", "exec", "exit", "export", "false",
-        "fc", "fg", "fi", "for", "function", "getopts", "hash", "help",
-        "history", "if", "in", "integer", "jobs", "kill", "let", "local",
-        "popd", "printf", "pushd", "pwd", "read", "readonly", "return",
-        "select", "set", "setopt", "shift", "source", "suspend", "test",
-        "then", "time", "times", "trap", "true", "type", "typeset", "ulimit",
-        "umask", "unalias", "unfunction", "unhash", "unset", "unsetopt",
-        "until", "wait", "whence", "which", "while", "zmodload", "zstyle",
+        "alias",
+        "bg",
+        "bindkey",
+        "break",
+        "builtin",
+        "case",
+        "cd",
+        "command",
+        "continue",
+        "declare",
+        "dirs",
+        "disable",
+        "do",
+        "done",
+        "echo",
+        "elif",
+        "else",
+        "enable",
+        "esac",
+        "eval",
+        "exec",
+        "exit",
+        "export",
+        "false",
+        "fc",
+        "fg",
+        "fi",
+        "for",
+        "function",
+        "getopts",
+        "hash",
+        "help",
+        "history",
+        "if",
+        "in",
+        "integer",
+        "jobs",
+        "kill",
+        "let",
+        "local",
+        "popd",
+        "printf",
+        "pushd",
+        "pwd",
+        "read",
+        "readonly",
+        "return",
+        "select",
+        "set",
+        "setopt",
+        "shift",
+        "source",
+        "suspend",
+        "test",
+        "then",
+        "time",
+        "times",
+        "trap",
+        "true",
+        "type",
+        "typeset",
+        "ulimit",
+        "umask",
+        "unalias",
+        "unfunction",
+        "unhash",
+        "unset",
+        "unsetopt",
+        "until",
+        "wait",
+        "whence",
+        "which",
+        "while",
+        "zmodload",
+        "zstyle",
     ]
 }
 
@@ -379,8 +439,14 @@ struct WordContext<'a> {
 /// completing arguments for — crude but matches zsh's default.
 fn first_word(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
-    let end = trimmed.find(|c: char| c.is_whitespace()).unwrap_or(trimmed.len());
-    if end == 0 { None } else { Some(&trimmed[..end]) }
+    let end = trimmed
+        .find(|c: char| c.is_whitespace())
+        .unwrap_or(trimmed.len());
+    if end == 0 {
+        None
+    } else {
+        Some(&trimmed[..end])
+    }
 }
 
 fn current_word(line: &str, pos: usize) -> WordContext<'_> {
@@ -392,7 +458,10 @@ fn current_word(line: &str, pos: usize) -> WordContext<'_> {
     let mut start = end;
     while start > 0 {
         let b = bytes[start - 1];
-        if matches!(b, b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'<' | b'>' | b'(' | b')') {
+        if matches!(
+            b,
+            b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'<' | b'>' | b'(' | b')'
+        ) {
             break;
         }
         start -= 1;
@@ -410,8 +479,8 @@ fn current_word(line: &str, pos: usize) -> WordContext<'_> {
         }
         break;
     }
-    let is_command_position = i == 0
-        || matches!(bytes[i - 1], b';' | b'|' | b'&' | b'\n' | b'(' | b'{');
+    let is_command_position =
+        i == 0 || matches!(bytes[i - 1], b';' | b'|' | b'&' | b'\n' | b'(' | b'{');
 
     WordContext {
         word: line[start..end].to_string(),
@@ -431,7 +500,9 @@ fn command_candidates(builtins: &[String], partial: &str) -> Vec<String> {
     if let Ok(path) = std::env::var("PATH") {
         for dir in path.split(':').filter(|p| !p.is_empty()) {
             let d = Path::new(dir);
-            let Ok(entries) = std::fs::read_dir(d) else { continue };
+            let Ok(entries) = std::fs::read_dir(d) else {
+                continue;
+            };
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();
@@ -558,9 +629,18 @@ mod tests {
 
     #[test]
     fn split_dir_and_prefix_basic() {
-        assert_eq!(split_dir_and_prefix("src/li"), ("src/".to_string(), "li".to_string()));
-        assert_eq!(split_dir_and_prefix("file"), (String::new(), "file".to_string()));
-        assert_eq!(split_dir_and_prefix("/etc/"), ("/etc/".to_string(), String::new()));
+        assert_eq!(
+            split_dir_and_prefix("src/li"),
+            ("src/".to_string(), "li".to_string())
+        );
+        assert_eq!(
+            split_dir_and_prefix("file"),
+            (String::new(), "file".to_string())
+        );
+        assert_eq!(
+            split_dir_and_prefix("/etc/"),
+            ("/etc/".to_string(), String::new())
+        );
     }
 
     #[test]

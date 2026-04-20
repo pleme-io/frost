@@ -53,7 +53,7 @@ mod tests {
         assert!(!is_widget_action("__frost_picker_history__"));
         assert!(!is_widget_action("echo hi"));
         assert!(!is_widget_action(""));
-        assert!(!is_widget_action("__frost_widget_edit_line"));  // no trailing __
+        assert!(!is_widget_action("__frost_widget_edit_line")); // no trailing __
     }
 
     #[test]

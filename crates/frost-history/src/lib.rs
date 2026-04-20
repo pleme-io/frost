@@ -50,7 +50,10 @@ pub struct History {
 impl History {
     /// Empty in-memory history.
     pub fn new() -> Self {
-        Self { entries: Vec::new(), backing: None }
+        Self {
+            entries: Vec::new(),
+            backing: None,
+        }
     }
 
     /// Load a history file. Missing files are treated as empty (not an
@@ -62,26 +65,41 @@ impl History {
             let content = std::fs::read_to_string(&backing)?;
             for line in content.lines() {
                 let trimmed = line.trim_end();
-                if !trimmed.is_empty() { entries.push(trimmed.to_string()); }
+                if !trimmed.is_empty() {
+                    entries.push(trimmed.to_string());
+                }
             }
         }
-        Ok(Self { entries, backing: Some(backing) })
+        Ok(Self {
+            entries,
+            backing: Some(backing),
+        })
     }
 
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
-    pub fn entries(&self) -> &[String] { &self.entries }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    pub fn entries(&self) -> &[String] {
+        &self.entries
+    }
 
     /// Append a command and, if file-backed, persist it eagerly so a
     /// crashed shell still leaves a complete trail.
     pub fn push(&mut self, line: impl Into<String>) -> HistoryResult<()> {
         let line = line.into();
-        if line.trim().is_empty() { return Ok(()); }
+        if line.trim().is_empty() {
+            return Ok(());
+        }
         self.entries.push(line.clone());
         if let Some(path) = &self.backing {
             use std::io::Write;
             let mut f = std::fs::OpenOptions::new()
-                .create(true).append(true).open(path)?;
+                .create(true)
+                .append(true)
+                .open(path)?;
             writeln!(f, "{line}")?;
         }
         Ok(())
@@ -107,17 +125,27 @@ impl History {
 
     /// Most recent command starting with `prefix`.
     pub fn find_prefix(&self, prefix: &str) -> Option<&str> {
-        self.entries.iter().rev().find(|e| e.starts_with(prefix)).map(String::as_str)
+        self.entries
+            .iter()
+            .rev()
+            .find(|e| e.starts_with(prefix))
+            .map(String::as_str)
     }
 
     /// Most recent command containing `needle`.
     pub fn find_contains(&self, needle: &str) -> Option<&str> {
-        self.entries.iter().rev().find(|e| e.contains(needle)).map(String::as_str)
+        self.entries
+            .iter()
+            .rev()
+            .find(|e| e.contains(needle))
+            .map(String::as_str)
     }
 }
 
 impl Default for History {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Expand `!` references in `input` against `history`. Returns
@@ -145,7 +173,9 @@ pub fn expand(input: &str, history: &History) -> HistoryResult<(String, bool)> {
         let c = bytes[i];
         if in_single {
             out.push(c as char);
-            if c == b'\'' { in_single = false; }
+            if c == b'\'' {
+                in_single = false;
+            }
             i += 1;
             continue;
         }
@@ -162,7 +192,11 @@ pub fn expand(input: &str, history: &History) -> HistoryResult<(String, bool)> {
             i += 2;
             continue;
         }
-        if c != b'!' { out.push(c as char); i += 1; continue; }
+        if c != b'!' {
+            out.push(c as char);
+            i += 1;
+            continue;
+        }
 
         // We're at a `!`. zsh's rule: `!` followed by whitespace, `=`, or
         // `(` is literal. Otherwise it's a history ref.
@@ -195,19 +229,27 @@ pub fn expand(input: &str, history: &History) -> HistoryResult<(String, bool)> {
 /// * `Err` — pattern matched but no previous command, or the `old` text
 ///   wasn't found in it.
 fn try_quick_substitution(input: &str, history: &History) -> HistoryResult<Option<String>> {
-    if !input.starts_with('^') { return Ok(None); }
+    if !input.starts_with('^') {
+        return Ok(None);
+    }
     let rest = &input[1..];
-    let Some(mid) = rest.find('^') else { return Ok(None); };
+    let Some(mid) = rest.find('^') else {
+        return Ok(None);
+    };
     let old_txt = &rest[..mid];
-    if old_txt.is_empty() { return Ok(None); }
+    if old_txt.is_empty() {
+        return Ok(None);
+    }
     let tail = &rest[mid + 1..];
     // Trailing `^` is optional. Also accept anything after that second `^`
     // as the new text (ending at another `^` or end-of-input).
     let (new_txt, trailing) = match tail.find('^') {
         Some(i) => (&tail[..i], &tail[i + 1..]),
-        None    => (tail, ""),
+        None => (tail, ""),
     };
-    let prev = history.previous().ok_or_else(|| HistoryError::NoMatch("^".into()))?;
+    let prev = history
+        .previous()
+        .ok_or_else(|| HistoryError::NoMatch("^".into()))?;
     if !prev.contains(old_txt) {
         return Err(HistoryError::NoMatch(format!("^{old_txt}^")));
     }
@@ -236,53 +278,83 @@ fn parse_event(rest: &[u8], history: &History) -> HistoryResult<(String, usize)>
     // `!!`, `!$`, `!^`, `!*` — single-byte event with an implicit word designator.
     match rest.first().copied() {
         Some(b'!') => {
-            let cmd = history.previous().ok_or_else(|| HistoryError::NoMatch("!".into()))?;
+            let cmd = history
+                .previous()
+                .ok_or_else(|| HistoryError::NoMatch("!".into()))?;
             Ok((cmd.to_string(), 1))
         }
         Some(b'$') => {
-            let cmd = history.previous().ok_or_else(|| HistoryError::NoMatch("$".into()))?;
+            let cmd = history
+                .previous()
+                .ok_or_else(|| HistoryError::NoMatch("$".into()))?;
             Ok((last_word(cmd).to_string(), 1))
         }
         Some(b'^') => {
-            let cmd = history.previous().ok_or_else(|| HistoryError::NoMatch("^".into()))?;
+            let cmd = history
+                .previous()
+                .ok_or_else(|| HistoryError::NoMatch("^".into()))?;
             Ok((nth_word(cmd, 1).to_string(), 1))
         }
         Some(b'*') => {
-            let cmd = history.previous().ok_or_else(|| HistoryError::NoMatch("*".into()))?;
+            let cmd = history
+                .previous()
+                .ok_or_else(|| HistoryError::NoMatch("*".into()))?;
             Ok((words_from(cmd, 1).to_string(), 1))
         }
         // Numeric `!n` / `!-n`
         Some(b'-') => {
             let mut len = 1usize;
             let digits_start = 1;
-            while rest.get(len).copied().is_some_and(|c| c.is_ascii_digit()) { len += 1; }
-            if len == digits_start { return Err(HistoryError::NoMatch("-".into())); }
+            while rest.get(len).copied().is_some_and(|c| c.is_ascii_digit()) {
+                len += 1;
+            }
+            if len == digits_start {
+                return Err(HistoryError::NoMatch("-".into()));
+            }
             let n: i64 = std::str::from_utf8(&rest[..len]).unwrap().parse().unwrap();
-            let cmd = history.at(n).ok_or_else(|| HistoryError::OutOfRange(n.to_string()))?;
+            let cmd = history
+                .at(n)
+                .ok_or_else(|| HistoryError::OutOfRange(n.to_string()))?;
             Ok((cmd.to_string(), len))
         }
         Some(c) if c.is_ascii_digit() => {
             let mut len = 0usize;
-            while rest.get(len).copied().is_some_and(|c| c.is_ascii_digit()) { len += 1; }
+            while rest.get(len).copied().is_some_and(|c| c.is_ascii_digit()) {
+                len += 1;
+            }
             let n: i64 = std::str::from_utf8(&rest[..len]).unwrap().parse().unwrap();
-            let cmd = history.at(n).ok_or_else(|| HistoryError::OutOfRange(n.to_string()))?;
+            let cmd = history
+                .at(n)
+                .ok_or_else(|| HistoryError::OutOfRange(n.to_string()))?;
             Ok((cmd.to_string(), len))
         }
         // `!?str?` or `!?str` (terminator optional at end of line)
         Some(b'?') => {
             let mut len = 1usize;
-            while len < rest.len() && rest[len] != b'?' && !is_ref_terminator(rest[len]) { len += 1; }
+            while len < rest.len() && rest[len] != b'?' && !is_ref_terminator(rest[len]) {
+                len += 1;
+            }
             let needle = std::str::from_utf8(&rest[1..len]).unwrap_or("").to_string();
-            let consumed = if rest.get(len) == Some(&b'?') { len + 1 } else { len };
-            let cmd = history.find_contains(&needle).ok_or_else(|| HistoryError::NoMatch(format!("?{needle}?")))?;
+            let consumed = if rest.get(len) == Some(&b'?') {
+                len + 1
+            } else {
+                len
+            };
+            let cmd = history
+                .find_contains(&needle)
+                .ok_or_else(|| HistoryError::NoMatch(format!("?{needle}?")))?;
             Ok((cmd.to_string(), consumed))
         }
         // `!str` — prefix search
         Some(_) => {
             let mut len = 0usize;
-            while len < rest.len() && !is_ref_terminator(rest[len]) { len += 1; }
+            while len < rest.len() && !is_ref_terminator(rest[len]) {
+                len += 1;
+            }
             let prefix = std::str::from_utf8(&rest[..len]).unwrap_or("");
-            let cmd = history.find_prefix(prefix).ok_or_else(|| HistoryError::NoMatch(prefix.into()))?;
+            let cmd = history
+                .find_prefix(prefix)
+                .ok_or_else(|| HistoryError::NoMatch(prefix.into()))?;
             Ok((cmd.to_string(), len))
         }
         None => Err(HistoryError::NoMatch(String::new())),
@@ -290,11 +362,16 @@ fn parse_event(rest: &[u8], history: &History) -> HistoryResult<(String, usize)>
 }
 
 fn is_ref_terminator(c: u8) -> bool {
-    matches!(c, b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b':' | b'$' | b'\'' | b'"')
+    matches!(
+        c,
+        b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b':' | b'$' | b'\'' | b'"'
+    )
 }
 
 fn parse_word_designator(tail: &[u8]) -> (Option<char>, usize) {
-    if tail.first() != Some(&b':') { return (None, 0); }
+    if tail.first() != Some(&b':') {
+        return (None, 0);
+    }
     match tail.get(1).copied() {
         Some(b'$') => (Some('$'), 2),
         Some(b'^') => (Some('^'), 2),
@@ -326,7 +403,9 @@ fn words_from(s: &str, start: usize) -> &str {
     for (i, ch) in s.char_indices() {
         let is_ws = ch.is_whitespace();
         if in_ws && !is_ws {
-            if count == start { return &s[i..]; }
+            if count == start {
+                return &s[i..];
+            }
             count += 1;
             in_ws = false;
         } else if !in_ws && is_ws {
@@ -344,7 +423,9 @@ mod tests {
 
     fn hist(entries: &[&str]) -> History {
         let mut h = History::new();
-        for e in entries { h.push(*e).unwrap(); }
+        for e in entries {
+            h.push(*e).unwrap();
+        }
         h
     }
 
@@ -435,7 +516,10 @@ mod tests {
     #[test]
     fn no_match_errors() {
         let h = hist(&["ls"]);
-        assert!(matches!(expand("!qwerty", &h), Err(HistoryError::NoMatch(_))));
+        assert!(matches!(
+            expand("!qwerty", &h),
+            Err(HistoryError::NoMatch(_))
+        ));
     }
 
     #[test]
@@ -478,7 +562,10 @@ mod tests {
     #[test]
     fn quick_sub_unknown_pattern_errors() {
         let h = hist(&["echo hi"]);
-        assert!(matches!(expand("^xx^yy^", &h), Err(HistoryError::NoMatch(_))));
+        assert!(matches!(
+            expand("^xx^yy^", &h),
+            Err(HistoryError::NoMatch(_))
+        ));
     }
 
     #[test]

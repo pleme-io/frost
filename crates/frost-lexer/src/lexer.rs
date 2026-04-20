@@ -467,9 +467,9 @@ mod tests {
                 TokenKind::Word,
                 TokenKind::Greater,
                 TokenKind::Word,
-                TokenKind::Word,   // 2 as word
+                TokenKind::Word,       // 2 as word
                 TokenKind::AmpGreater, // >& (from the >&)
-                TokenKind::Word,   // 1
+                TokenKind::Word,       // 1
                 TokenKind::Eof,
             ]
         );
@@ -585,7 +585,11 @@ mod tests {
     fn dollar_single_quoted() {
         assert_eq!(
             kinds(r"echo $'\n'"),
-            vec![TokenKind::Word, TokenKind::DollarSingleQuoted, TokenKind::Eof]
+            vec![
+                TokenKind::Word,
+                TokenKind::DollarSingleQuoted,
+                TokenKind::Eof
+            ]
         );
     }
 

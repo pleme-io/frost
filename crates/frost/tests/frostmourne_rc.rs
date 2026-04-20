@@ -21,7 +21,10 @@ fn applies_full_frostmourne_rc_without_panic() {
     // Sanity: the frostmourne rc has 1296+ lines across ~15 files,
     // contributing many forms. A zero-count summary means we dropped
     // everything on the floor silently — which would be the bug.
-    assert!(summary.aliases > 0, "no aliases applied (summary: {summary:?})");
+    assert!(
+        summary.aliases > 0,
+        "no aliases applied (summary: {summary:?})"
+    );
     assert!(summary.hooks > 0, "no hooks applied (summary: {summary:?})");
     assert!(
         summary.subcmds.len() > 100,
@@ -37,7 +40,7 @@ fn every_rc_chord_classifies_as_a_known_category() {
     // we actually care about: the rc never produces an Invalid
     // chord silently (typo that slipped in), AND at least some
     // single-key chords are applied (so picker keybindings fire).
-    use frost_zle::{classify_chord, ParsedChord};
+    use frost_zle::{ParsedChord, classify_chord};
 
     let mut env = frost_exec::ShellEnv::new();
     let summary = frost_lisp::apply_source(FIXTURE, &mut env).unwrap();
@@ -81,8 +84,11 @@ fn with_bindings_applies_rc_bindings_without_stderr_spam() {
     let mut env = frost_exec::ShellEnv::new();
     let summary = frost_lisp::apply_source(FIXTURE, &mut env).unwrap();
     let zle = frost_zle::ZleEngine::in_memory().with_bindings(summary.bind_map.clone());
-    assert_eq!(zle.custom_bindings_count(), summary.bind_map.len(),
-        "custom_bindings should mirror the rc's bind_map 1:1");
+    assert_eq!(
+        zle.custom_bindings_count(),
+        summary.bind_map.len(),
+        "custom_bindings should mirror the rc's bind_map 1:1"
+    );
 }
 
 #[test]
@@ -114,7 +120,11 @@ fn every_registered_hook_parses_as_shell() {
     // function table for every known hook exists after apply.
     let mut env = frost_exec::ShellEnv::new();
     frost_lisp::apply_source(FIXTURE, &mut env).unwrap();
-    for name in ["__frost_hook_precmd", "__frost_hook_preexec", "__frost_hook_chpwd"] {
+    for name in [
+        "__frost_hook_precmd",
+        "__frost_hook_preexec",
+        "__frost_hook_chpwd",
+    ] {
         if env.functions.contains_key(name) {
             // Having the function means parse succeeded (apply would
             // panic inside install_body_as_function otherwise).
@@ -323,8 +333,9 @@ fn regeneration_yields_same_fixture() {
     // This test is informational only (skipped on CI if the path
     // doesn't exist — the frostmourne source may not be checked
     // out next to frost).
-    let candidate =
-        Path::new("/Users/drzzln/code/github/pleme-io/frostmourne/result/share/frostmourne/rc.lisp");
+    let candidate = Path::new(
+        "/Users/drzzln/code/github/pleme-io/frostmourne/result/share/frostmourne/rc.lisp",
+    );
     if !candidate.exists() {
         // The frostmourne result symlink only exists on the author's
         // machine after `nix build .#rc`; skip elsewhere.

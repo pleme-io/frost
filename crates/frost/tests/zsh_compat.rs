@@ -38,23 +38,74 @@ fn exit_code(cmd: &str) -> i32 {
 mod a01_grammar {
     use super::*;
 
-    #[test] fn semicolons_separate_commands() { assert_eq!(stdout("echo a; echo b"), "a\nb\n"); }
-    #[test] fn newlines_separate_commands() { assert_eq!(stdout("echo a\necho b"), "a\nb\n"); }
-    #[test] fn pipe_connects_stdout() { assert_eq!(stdout("echo hello | cat"), "hello\n"); }
-    #[test] fn multi_pipe() { assert_eq!(stdout("echo abc | cat | cat"), "abc\n"); }
-    #[test] fn and_list_both_succeed() { assert_eq!(stdout("true && echo yes"), "yes\n"); }
-    #[test] fn and_list_short_circuits() { assert_eq!(stdout("false && echo no"), ""); }
-    #[test] fn or_list_fallback() { assert_eq!(stdout("false || echo fb"), "fb\n"); }
-    #[test] fn or_list_no_fallback() { assert_eq!(stdout("true || echo no"), ""); }
-    #[test] fn mixed_and_or() { assert_eq!(stdout("true && echo a || echo b"), "a\n"); }
-    #[test] fn mixed_and_or_fail() { assert_eq!(stdout("false && echo a || echo b"), "b\n"); }
-    #[test] fn background_exits_zero() { assert_eq!(exit_code("sleep 0 &"), 0); }
-    #[test] fn bang_inverts_true() { assert_eq!(exit_code("! true"), 1); }
-    #[test] fn bang_inverts_false() { assert_eq!(exit_code("! false"), 0); }
-    #[test] fn subshell_basic() { assert_eq!(stdout("(echo sub)"), "sub\n"); }
-    #[test] fn brace_group() { assert_eq!(stdout("{ echo braced; }"), "braced\n"); }
-    #[test] fn empty_command() { assert_eq!(exit_code(""), 0); }
-    #[test] fn trailing_semicolon() { assert_eq!(stdout("echo a;"), "a\n"); }
+    #[test]
+    fn semicolons_separate_commands() {
+        assert_eq!(stdout("echo a; echo b"), "a\nb\n");
+    }
+    #[test]
+    fn newlines_separate_commands() {
+        assert_eq!(stdout("echo a\necho b"), "a\nb\n");
+    }
+    #[test]
+    fn pipe_connects_stdout() {
+        assert_eq!(stdout("echo hello | cat"), "hello\n");
+    }
+    #[test]
+    fn multi_pipe() {
+        assert_eq!(stdout("echo abc | cat | cat"), "abc\n");
+    }
+    #[test]
+    fn and_list_both_succeed() {
+        assert_eq!(stdout("true && echo yes"), "yes\n");
+    }
+    #[test]
+    fn and_list_short_circuits() {
+        assert_eq!(stdout("false && echo no"), "");
+    }
+    #[test]
+    fn or_list_fallback() {
+        assert_eq!(stdout("false || echo fb"), "fb\n");
+    }
+    #[test]
+    fn or_list_no_fallback() {
+        assert_eq!(stdout("true || echo no"), "");
+    }
+    #[test]
+    fn mixed_and_or() {
+        assert_eq!(stdout("true && echo a || echo b"), "a\n");
+    }
+    #[test]
+    fn mixed_and_or_fail() {
+        assert_eq!(stdout("false && echo a || echo b"), "b\n");
+    }
+    #[test]
+    fn background_exits_zero() {
+        assert_eq!(exit_code("sleep 0 &"), 0);
+    }
+    #[test]
+    fn bang_inverts_true() {
+        assert_eq!(exit_code("! true"), 1);
+    }
+    #[test]
+    fn bang_inverts_false() {
+        assert_eq!(exit_code("! false"), 0);
+    }
+    #[test]
+    fn subshell_basic() {
+        assert_eq!(stdout("(echo sub)"), "sub\n");
+    }
+    #[test]
+    fn brace_group() {
+        assert_eq!(stdout("{ echo braced; }"), "braced\n");
+    }
+    #[test]
+    fn empty_command() {
+        assert_eq!(exit_code(""), 0);
+    }
+    #[test]
+    fn trailing_semicolon() {
+        assert_eq!(stdout("echo a;"), "a\n");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -63,9 +114,16 @@ mod a01_grammar {
 mod a03_quoting {
     use super::*;
 
-    #[test] fn single_quote_preserves() { assert_eq!(stdout("echo 'hello world'"), "hello world\n"); }
-    #[test] fn double_quote_preserves_spaces() { assert_eq!(stdout(r#"echo "hello   world""#), "hello   world\n"); }
-    #[test] fn double_quote_expands_var() {
+    #[test]
+    fn single_quote_preserves() {
+        assert_eq!(stdout("echo 'hello world'"), "hello world\n");
+    }
+    #[test]
+    fn double_quote_preserves_spaces() {
+        assert_eq!(stdout(r#"echo "hello   world""#), "hello   world\n");
+    }
+    #[test]
+    fn double_quote_expands_var() {
         assert_eq!(stdout(r#"FOO=test; echo "$FOO""#), "test\n");
     }
 }
@@ -119,13 +177,20 @@ mod a04_redirect {
 mod a05_execution {
     use super::*;
 
-    #[test] fn external_command() { assert_eq!(stdout("/bin/echo ext"), "ext\n"); }
-    #[test] fn path_lookup() {
+    #[test]
+    fn external_command() {
+        assert_eq!(stdout("/bin/echo ext"), "ext\n");
+    }
+    #[test]
+    fn path_lookup() {
         // echo is a builtin but /bin/echo should also work via PATH
         let out = stdout("/bin/echo found");
         assert_eq!(out, "found\n");
     }
-    #[test] fn exit_code_127_for_missing() { assert_eq!(exit_code("nonexistent_cmd_xyz"), 127); }
+    #[test]
+    fn exit_code_127_for_missing() {
+        assert_eq!(exit_code("nonexistent_cmd_xyz"), 127);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -134,17 +199,26 @@ mod a05_execution {
 mod a06_assign {
     use super::*;
 
-    #[test] fn simple_assign_and_echo() { assert_eq!(stdout("X=hello; echo $X"), "hello\n"); }
-    #[test] fn assign_empty() { assert_eq!(stdout("X=; echo \"[$X]\""), "[]\n"); }
-    #[test] fn multiple_assign() {
+    #[test]
+    fn simple_assign_and_echo() {
+        assert_eq!(stdout("X=hello; echo $X"), "hello\n");
+    }
+    #[test]
+    fn assign_empty() {
+        assert_eq!(stdout("X=; echo \"[$X]\""), "[]\n");
+    }
+    #[test]
+    fn multiple_assign() {
         assert_eq!(stdout("A=1; B=2; echo $A $B"), "1 2\n");
     }
-    #[test] fn assign_before_command() {
+    #[test]
+    fn assign_before_command() {
         // Assignment before command sets var for that command's environment
         // In frost, this sets the var in the shell (simplified)
         assert_eq!(exit_code("FOO=bar echo test"), 0);
     }
-    #[test] fn export_makes_visible() {
+    #[test]
+    fn export_makes_visible() {
         assert_eq!(stdout("export V=visible; echo $V"), "visible\n");
     }
 }
@@ -155,10 +229,20 @@ mod a06_assign {
 mod b01_cd {
     use super::*;
 
-    #[test] fn cd_home() { assert_eq!(exit_code("cd ~"), 0); }
-    #[test] fn cd_root() { assert_eq!(exit_code("cd /"), 0); }
-    #[test] fn cd_nonexistent() { assert_ne!(exit_code("cd /nonexistent_dir_xyz"), 0); }
-    #[test] fn cd_updates_pwd() {
+    #[test]
+    fn cd_home() {
+        assert_eq!(exit_code("cd ~"), 0);
+    }
+    #[test]
+    fn cd_root() {
+        assert_eq!(exit_code("cd /"), 0);
+    }
+    #[test]
+    fn cd_nonexistent() {
+        assert_ne!(exit_code("cd /nonexistent_dir_xyz"), 0);
+    }
+    #[test]
+    fn cd_updates_pwd() {
         assert_eq!(stdout("cd /tmp; echo $PWD"), "/tmp\n");
     }
 }
@@ -169,11 +253,26 @@ mod b01_cd {
 mod b03_echo {
     use super::*;
 
-    #[test] fn echo_no_args() { assert_eq!(stdout("echo"), "\n"); }
-    #[test] fn echo_multiple() { assert_eq!(stdout("echo a b c"), "a b c\n"); }
-    #[test] fn echo_n_flag() { assert_eq!(stdout("echo -n hello"), "hello"); }
-    #[test] fn echo_e_newline() { assert_eq!(stdout("echo -e 'a\\nb'"), "a\nb\n"); }
-    #[test] fn echo_e_tab() { assert_eq!(stdout("echo -e 'a\\tb'"), "a\tb\n"); }
+    #[test]
+    fn echo_no_args() {
+        assert_eq!(stdout("echo"), "\n");
+    }
+    #[test]
+    fn echo_multiple() {
+        assert_eq!(stdout("echo a b c"), "a b c\n");
+    }
+    #[test]
+    fn echo_n_flag() {
+        assert_eq!(stdout("echo -n hello"), "hello");
+    }
+    #[test]
+    fn echo_e_newline() {
+        assert_eq!(stdout("echo -e 'a\\nb'"), "a\nb\n");
+    }
+    #[test]
+    fn echo_e_tab() {
+        assert_eq!(stdout("echo -e 'a\\tb'"), "a\tb\n");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -183,7 +282,8 @@ mod c01_arith {
     use super::*;
 
     // These test arithmetic via variable expansion
-    #[test] fn arith_addition() {
+    #[test]
+    fn arith_addition() {
         assert_eq!(stdout("X=3; Y=4; echo $X"), "3\n");
     }
 }
@@ -194,26 +294,46 @@ mod c01_arith {
 mod c03_control {
     use super::*;
 
-    #[test] fn if_true_then() { assert_eq!(stdout("if true; then echo yes; fi"), "yes\n"); }
-    #[test] fn if_false_else() { assert_eq!(stdout("if false; then echo no; else echo yes; fi"), "yes\n"); }
-    #[test] fn if_elif() {
+    #[test]
+    fn if_true_then() {
+        assert_eq!(stdout("if true; then echo yes; fi"), "yes\n");
+    }
+    #[test]
+    fn if_false_else() {
+        assert_eq!(stdout("if false; then echo no; else echo yes; fi"), "yes\n");
+    }
+    #[test]
+    fn if_elif() {
         assert_eq!(
             stdout("if false; then echo 1; elif true; then echo 2; else echo 3; fi"),
             "2\n"
         );
     }
-    #[test] fn for_loop() { assert_eq!(stdout("for x in a b c; do echo $x; done"), "a\nb\nc\n"); }
-    #[test] fn while_loop() {
+    #[test]
+    fn for_loop() {
+        assert_eq!(stdout("for x in a b c; do echo $x; done"), "a\nb\nc\n");
+    }
+    #[test]
+    fn while_loop() {
         // Use a counter via external commands
         assert_eq!(exit_code("while false; do echo loop; done"), 0);
     }
-    #[test] fn case_match() {
-        assert_eq!(stdout("case hello in\nhello) echo matched ;;\n*) echo no ;;\nesac"), "matched\n");
+    #[test]
+    fn case_match() {
+        assert_eq!(
+            stdout("case hello in\nhello) echo matched ;;\n*) echo no ;;\nesac"),
+            "matched\n"
+        );
     }
-    #[test] fn case_wildcard() {
-        assert_eq!(stdout("case xyz in\nhello) echo no ;;\n*) echo wildcard ;;\nesac"), "wildcard\n");
+    #[test]
+    fn case_wildcard() {
+        assert_eq!(
+            stdout("case xyz in\nhello) echo no ;;\n*) echo wildcard ;;\nesac"),
+            "wildcard\n"
+        );
     }
-    #[test] fn nested_if() {
+    #[test]
+    fn nested_if() {
         assert_eq!(
             stdout("if true; then if true; then echo nested; fi; fi"),
             "nested\n"
@@ -227,13 +347,16 @@ mod c03_control {
 mod c04_functions {
     use super::*;
 
-    #[test] fn function_keyword() {
+    #[test]
+    fn function_keyword() {
         assert_eq!(stdout("function greet { echo hi; }; greet"), "hi\n");
     }
-    #[test] fn function_parens() {
+    #[test]
+    fn function_parens() {
         assert_eq!(stdout("greet() { echo hi; }; greet"), "hi\n");
     }
-    #[test] fn function_args() {
+    #[test]
+    fn function_args() {
         assert_eq!(stdout("function show { echo $1 $2; }; show a b"), "a b\n");
     }
 }
@@ -244,22 +367,41 @@ mod c04_functions {
 mod d04_parameter {
     use super::*;
 
-    #[test] fn dollar_var() { assert_eq!(stdout("X=hello; echo $X"), "hello\n"); }
-    #[test] fn dollar_brace_var() { assert_eq!(stdout("X=hello; echo ${X}"), "hello\n"); }
-    #[test] fn dollar_question() { assert_eq!(stdout("true; echo $?"), "0\n"); }
-    #[test] fn dollar_question_after_false() { assert_eq!(stdout("false; echo $?"), "1\n"); }
-    #[test] fn dollar_hash() {
+    #[test]
+    fn dollar_var() {
+        assert_eq!(stdout("X=hello; echo $X"), "hello\n");
+    }
+    #[test]
+    fn dollar_brace_var() {
+        assert_eq!(stdout("X=hello; echo ${X}"), "hello\n");
+    }
+    #[test]
+    fn dollar_question() {
+        assert_eq!(stdout("true; echo $?"), "0\n");
+    }
+    #[test]
+    fn dollar_question_after_false() {
+        assert_eq!(stdout("false; echo $?"), "1\n");
+    }
+    #[test]
+    fn dollar_hash() {
         // $# in non-function context = 0 positional params
         assert_eq!(stdout("echo $#"), "0\n");
     }
-    #[test] fn unset_var_empty() { assert_eq!(stdout("echo $UNDEFINED_VAR_XYZ"), "\n"); }
-    #[test] fn var_in_double_quotes() {
+    #[test]
+    fn unset_var_empty() {
+        assert_eq!(stdout("echo $UNDEFINED_VAR_XYZ"), "\n");
+    }
+    #[test]
+    fn var_in_double_quotes() {
         assert_eq!(stdout(r#"X=world; echo "hello $X""#), "hello world\n");
     }
-    #[test] fn multiple_vars() {
+    #[test]
+    fn multiple_vars() {
         assert_eq!(stdout("A=1; B=2; echo $A$B"), "12\n");
     }
-    #[test] fn var_adjacent_to_text() {
+    #[test]
+    fn var_adjacent_to_text() {
         assert_eq!(stdout(r#"X=foo; echo "${X}bar""#), "foobar\n");
     }
 }
@@ -270,10 +412,23 @@ mod d04_parameter {
 mod d08_cmdsubst {
     use super::*;
 
-    #[test] fn basic_command_sub() { assert_eq!(stdout("echo $(echo hello)"), "hello\n"); }
-    #[test] #[ignore = "needs $() inside double-quoted string parsing"] fn nested_in_string() { assert_eq!(stdout(r#"echo "result: $(echo ok)""#), "result: ok\n"); }
-    #[test] fn captures_exit_code() { assert_eq!(exit_code("X=$(false); echo $?"), 0); }
-    #[test] fn strips_trailing_newlines() { assert_eq!(stdout("echo $(echo hello)"), "hello\n"); }
+    #[test]
+    fn basic_command_sub() {
+        assert_eq!(stdout("echo $(echo hello)"), "hello\n");
+    }
+    #[test]
+    #[ignore = "needs $() inside double-quoted string parsing"]
+    fn nested_in_string() {
+        assert_eq!(stdout(r#"echo "result: $(echo ok)""#), "result: ok\n");
+    }
+    #[test]
+    fn captures_exit_code() {
+        assert_eq!(exit_code("X=$(false); echo $?"), 0);
+    }
+    #[test]
+    fn strips_trailing_newlines() {
+        assert_eq!(stdout("echo $(echo hello)"), "hello\n");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -282,9 +437,18 @@ mod d08_cmdsubst {
 mod b05_eval {
     use super::*;
 
-    #[test] fn eval_simple() { assert_eq!(stdout("eval echo hello"), "hello\n"); }
-    #[test] fn eval_variable() { assert_eq!(stdout("X=world; eval echo $X"), "world\n"); }
-    #[test] fn eval_empty() { assert_eq!(exit_code("eval"), 0); }
+    #[test]
+    fn eval_simple() {
+        assert_eq!(stdout("eval echo hello"), "hello\n");
+    }
+    #[test]
+    fn eval_variable() {
+        assert_eq!(stdout("X=world; eval echo $X"), "world\n");
+    }
+    #[test]
+    fn eval_empty() {
+        assert_eq!(exit_code("eval"), 0);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -293,11 +457,26 @@ mod b05_eval {
 mod b03_print_builtin {
     use super::*;
 
-    #[test] fn print_basic() { assert_eq!(stdout("print hello"), "hello\n"); }
-    #[test] fn print_multiple() { assert_eq!(stdout("print a b c"), "a b c\n"); }
-    #[test] fn print_n() { assert_eq!(stdout("print -n hello"), "hello"); }
-    #[test] fn print_l() { assert_eq!(stdout("print -l a b c"), "a\nb\nc\n"); }
-    #[test] fn print_r() { assert_eq!(stdout(r#"print -r "hello\nworld""#), "hello\\nworld\n"); }
+    #[test]
+    fn print_basic() {
+        assert_eq!(stdout("print hello"), "hello\n");
+    }
+    #[test]
+    fn print_multiple() {
+        assert_eq!(stdout("print a b c"), "a b c\n");
+    }
+    #[test]
+    fn print_n() {
+        assert_eq!(stdout("print -n hello"), "hello");
+    }
+    #[test]
+    fn print_l() {
+        assert_eq!(stdout("print -l a b c"), "a\nb\nc\n");
+    }
+    #[test]
+    fn print_r() {
+        assert_eq!(stdout(r#"print -r "hello\nworld""#), "hello\\nworld\n");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -306,15 +485,42 @@ mod b03_print_builtin {
 mod c02_test {
     use super::*;
 
-    #[test] fn test_true() { assert_eq!(exit_code("test -n hello"), 0); }
-    #[test] fn test_false() { assert_eq!(exit_code("test -z hello"), 1); }
-    #[test] fn test_string_eq() { assert_eq!(exit_code("test a = a"), 0); }
-    #[test] fn test_string_ne() { assert_eq!(exit_code("test a != b"), 0); }
-    #[test] fn test_int_eq() { assert_eq!(exit_code("test 42 -eq 42"), 0); }
-    #[test] fn test_int_lt() { assert_eq!(exit_code("test 1 -lt 2"), 0); }
-    #[test] fn test_dir() { assert_eq!(exit_code("test -d /tmp"), 0); }
-    #[test] fn test_bracket() { assert_eq!(exit_code("[ -d /tmp ]"), 0); }
-    #[test] fn test_negation() { assert_eq!(exit_code("test ! -d /nonexistent"), 0); }
+    #[test]
+    fn test_true() {
+        assert_eq!(exit_code("test -n hello"), 0);
+    }
+    #[test]
+    fn test_false() {
+        assert_eq!(exit_code("test -z hello"), 1);
+    }
+    #[test]
+    fn test_string_eq() {
+        assert_eq!(exit_code("test a = a"), 0);
+    }
+    #[test]
+    fn test_string_ne() {
+        assert_eq!(exit_code("test a != b"), 0);
+    }
+    #[test]
+    fn test_int_eq() {
+        assert_eq!(exit_code("test 42 -eq 42"), 0);
+    }
+    #[test]
+    fn test_int_lt() {
+        assert_eq!(exit_code("test 1 -lt 2"), 0);
+    }
+    #[test]
+    fn test_dir() {
+        assert_eq!(exit_code("test -d /tmp"), 0);
+    }
+    #[test]
+    fn test_bracket() {
+        assert_eq!(exit_code("[ -d /tmp ]"), 0);
+    }
+    #[test]
+    fn test_negation() {
+        assert_eq!(exit_code("test ! -d /nonexistent"), 0);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -323,17 +529,30 @@ mod c02_test {
 mod a07_control_flow {
     use super::*;
 
-    #[test] fn return_from_function() {
-        assert_eq!(stdout("f() { echo before; return; echo after; }; f"), "before\n");
+    #[test]
+    fn return_from_function() {
+        assert_eq!(
+            stdout("f() { echo before; return; echo after; }; f"),
+            "before\n"
+        );
     }
-    #[test] fn return_with_code() {
+    #[test]
+    fn return_with_code() {
         assert_eq!(exit_code("f() { return 42; }; f"), 42);
     }
-    #[test] fn break_in_for() {
-        assert_eq!(stdout("for x in a b c; do if test $x = b; then break; fi; echo $x; done"), "a\n");
+    #[test]
+    fn break_in_for() {
+        assert_eq!(
+            stdout("for x in a b c; do if test $x = b; then break; fi; echo $x; done"),
+            "a\n"
+        );
     }
-    #[test] fn continue_in_for() {
-        assert_eq!(stdout("for x in a b c; do if test $x = b; then continue; fi; echo $x; done"), "a\nc\n");
+    #[test]
+    fn continue_in_for() {
+        assert_eq!(
+            stdout("for x in a b c; do if test $x = b; then continue; fi; echo $x; done"),
+            "a\nc\n"
+        );
     }
 }
 
@@ -343,8 +562,14 @@ mod a07_control_flow {
 mod misc_builtins {
     use super::*;
 
-    #[test] fn colon_returns_zero() { assert_eq!(exit_code(":"), 0); }
-    #[test] fn unset_removes_var() { assert_eq!(stdout("X=hello; unset X; echo $X"), "\n"); }
+    #[test]
+    fn colon_returns_zero() {
+        assert_eq!(exit_code(":"), 0);
+    }
+    #[test]
+    fn unset_removes_var() {
+        assert_eq!(stdout("X=hello; unset X; echo $X"), "\n");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -353,7 +578,8 @@ mod misc_builtins {
 mod d01_tilde {
     use super::*;
 
-    #[test] fn tilde_expands_to_home() {
+    #[test]
+    fn tilde_expands_to_home() {
         let out = stdout("echo ~");
         assert!(!out.trim().is_empty(), "~ should expand to HOME");
         assert!(!out.contains('~'), "~ should be replaced");

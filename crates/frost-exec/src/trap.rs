@@ -241,10 +241,7 @@ mod tests {
 
     #[test]
     fn name_to_number_with_sig_prefix() {
-        assert_eq!(
-            signal_name_to_number("SIGINT"),
-            Some(Signal::SIGINT as i32)
-        );
+        assert_eq!(signal_name_to_number("SIGINT"), Some(Signal::SIGINT as i32));
         assert_eq!(
             signal_name_to_number("SIGTERM"),
             Some(Signal::SIGTERM as i32)
@@ -274,22 +271,10 @@ mod tests {
 
     #[test]
     fn number_to_name_basic() {
-        assert_eq!(
-            signal_number_to_name(Signal::SIGINT as i32),
-            "INT"
-        );
-        assert_eq!(
-            signal_number_to_name(Signal::SIGHUP as i32),
-            "HUP"
-        );
-        assert_eq!(
-            signal_number_to_name(Signal::SIGTERM as i32),
-            "TERM"
-        );
-        assert_eq!(
-            signal_number_to_name(Signal::SIGKILL as i32),
-            "KILL"
-        );
+        assert_eq!(signal_number_to_name(Signal::SIGINT as i32), "INT");
+        assert_eq!(signal_number_to_name(Signal::SIGHUP as i32), "HUP");
+        assert_eq!(signal_number_to_name(Signal::SIGTERM as i32), "TERM");
+        assert_eq!(signal_number_to_name(Signal::SIGKILL as i32), "KILL");
     }
 
     #[test]

@@ -19,10 +19,13 @@ pub struct Break;
 pub struct Continue;
 
 impl Builtin for Return {
-    fn name(&self) -> &str { "return" }
+    fn name(&self) -> &str {
+        "return"
+    }
 
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
-        let code = args.first()
+        let code = args
+            .first()
             .and_then(|s| s.parse::<i32>().ok())
             .unwrap_or_else(|| env.exit_status());
         // Store the return value and signal return via special exit code
@@ -32,10 +35,13 @@ impl Builtin for Return {
 }
 
 impl Builtin for Break {
-    fn name(&self) -> &str { "break" }
+    fn name(&self) -> &str {
+        "break"
+    }
 
     fn execute(&self, args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
-        let levels = args.first()
+        let levels = args
+            .first()
             .and_then(|s| s.parse::<i32>().ok())
             .unwrap_or(1)
             .max(1);
@@ -44,10 +50,13 @@ impl Builtin for Break {
 }
 
 impl Builtin for Continue {
-    fn name(&self) -> &str { "continue" }
+    fn name(&self) -> &str {
+        "continue"
+    }
 
     fn execute(&self, args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
-        let levels = args.first()
+        let levels = args
+            .first()
             .and_then(|s| s.parse::<i32>().ok())
             .unwrap_or(1)
             .max(1);
@@ -59,16 +68,28 @@ impl Builtin for Continue {
 mod tests {
     use super::*;
 
-    struct MockEnv { exit_status: i32 }
+    struct MockEnv {
+        exit_status: i32,
+    }
     impl ShellEnvironment for MockEnv {
-        fn get_var(&self, _: &str) -> Option<&str> { None }
+        fn get_var(&self, _: &str) -> Option<&str> {
+            None
+        }
         fn set_var(&mut self, _: &str, _: &str) {}
         fn export_var(&mut self, _: &str) {}
         fn unset_var(&mut self, _: &str) {}
-        fn exit_status(&self) -> i32 { self.exit_status }
-        fn set_exit_status(&mut self, s: i32) { self.exit_status = s; }
-        fn chdir(&mut self, _: &str) -> Result<(), String> { Ok(()) }
-        fn home_dir(&self) -> Option<&str> { None }
+        fn exit_status(&self) -> i32 {
+            self.exit_status
+        }
+        fn set_exit_status(&mut self, s: i32) {
+            self.exit_status = s;
+        }
+        fn chdir(&mut self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn home_dir(&self) -> Option<&str> {
+            None
+        }
     }
 
     #[test]

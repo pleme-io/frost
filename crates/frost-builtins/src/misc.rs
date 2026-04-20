@@ -6,14 +6,20 @@ use crate::{Builtin, BuiltinAction, BuiltinResult, ShellEnvironment};
 /// : (colon) — do nothing, return 0.
 pub struct Colon;
 impl Builtin for Colon {
-    fn name(&self) -> &str { ":" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        ":"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// shift — shift positional parameters.
 pub struct Shift;
 impl Builtin for Shift {
-    fn name(&self) -> &str { "shift" }
+    fn name(&self) -> &str {
+        "shift"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
         // Signal to executor via special var
@@ -29,14 +35,16 @@ impl Builtin for Shift {
 /// type/whence — identify commands.
 pub struct Type;
 impl Builtin for Type {
-    fn name(&self) -> &str { "type" }
+    fn name(&self) -> &str {
+        "type"
+    }
     fn execute(&self, args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
         for arg in args {
             // Search PATH
             if let Ok(path_var) = std::env::var("PATH") {
-                let found = path_var.split(':').any(|dir| {
-                    std::path::Path::new(dir).join(arg).is_file()
-                });
+                let found = path_var
+                    .split(':')
+                    .any(|dir| std::path::Path::new(dir).join(arg).is_file());
                 if found {
                     println!("{arg} is an external command");
                     continue;
@@ -52,7 +60,9 @@ impl Builtin for Type {
 /// whence — alias for type with different output format.
 pub struct Whence;
 impl Builtin for Whence {
-    fn name(&self) -> &str { "whence" }
+    fn name(&self) -> &str {
+        "whence"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         Type.execute(args, env)
     }
@@ -61,9 +71,13 @@ impl Builtin for Whence {
 /// command — run command bypassing shell functions.
 pub struct CommandBuiltin;
 impl Builtin for CommandBuiltin {
-    fn name(&self) -> &str { "command" }
+    fn name(&self) -> &str {
+        "command"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
-        if args.is_empty() { return 0; }
+        if args.is_empty() {
+            return 0;
+        }
         // Signal to executor to skip function lookup
         env.set_var("__FROST_COMMAND_BYPASS", args[0]);
         0
@@ -73,14 +87,20 @@ impl Builtin for CommandBuiltin {
 /// builtin — run builtin bypassing functions.
 pub struct BuiltinCmd;
 impl Builtin for BuiltinCmd {
-    fn name(&self) -> &str { "builtin" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "builtin"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// alias — define or list aliases.
 pub struct Alias;
 impl Builtin for Alias {
-    fn name(&self) -> &str { "alias" }
+    fn name(&self) -> &str {
+        "alias"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         for arg in args {
             if let Some((name, value)) = arg.split_once('=') {
@@ -107,7 +127,9 @@ impl Builtin for Alias {
 /// unalias — remove aliases.
 pub struct Unalias;
 impl Builtin for Unalias {
-    fn name(&self) -> &str { "unalias" }
+    fn name(&self) -> &str {
+        "unalias"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         for arg in args {
             env.unset_var(&format!("__FROST_ALIAS_{arg}"));
@@ -233,7 +255,9 @@ fn execute_typeset(args: &[&str], env: &mut dyn ShellEnvironment, force_local: b
 /// typeset — declare variables with type/scope attributes.
 pub struct Typeset;
 impl Builtin for Typeset {
-    fn name(&self) -> &str { "typeset" }
+    fn name(&self) -> &str {
+        "typeset"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         execute_typeset(args, env, false)
     }
@@ -242,7 +266,9 @@ impl Builtin for Typeset {
 /// local — declare function-local variables (alias for `typeset`).
 pub struct Local;
 impl Builtin for Local {
-    fn name(&self) -> &str { "local" }
+    fn name(&self) -> &str {
+        "local"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         execute_typeset(args, env, true)
     }
@@ -251,7 +277,9 @@ impl Builtin for Local {
 /// declare — declare variables (alias for `typeset`).
 pub struct Declare;
 impl Builtin for Declare {
-    fn name(&self) -> &str { "declare" }
+    fn name(&self) -> &str {
+        "declare"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         execute_typeset(args, env, false)
     }
@@ -260,7 +288,9 @@ impl Builtin for Declare {
 /// integer — declare integer variable (`typeset -i`).
 pub struct Integer;
 impl Builtin for Integer {
-    fn name(&self) -> &str { "integer" }
+    fn name(&self) -> &str {
+        "integer"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         // Prepend -i to the args
         let mut new_args = vec!["-i"];
@@ -272,7 +302,9 @@ impl Builtin for Integer {
 /// float — declare float variable (`typeset -F`).
 pub struct Float;
 impl Builtin for Float {
-    fn name(&self) -> &str { "float" }
+    fn name(&self) -> &str {
+        "float"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         let mut new_args = vec!["-F"];
         new_args.extend_from_slice(args);
@@ -283,7 +315,9 @@ impl Builtin for Float {
 /// readonly — declare read-only variable (`typeset -r`).
 pub struct Readonly;
 impl Builtin for Readonly {
-    fn name(&self) -> &str { "readonly" }
+    fn name(&self) -> &str {
+        "readonly"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         let mut new_args = vec!["-r"];
         new_args.extend_from_slice(args);
@@ -296,8 +330,12 @@ impl Builtin for Readonly {
 /// setopt — enable shell options.
 pub struct Setopt;
 impl Builtin for Setopt {
-    fn name(&self) -> &str { "setopt" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "setopt"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
     fn execute_with_action(&self, args: &[&str], _env: &mut dyn ShellEnvironment) -> BuiltinResult {
         let opts: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         BuiltinResult::with_action(0, BuiltinAction::SetOptions(opts))
@@ -307,8 +345,12 @@ impl Builtin for Setopt {
 /// unsetopt — disable shell options.
 pub struct Unsetopt;
 impl Builtin for Unsetopt {
-    fn name(&self) -> &str { "unsetopt" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "unsetopt"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
     fn execute_with_action(&self, args: &[&str], _env: &mut dyn ShellEnvironment) -> BuiltinResult {
         let opts: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         BuiltinResult::with_action(0, BuiltinAction::UnsetOptions(opts))
@@ -320,28 +362,42 @@ impl Builtin for Unsetopt {
 /// autoload — stub returning 0.
 pub struct Autoload;
 impl Builtin for Autoload {
-    fn name(&self) -> &str { "autoload" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "autoload"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// zmodload — stub returning 0.
 pub struct Zmodload;
 impl Builtin for Zmodload {
-    fn name(&self) -> &str { "zmodload" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "zmodload"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// functions — stub returning 0.
 pub struct Functions;
 impl Builtin for Functions {
-    fn name(&self) -> &str { "functions" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "functions"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// let — arithmetic evaluation builtin.
 pub struct Let;
 impl Builtin for Let {
-    fn name(&self) -> &str { "let" }
+    fn name(&self) -> &str {
+        "let"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         // Signal to executor to evaluate arithmetic
         let expr = args.join(" ");
@@ -364,7 +420,9 @@ impl Builtin for Let {
 pub struct Printf;
 
 impl Builtin for Printf {
-    fn name(&self) -> &str { "printf" }
+    fn name(&self) -> &str {
+        "printf"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         if args.is_empty() {
             eprintln!("printf: usage: printf [-v var] format [arguments]");
@@ -438,11 +496,26 @@ fn printf_format(format: &str, params: &[&str], param_idx: &mut usize) -> String
 
             loop {
                 match chars.peek() {
-                    Some('-') => { left_align = true; chars.next(); }
-                    Some('0') => { zero_pad = true; chars.next(); }
-                    Some('+') => { plus_sign = true; chars.next(); }
-                    Some(' ') => { space_sign = true; chars.next(); }
-                    Some('#') => { hash_flag = true; chars.next(); }
+                    Some('-') => {
+                        left_align = true;
+                        chars.next();
+                    }
+                    Some('0') => {
+                        zero_pad = true;
+                        chars.next();
+                    }
+                    Some('+') => {
+                        plus_sign = true;
+                        chars.next();
+                    }
+                    Some(' ') => {
+                        space_sign = true;
+                        chars.next();
+                    }
+                    Some('#') => {
+                        hash_flag = true;
+                        chars.next();
+                    }
                     _ => break,
                 }
             }
@@ -450,7 +523,8 @@ fn printf_format(format: &str, params: &[&str], param_idx: &mut usize) -> String
             // Parse width (may be '*' to consume next arg)
             let width: Option<usize> = if chars.peek() == Some(&'*') {
                 chars.next();
-                let w = params.get(*param_idx)
+                let w = params
+                    .get(*param_idx)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
                 *param_idx += 1;
@@ -464,7 +538,8 @@ fn printf_format(format: &str, params: &[&str], param_idx: &mut usize) -> String
                 chars.next();
                 if chars.peek() == Some(&'*') {
                     chars.next();
-                    let p = params.get(*param_idx)
+                    let p = params
+                        .get(*param_idx)
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(0);
                     *param_idx += 1;
@@ -746,7 +821,8 @@ fn apply_width(s: &str, width: Option<usize>, left_align: bool, pad: char) -> St
             let padding = w - s.len();
             if left_align {
                 format!("{s}{}", " ".repeat(padding))
-            } else if pad == '0' && (s.starts_with('-') || s.starts_with('+') || s.starts_with(' ')) {
+            } else if pad == '0' && (s.starts_with('-') || s.starts_with('+') || s.starts_with(' '))
+            {
                 // For zero-padding with sign, put sign before zeros
                 let (sign, rest) = s.split_at(1);
                 format!("{sign}{}{rest}", "0".repeat(padding))
@@ -776,7 +852,13 @@ fn format_float_f(n: f64, precision: usize, plus_sign: bool, space_sign: bool) -
 }
 
 /// Format a float in %e / %E style.
-fn format_float_e(n: f64, precision: usize, upper: bool, plus_sign: bool, space_sign: bool) -> String {
+fn format_float_e(
+    n: f64,
+    precision: usize,
+    upper: bool,
+    plus_sign: bool,
+    space_sign: bool,
+) -> String {
     let s = if upper {
         format!("{n:.prec$E}", prec = precision)
     } else {
@@ -796,7 +878,13 @@ fn format_float_e(n: f64, precision: usize, upper: bool, plus_sign: bool, space_
 }
 
 /// Format a float in %g / %G style (shorter of %f and %e).
-fn format_float_g(n: f64, precision: usize, upper: bool, plus_sign: bool, space_sign: bool) -> String {
+fn format_float_g(
+    n: f64,
+    precision: usize,
+    upper: bool,
+    plus_sign: bool,
+    space_sign: bool,
+) -> String {
     let prec = if precision == 0 { 1 } else { precision };
 
     // %g uses %e if exponent < -4 or >= precision, else %f
@@ -1068,7 +1156,10 @@ mod printf_tests {
     #[test]
     fn e_format() {
         let result = run_printf("%e", &["1234.5"]);
-        assert!(result.contains('e'), "expected scientific notation, got: {result}");
+        assert!(
+            result.contains('e'),
+            "expected scientific notation, got: {result}"
+        );
     }
 
     #[test]
@@ -1092,7 +1183,9 @@ mod printf_tests {
 /// trap — register signal handlers (stub that succeeds).
 pub struct Trap;
 impl Builtin for Trap {
-    fn name(&self) -> &str { "trap" }
+    fn name(&self) -> &str {
+        "trap"
+    }
     fn execute(&self, args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
         if args.is_empty() {
             // trap — list traps (no traps registered yet)
@@ -1113,7 +1206,9 @@ impl Builtin for Trap {
 /// umask — set file creation mask.
 pub struct Umask;
 impl Builtin for Umask {
-    fn name(&self) -> &str { "umask" }
+    fn name(&self) -> &str {
+        "umask"
+    }
     fn execute(&self, args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
         if args.is_empty() {
             // Print current umask
@@ -1136,77 +1231,119 @@ impl Builtin for Umask {
 /// fc — stub for history editing.
 pub struct Fc;
 impl Builtin for Fc {
-    fn name(&self) -> &str { "fc" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "fc"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// noglob — run command with GLOB disabled.
 pub struct Noglob;
 impl Builtin for Noglob {
-    fn name(&self) -> &str { "noglob" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "noglob"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// emulate — shell emulation (stub).
 pub struct Emulate;
 impl Builtin for Emulate {
-    fn name(&self) -> &str { "emulate" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "emulate"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// disable — disable builtins (stub).
 pub struct Disable;
 impl Builtin for Disable {
-    fn name(&self) -> &str { "disable" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "disable"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// enable — enable builtins (stub).
 pub struct Enable;
 impl Builtin for Enable {
-    fn name(&self) -> &str { "enable" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "enable"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// compdef — completion definition (stub).
 pub struct Compdef;
 impl Builtin for Compdef {
-    fn name(&self) -> &str { "compdef" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "compdef"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// compctl — completion control (stub).
 pub struct Compctl;
 impl Builtin for Compctl {
-    fn name(&self) -> &str { "compctl" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "compctl"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// zle — ZLE widget manipulation (stub).
 pub struct Zle;
 impl Builtin for Zle {
-    fn name(&self) -> &str { "zle" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "zle"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// bindkey — key binding (stub).
 pub struct Bindkey;
 impl Builtin for Bindkey {
-    fn name(&self) -> &str { "bindkey" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "bindkey"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// zstyle — style configuration (stub).
 pub struct Zstyle;
 impl Builtin for Zstyle {
-    fn name(&self) -> &str { "zstyle" }
-    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 { 0 }
+    fn name(&self) -> &str {
+        "zstyle"
+    }
+    fn execute(&self, _args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
+        0
+    }
 }
 
 /// which — locate a command (like type).
 pub struct Which;
 impl Builtin for Which {
-    fn name(&self) -> &str { "which" }
+    fn name(&self) -> &str {
+        "which"
+    }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         Type.execute(args, env)
     }

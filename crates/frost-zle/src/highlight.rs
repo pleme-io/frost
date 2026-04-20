@@ -73,17 +73,17 @@ pub struct Palette {
 impl Default for Palette {
     fn default() -> Self {
         Self {
-            command:         Style::new().fg(Color::Green),
+            command: Style::new().fg(Color::Green),
             unknown_command: Style::new().fg(Color::Yellow),
-            reserved:        Style::new().bold().fg(Color::Magenta),
-            string:          Style::new().fg(Color::Cyan),
-            variable:        Style::new().fg(Color::Yellow),
-            operator:        Style::new().fg(Color::LightRed),
-            comment:         Style::new().fg(Color::DarkGray).italic(),
-            glob:            Style::new().fg(Color::Yellow),
-            number:          Style::new().fg(Color::Blue),
-            tilde:           Style::new().fg(Color::Magenta),
-            broken_path:     Style::new().fg(Color::Red),
+            reserved: Style::new().bold().fg(Color::Magenta),
+            string: Style::new().fg(Color::Cyan),
+            variable: Style::new().fg(Color::Yellow),
+            operator: Style::new().fg(Color::LightRed),
+            comment: Style::new().fg(Color::DarkGray).italic(),
+            glob: Style::new().fg(Color::Yellow),
+            number: Style::new().fg(Color::Blue),
+            tilde: Style::new().fg(Color::Magenta),
+            broken_path: Style::new().fg(Color::Red),
         }
     }
 }
@@ -97,17 +97,37 @@ impl Palette {
     pub fn from_hex_slots(slots: PaletteSlots<'_>) -> Self {
         let d = Self::default();
         Self {
-            command:         slots.command.and_then(parse_hex_style).unwrap_or(d.command),
-            unknown_command: slots.unknown_command.and_then(parse_hex_style).unwrap_or(d.unknown_command),
-            reserved:        slots.reserved.and_then(parse_hex_style).map(|s| s.bold()).unwrap_or(d.reserved),
-            string:          slots.string.and_then(parse_hex_style).unwrap_or(d.string),
-            variable:        slots.variable.and_then(parse_hex_style).unwrap_or(d.variable),
-            operator:        slots.operator.and_then(parse_hex_style).unwrap_or(d.operator),
-            comment:         slots.comment.and_then(parse_hex_style).map(|s| s.italic()).unwrap_or(d.comment),
-            glob:            slots.glob.and_then(parse_hex_style).unwrap_or(d.glob),
-            number:          slots.number.and_then(parse_hex_style).unwrap_or(d.number),
-            tilde:           slots.tilde.and_then(parse_hex_style).unwrap_or(d.tilde),
-            broken_path:     slots.broken_path.and_then(parse_hex_style).unwrap_or(d.broken_path),
+            command: slots.command.and_then(parse_hex_style).unwrap_or(d.command),
+            unknown_command: slots
+                .unknown_command
+                .and_then(parse_hex_style)
+                .unwrap_or(d.unknown_command),
+            reserved: slots
+                .reserved
+                .and_then(parse_hex_style)
+                .map(|s| s.bold())
+                .unwrap_or(d.reserved),
+            string: slots.string.and_then(parse_hex_style).unwrap_or(d.string),
+            variable: slots
+                .variable
+                .and_then(parse_hex_style)
+                .unwrap_or(d.variable),
+            operator: slots
+                .operator
+                .and_then(parse_hex_style)
+                .unwrap_or(d.operator),
+            comment: slots
+                .comment
+                .and_then(parse_hex_style)
+                .map(|s| s.italic())
+                .unwrap_or(d.comment),
+            glob: slots.glob.and_then(parse_hex_style).unwrap_or(d.glob),
+            number: slots.number.and_then(parse_hex_style).unwrap_or(d.number),
+            tilde: slots.tilde.and_then(parse_hex_style).unwrap_or(d.tilde),
+            broken_path: slots
+                .broken_path
+                .and_then(parse_hex_style)
+                .unwrap_or(d.broken_path),
         }
     }
 }
@@ -356,11 +376,8 @@ impl Highlighter for FrostHighlighter {
 /// reserved-for-highlighting purposes; it's a superset of what the
 /// grammar would actually recognize, but harmlessly so.
 const RESERVED_WORD_STRINGS: &[&str] = &[
-    "if", "then", "elif", "else", "fi",
-    "for", "while", "until", "do", "done",
-    "case", "esac", "in",
-    "select", "function", "time", "coproc",
-    "return", "break", "continue",
+    "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac",
+    "in", "select", "function", "time", "coproc", "return", "break", "continue",
 ];
 
 fn is_reserved_word_text(s: &str) -> bool {
@@ -412,9 +429,9 @@ fn style_for_token(
 
     match tok.kind {
         // Strings — the full tokenized literal including quotes.
-        TokenKind::SingleQuoted
-        | TokenKind::DoubleQuoted
-        | TokenKind::DollarSingleQuoted => palette.string,
+        TokenKind::SingleQuoted | TokenKind::DoubleQuoted | TokenKind::DollarSingleQuoted => {
+            palette.string
+        }
 
         // Numbers (arithmetic contexts).
         TokenKind::Number => palette.number,
@@ -531,14 +548,21 @@ mod tests {
         let mut at_cmd = true;
         loop {
             let tok = lexer.next_token();
-            if matches!(tok.kind, TokenKind::Eof | TokenKind::Error) { break; }
+            if matches!(tok.kind, TokenKind::Eof | TokenKind::Error) {
+                break;
+            }
             let start = tok.span.start as usize;
             let end = tok.span.end as usize;
             if start > prev_end {
                 out.push((Style::default(), line[prev_end..start].to_string()));
             }
-            if end > line.len() { break; }
-            out.push((style_for_token(&tok, at_cmd, &h.known, &h.palette), line[start..end].to_string()));
+            if end > line.len() {
+                break;
+            }
+            out.push((
+                style_for_token(&tok, at_cmd, &h.known, &h.palette),
+                line[start..end].to_string(),
+            ));
             if is_command_breaker(tok.kind) {
                 at_cmd = true;
             } else if matches!(tok.kind, TokenKind::Word) {
@@ -654,7 +678,13 @@ mod tests {
     fn strings_get_cyan() {
         let h = FrostHighlighter::new();
         let segs = render(&h, r#"echo "hello world" 'bye'"#);
-        assert!(segs.iter().any(|(s, t)| t == r#""hello world""# && s.foreground == Some(Color::Cyan)));
-        assert!(segs.iter().any(|(s, t)| t == "'bye'" && s.foreground == Some(Color::Cyan)));
+        assert!(
+            segs.iter()
+                .any(|(s, t)| t == r#""hello world""# && s.foreground == Some(Color::Cyan))
+        );
+        assert!(
+            segs.iter()
+                .any(|(s, t)| t == "'bye'" && s.foreground == Some(Color::Cyan))
+        );
     }
 }

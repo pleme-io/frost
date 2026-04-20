@@ -48,16 +48,44 @@ enum Token {
     Num(i64),
     Ident(String),
     // Operators
-    Plus, Minus, Star, Slash, Percent, Power,
-    Amp, Pipe, Caret, Tilde,
-    Shl, Shr,
-    Eq, Ne, Lt, Gt, Le, Ge,
-    And, Or, Not,
-    Assign, PlusAssign, MinusAssign, StarAssign, SlashAssign, PercentAssign,
-    ShlAssign, ShrAssign, AmpAssign, PipeAssign, CaretAssign,
-    Inc, Dec,
-    Question, Colon,
-    LParen, RParen,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Power,
+    Amp,
+    Pipe,
+    Caret,
+    Tilde,
+    Shl,
+    Shr,
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    And,
+    Or,
+    Not,
+    Assign,
+    PlusAssign,
+    MinusAssign,
+    StarAssign,
+    SlashAssign,
+    PercentAssign,
+    ShlAssign,
+    ShrAssign,
+    AmpAssign,
+    PipeAssign,
+    CaretAssign,
+    Inc,
+    Dec,
+    Question,
+    Colon,
+    LParen,
+    RParen,
     Comma,
     Eof,
 }
@@ -71,7 +99,9 @@ fn tokenize(input: &str) -> Vec<Token> {
 
     while i < bytes.len() {
         match bytes[i] {
-            b' ' | b'\t' | b'\n' | b'\r' => { i += 1; }
+            b' ' | b'\t' | b'\n' | b'\r' => {
+                i += 1;
+            }
             b'0'..=b'9' => {
                 let start = i;
                 // Check for base prefixes
@@ -80,7 +110,9 @@ fn tokenize(input: &str) -> Vec<Token> {
                         b'x' | b'X' => {
                             i += 2;
                             let hex_start = i;
-                            while i < bytes.len() && bytes[i].is_ascii_hexdigit() { i += 1; }
+                            while i < bytes.len() && bytes[i].is_ascii_hexdigit() {
+                                i += 1;
+                            }
                             let hex = &input[hex_start..i];
                             tokens.push(Token::Num(i64::from_str_radix(hex, 16).unwrap_or(0)));
                             continue;
@@ -88,7 +120,9 @@ fn tokenize(input: &str) -> Vec<Token> {
                         b'o' | b'O' => {
                             i += 2;
                             let oct_start = i;
-                            while i < bytes.len() && (b'0'..=b'7').contains(&bytes[i]) { i += 1; }
+                            while i < bytes.len() && (b'0'..=b'7').contains(&bytes[i]) {
+                                i += 1;
+                            }
                             let oct = &input[oct_start..i];
                             tokens.push(Token::Num(i64::from_str_radix(oct, 8).unwrap_or(0)));
                             continue;
@@ -96,7 +130,9 @@ fn tokenize(input: &str) -> Vec<Token> {
                         b'b' | b'B' => {
                             i += 2;
                             let bin_start = i;
-                            while i < bytes.len() && (bytes[i] == b'0' || bytes[i] == b'1') { i += 1; }
+                            while i < bytes.len() && (bytes[i] == b'0' || bytes[i] == b'1') {
+                                i += 1;
+                            }
                             let bin = &input[bin_start..i];
                             tokens.push(Token::Num(i64::from_str_radix(bin, 2).unwrap_or(0)));
                             continue;
@@ -104,13 +140,17 @@ fn tokenize(input: &str) -> Vec<Token> {
                         _ => {}
                     }
                 }
-                while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
                 // Check for N#value (base N)
                 if i < bytes.len() && bytes[i] == b'#' {
                     let base: u32 = input[start..i].parse().unwrap_or(10);
                     i += 1; // skip #
                     let val_start = i;
-                    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric()) { i += 1; }
+                    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric()) {
+                        i += 1;
+                    }
                     let val = &input[val_start..i];
                     tokens.push(Token::Num(i64::from_str_radix(val, base).unwrap_or(0)));
                 } else {
@@ -120,122 +160,177 @@ fn tokenize(input: &str) -> Vec<Token> {
             }
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let start = i;
-                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') { i += 1; }
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
                 tokens.push(Token::Ident(input[start..i].to_string()));
             }
             b'+' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'+' {
-                    tokens.push(Token::Inc); i += 2;
+                    tokens.push(Token::Inc);
+                    i += 2;
                 } else if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::PlusAssign); i += 2;
+                    tokens.push(Token::PlusAssign);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Plus); i += 1;
+                    tokens.push(Token::Plus);
+                    i += 1;
                 }
             }
             b'-' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'-' {
-                    tokens.push(Token::Dec); i += 2;
+                    tokens.push(Token::Dec);
+                    i += 2;
                 } else if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::MinusAssign); i += 2;
+                    tokens.push(Token::MinusAssign);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Minus); i += 1;
+                    tokens.push(Token::Minus);
+                    i += 1;
                 }
             }
             b'*' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-                    tokens.push(Token::Power); i += 2;
+                    tokens.push(Token::Power);
+                    i += 2;
                 } else if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::StarAssign); i += 2;
+                    tokens.push(Token::StarAssign);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Star); i += 1;
+                    tokens.push(Token::Star);
+                    i += 1;
                 }
             }
             b'/' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::SlashAssign); i += 2;
+                    tokens.push(Token::SlashAssign);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Slash); i += 1;
+                    tokens.push(Token::Slash);
+                    i += 1;
                 }
             }
             b'%' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::PercentAssign); i += 2;
+                    tokens.push(Token::PercentAssign);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Percent); i += 1;
+                    tokens.push(Token::Percent);
+                    i += 1;
                 }
             }
             b'<' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'<' {
                     if i + 2 < bytes.len() && bytes[i + 2] == b'=' {
-                        tokens.push(Token::ShlAssign); i += 3;
+                        tokens.push(Token::ShlAssign);
+                        i += 3;
                     } else {
-                        tokens.push(Token::Shl); i += 2;
+                        tokens.push(Token::Shl);
+                        i += 2;
                     }
                 } else if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::Le); i += 2;
+                    tokens.push(Token::Le);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Lt); i += 1;
+                    tokens.push(Token::Lt);
+                    i += 1;
                 }
             }
             b'>' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'>' {
                     if i + 2 < bytes.len() && bytes[i + 2] == b'=' {
-                        tokens.push(Token::ShrAssign); i += 3;
+                        tokens.push(Token::ShrAssign);
+                        i += 3;
                     } else {
-                        tokens.push(Token::Shr); i += 2;
+                        tokens.push(Token::Shr);
+                        i += 2;
                     }
                 } else if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::Ge); i += 2;
+                    tokens.push(Token::Ge);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Gt); i += 1;
+                    tokens.push(Token::Gt);
+                    i += 1;
                 }
             }
             b'&' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'&' {
-                    tokens.push(Token::And); i += 2;
+                    tokens.push(Token::And);
+                    i += 2;
                 } else if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::AmpAssign); i += 2;
+                    tokens.push(Token::AmpAssign);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Amp); i += 1;
+                    tokens.push(Token::Amp);
+                    i += 1;
                 }
             }
             b'|' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'|' {
-                    tokens.push(Token::Or); i += 2;
+                    tokens.push(Token::Or);
+                    i += 2;
                 } else if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::PipeAssign); i += 2;
+                    tokens.push(Token::PipeAssign);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Pipe); i += 1;
+                    tokens.push(Token::Pipe);
+                    i += 1;
                 }
             }
             b'^' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::CaretAssign); i += 2;
+                    tokens.push(Token::CaretAssign);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Caret); i += 1;
+                    tokens.push(Token::Caret);
+                    i += 1;
                 }
             }
             b'=' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::Eq); i += 2;
+                    tokens.push(Token::Eq);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Assign); i += 1;
+                    tokens.push(Token::Assign);
+                    i += 1;
                 }
             }
             b'!' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    tokens.push(Token::Ne); i += 2;
+                    tokens.push(Token::Ne);
+                    i += 2;
                 } else {
-                    tokens.push(Token::Not); i += 1;
+                    tokens.push(Token::Not);
+                    i += 1;
                 }
             }
-            b'~' => { tokens.push(Token::Tilde); i += 1; }
-            b'?' => { tokens.push(Token::Question); i += 1; }
-            b':' => { tokens.push(Token::Colon); i += 1; }
-            b'(' => { tokens.push(Token::LParen); i += 1; }
-            b')' => { tokens.push(Token::RParen); i += 1; }
-            b',' => { tokens.push(Token::Comma); i += 1; }
-            _ => { i += 1; } // skip unknown
+            b'~' => {
+                tokens.push(Token::Tilde);
+                i += 1;
+            }
+            b'?' => {
+                tokens.push(Token::Question);
+                i += 1;
+            }
+            b':' => {
+                tokens.push(Token::Colon);
+                i += 1;
+            }
+            b'(' => {
+                tokens.push(Token::LParen);
+                i += 1;
+            }
+            b')' => {
+                tokens.push(Token::RParen);
+                i += 1;
+            }
+            b',' => {
+                tokens.push(Token::Comma);
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            } // skip unknown
         }
     }
 
@@ -249,10 +344,17 @@ fn tokenize(input: &str) -> Vec<Token> {
 fn infix_bp(tok: &Token) -> Option<(u8, u8)> {
     Some(match tok {
         Token::Comma => (1, 2),
-        Token::Assign | Token::PlusAssign | Token::MinusAssign |
-        Token::StarAssign | Token::SlashAssign | Token::PercentAssign |
-        Token::ShlAssign | Token::ShrAssign | Token::AmpAssign |
-        Token::PipeAssign | Token::CaretAssign => (3, 2), // right-assoc
+        Token::Assign
+        | Token::PlusAssign
+        | Token::MinusAssign
+        | Token::StarAssign
+        | Token::SlashAssign
+        | Token::PercentAssign
+        | Token::ShlAssign
+        | Token::ShrAssign
+        | Token::AmpAssign
+        | Token::PipeAssign
+        | Token::CaretAssign => (3, 2), // right-assoc
         Token::Question => (5, 4), // ternary
         Token::Or => (7, 8),
         Token::And => (9, 10),
@@ -289,7 +391,12 @@ struct ArithParser<'a> {
 
 impl<'a> ArithParser<'a> {
     fn new(tokens: &'a [Token], env: &'a ShellEnv) -> Self {
-        Self { tokens, pos: 0, env, deferred_assigns: Vec::new() }
+        Self {
+            tokens,
+            pos: 0,
+            env,
+            deferred_assigns: Vec::new(),
+        }
     }
 
     fn peek(&self) -> &Token {
@@ -309,7 +416,8 @@ impl<'a> ArithParser<'a> {
 
     /// Look up a variable's integer value.
     fn var_value(&self, name: &str) -> i64 {
-        self.env.get_var(name)
+        self.env
+            .get_var(name)
             .and_then(|s| s.parse().ok())
             .unwrap_or(0)
     }
@@ -429,11 +537,20 @@ impl<'a> ArithParser<'a> {
                 }
 
                 // Assignment operators: LHS must be an identifier
-                if matches!(op, Token::Assign | Token::PlusAssign | Token::MinusAssign |
-                    Token::StarAssign | Token::SlashAssign | Token::PercentAssign |
-                    Token::ShlAssign | Token::ShrAssign | Token::AmpAssign |
-                    Token::PipeAssign | Token::CaretAssign)
-                {
+                if matches!(
+                    op,
+                    Token::Assign
+                        | Token::PlusAssign
+                        | Token::MinusAssign
+                        | Token::StarAssign
+                        | Token::SlashAssign
+                        | Token::PercentAssign
+                        | Token::ShlAssign
+                        | Token::ShrAssign
+                        | Token::AmpAssign
+                        | Token::PipeAssign
+                        | Token::CaretAssign
+                ) {
                     // Look back for the identifier name
                     // In a proper implementation we'd track lvalues;
                     // for now, peek at the previous token
@@ -443,8 +560,20 @@ impl<'a> ArithParser<'a> {
                         Token::PlusAssign => lhs + rhs,
                         Token::MinusAssign => lhs - rhs,
                         Token::StarAssign => lhs * rhs,
-                        Token::SlashAssign => if rhs != 0 { lhs / rhs } else { 0 },
-                        Token::PercentAssign => if rhs != 0 { lhs % rhs } else { 0 },
+                        Token::SlashAssign => {
+                            if rhs != 0 {
+                                lhs / rhs
+                            } else {
+                                0
+                            }
+                        }
+                        Token::PercentAssign => {
+                            if rhs != 0 {
+                                lhs % rhs
+                            } else {
+                                0
+                            }
+                        }
                         Token::ShlAssign => lhs << (rhs & 63),
                         Token::ShrAssign => lhs >> (rhs & 63),
                         Token::AmpAssign => lhs & rhs,
@@ -467,20 +596,68 @@ impl<'a> ArithParser<'a> {
                     Token::Plus => lhs.wrapping_add(rhs),
                     Token::Minus => lhs.wrapping_sub(rhs),
                     Token::Star => lhs.wrapping_mul(rhs),
-                    Token::Slash => if rhs != 0 { lhs / rhs } else { 0 },
-                    Token::Percent => if rhs != 0 { lhs % rhs } else { 0 },
+                    Token::Slash => {
+                        if rhs != 0 {
+                            lhs / rhs
+                        } else {
+                            0
+                        }
+                    }
+                    Token::Percent => {
+                        if rhs != 0 {
+                            lhs % rhs
+                        } else {
+                            0
+                        }
+                    }
                     Token::Power => pow(lhs, rhs),
                     Token::Shl => lhs.wrapping_shl((rhs & 63) as u32),
                     Token::Shr => lhs.wrapping_shr((rhs & 63) as u32),
                     Token::Amp => lhs & rhs,
                     Token::Pipe => lhs | rhs,
                     Token::Caret => lhs ^ rhs,
-                    Token::Eq => if lhs == rhs { 1 } else { 0 },
-                    Token::Ne => if lhs != rhs { 1 } else { 0 },
-                    Token::Lt => if lhs < rhs { 1 } else { 0 },
-                    Token::Gt => if lhs > rhs { 1 } else { 0 },
-                    Token::Le => if lhs <= rhs { 1 } else { 0 },
-                    Token::Ge => if lhs >= rhs { 1 } else { 0 },
+                    Token::Eq => {
+                        if lhs == rhs {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    Token::Ne => {
+                        if lhs != rhs {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    Token::Lt => {
+                        if lhs < rhs {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    Token::Gt => {
+                        if lhs > rhs {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    Token::Le => {
+                        if lhs <= rhs {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    Token::Ge => {
+                        if lhs >= rhs {
+                            1
+                        } else {
+                            0
+                        }
+                    }
                     Token::Comma => rhs,
                     _ => lhs,
                 };
@@ -500,10 +677,16 @@ impl<'a> ArithParser<'a> {
                 return Some(name.clone());
             }
             // Stop at operators that would break the lvalue chain
-            if matches!(&self.tokens[i],
-                Token::Num(_) | Token::RParen | Token::Comma |
-                Token::Plus | Token::Minus | Token::Star | Token::Slash)
-            {
+            if matches!(
+                &self.tokens[i],
+                Token::Num(_)
+                    | Token::RParen
+                    | Token::Comma
+                    | Token::Plus
+                    | Token::Minus
+                    | Token::Star
+                    | Token::Slash
+            ) {
                 break;
             }
         }

@@ -79,11 +79,7 @@ impl Builtin for Print {
         } else {
             // Default: join with spaces.
             let joined = text_args.join(" ");
-            let value = if raw {
-                joined
-            } else {
-                expand_escapes(&joined)
-            };
+            let value = if raw { joined } else { expand_escapes(&joined) };
             print!("{value}");
         }
 
@@ -360,11 +356,7 @@ mod tests {
             }
         } else {
             let joined = text_args.join(" ");
-            let value = if raw {
-                joined
-            } else {
-                expand_escapes(&joined)
-            };
+            let value = if raw { joined } else { expand_escapes(&joined) };
             out.push_str(&value);
         }
 

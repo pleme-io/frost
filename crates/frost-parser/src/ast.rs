@@ -71,41 +71,46 @@ pub enum CondExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CondOp {
     // File tests
-    FileExists,         // -e, -a
-    IsFile,             // -f
-    IsDir,              // -d
-    IsSymlink,          // -L, -h
-    IsReadable,         // -r
-    IsWritable,         // -w
-    IsExecutable,       // -x
-    IsNonEmpty,         // -s
-    IsBlockDev,         // -b
-    IsCharDev,          // -c
-    IsFifo,             // -p
-    IsSocket,           // -S
-    IsSetuid,           // -u
-    IsSetgid,           // -g
-    IsSticky,           // -k
-    OwnedByUser,        // -O
-    OwnedByGroup,       // -G
-    ModifiedSinceRead,  // -N
-    IsTty,              // -t
-    OptionSet,          // -o
-    VarIsSet,           // -v
+    FileExists,        // -e, -a
+    IsFile,            // -f
+    IsDir,             // -d
+    IsSymlink,         // -L, -h
+    IsReadable,        // -r
+    IsWritable,        // -w
+    IsExecutable,      // -x
+    IsNonEmpty,        // -s
+    IsBlockDev,        // -b
+    IsCharDev,         // -c
+    IsFifo,            // -p
+    IsSocket,          // -S
+    IsSetuid,          // -u
+    IsSetgid,          // -g
+    IsSticky,          // -k
+    OwnedByUser,       // -O
+    OwnedByGroup,      // -G
+    ModifiedSinceRead, // -N
+    IsTty,             // -t
+    OptionSet,         // -o
+    VarIsSet,          // -v
     // String tests
-    StrEmpty,           // -z
-    StrNonEmpty,        // -n
-    StrEq,              // == or =
-    StrNeq,             // !=
-    StrLt,              // <
-    StrGt,              // >
-    StrMatch,           // =~
+    StrEmpty,    // -z
+    StrNonEmpty, // -n
+    StrEq,       // == or =
+    StrNeq,      // !=
+    StrLt,       // <
+    StrGt,       // >
+    StrMatch,    // =~
     // Integer tests
-    IntEq, IntNe, IntLt, IntLe, IntGt, IntGe,
+    IntEq,
+    IntNe,
+    IntLt,
+    IntLe,
+    IntGt,
+    IntGe,
     // File comparisons
-    NewerThan,          // -nt
-    OlderThan,          // -ot
-    SameFile,           // -ef
+    NewerThan, // -nt
+    OlderThan, // -ot
+    SameFile,  // -ef
 }
 
 /// C-style for loop: `for (( init; cond; step )) { body }`.
@@ -221,35 +226,17 @@ pub enum Subscript {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParamModifier {
     /// `${name:-word}` or `${name-word}` — use default.
-    Default {
-        colon: bool,
-        word: Box<Word>,
-    },
+    Default { colon: bool, word: Box<Word> },
     /// `${name:=word}` or `${name=word}` — assign default.
-    Assign {
-        colon: bool,
-        word: Box<Word>,
-    },
+    Assign { colon: bool, word: Box<Word> },
     /// `${name:+word}` or `${name+word}` — use alternative.
-    Alternative {
-        colon: bool,
-        word: Box<Word>,
-    },
+    Alternative { colon: bool, word: Box<Word> },
     /// `${name:?word}` or `${name?word}` — error if unset.
-    Error {
-        colon: bool,
-        word: Box<Word>,
-    },
+    Error { colon: bool, word: Box<Word> },
     /// `${name#pat}` or `${name##pat}` — remove prefix.
-    TrimPrefix {
-        longest: bool,
-        pattern: Box<Word>,
-    },
+    TrimPrefix { longest: bool, pattern: Box<Word> },
     /// `${name%pat}` or `${name%%pat}` — remove suffix.
-    TrimSuffix {
-        longest: bool,
-        pattern: Box<Word>,
-    },
+    TrimSuffix { longest: bool, pattern: Box<Word> },
     /// `${name/pat/rep}` or `${name//pat/rep}` — substitution.
     Substitute {
         anchor: SubAnchor,

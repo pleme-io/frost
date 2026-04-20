@@ -11,7 +11,9 @@ pub const EVAL_SIGNAL: i32 = 211;
 pub struct Eval;
 
 impl Builtin for Eval {
-    fn name(&self) -> &str { "eval" }
+    fn name(&self) -> &str {
+        "eval"
+    }
 
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         if args.is_empty() {

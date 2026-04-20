@@ -12,7 +12,9 @@ pub struct Source;
 pub struct Dot;
 
 impl Builtin for Source {
-    fn name(&self) -> &str { "source" }
+    fn name(&self) -> &str {
+        "source"
+    }
 
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         if args.is_empty() {
@@ -34,7 +36,9 @@ impl Builtin for Source {
 }
 
 impl Builtin for Dot {
-    fn name(&self) -> &str { "." }
+    fn name(&self) -> &str {
+        "."
+    }
 
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         Source.execute(args, env)

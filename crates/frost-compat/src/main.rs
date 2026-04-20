@@ -71,10 +71,7 @@ fn main() {
                 if !cli.json && !cli.verbose {
                     // Print compact status line.
                     let file_summary = runner::summarize(&results);
-                    eprintln!(
-                        "{}/{} passed",
-                        file_summary.passed, file_summary.total
-                    );
+                    eprintln!("{}/{} passed", file_summary.passed, file_summary.total);
                 }
                 all_results.extend(results);
             }
@@ -198,9 +195,6 @@ fn print_summary(summary: &Summary) {
     eprintln!("  Crashed:       {}", summary.crashed);
     eprintln!("  Skipped:       {}", summary.skipped);
     eprintln!("  Parse Errors:  {}", summary.parse_errors);
-    eprintln!(
-        "  Compatibility: {:.1}%",
-        summary.compatibility_pct
-    );
+    eprintln!("  Compatibility: {:.1}%", summary.compatibility_pct);
     eprintln!("===================================");
 }

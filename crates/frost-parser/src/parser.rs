@@ -45,7 +45,9 @@ impl<'a> Parser<'a> {
     // ── Helpers ────────────────────────────────────────────────
 
     fn peek(&self) -> &Token {
-        self.tokens.get(self.pos).unwrap_or(&self.tokens[self.tokens.len() - 1])
+        self.tokens
+            .get(self.pos)
+            .unwrap_or(&self.tokens[self.tokens.len() - 1])
     }
 
     fn kind(&self) -> TokenKind {
@@ -128,7 +130,19 @@ impl<'a> Parser<'a> {
         // Check if it's a keyword word like Word("if")
         if self.kind() == TokenKind::Word {
             let text = self.peek().text.as_str();
-            if matches!(text, "if" | "for" | "while" | "until" | "case" | "select" | "function" | "time" | "coproc" | "[[" | "repeat") {
+            if matches!(
+                text,
+                "if" | "for"
+                    | "while"
+                    | "until"
+                    | "case"
+                    | "select"
+                    | "function"
+                    | "time"
+                    | "coproc"
+                    | "[["
+                    | "repeat"
+            ) {
                 return true;
             }
         }
@@ -223,8 +237,12 @@ impl<'a> Parser<'a> {
                         return saw_comma_or_dots;
                     }
                 }
-                TokenKind::Newline | TokenKind::Semi | TokenKind::Pipe
-                | TokenKind::AndAnd | TokenKind::OrOr | TokenKind::Eof => {
+                TokenKind::Newline
+                | TokenKind::Semi
+                | TokenKind::Pipe
+                | TokenKind::AndAnd
+                | TokenKind::OrOr
+                | TokenKind::Eof => {
                     return false; // Definitely a brace group
                 }
                 TokenKind::Word => {
@@ -243,10 +261,7 @@ impl<'a> Parser<'a> {
     /// Whether the current token is a brace that could be part of brace expansion
     /// within a word (e.g., `a{1,2}b`).
     fn at_brace_in_word(&self) -> bool {
-        matches!(
-            self.kind(),
-            TokenKind::LeftBrace | TokenKind::RightBrace
-        )
+        matches!(self.kind(), TokenKind::LeftBrace | TokenKind::RightBrace)
     }
 
     fn at_redirect(&self) -> bool {
@@ -348,7 +363,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Pipeline { bang, commands, pipe_stderr }
+        Pipeline {
+            bang,
+            commands,
+            pipe_stderr,
+        }
     }
 
     // ── Command ────────────────────────────────────────────────
@@ -371,17 +390,39 @@ impl<'a> Parser<'a> {
             return self.parse_repeat();
         }
         // Check both TokenKind and Word text for keywords
-        if self.at(TokenKind::LeftParen) { return self.parse_subshell(); }
-        if self.at(TokenKind::LeftBrace) { return self.parse_brace_group(); }
-        if self.at(TokenKind::If) { return self.parse_if(); }
-        if self.at(TokenKind::For) { return self.parse_for(); }
-        if self.at(TokenKind::While) { return self.parse_while(); }
-        if self.at(TokenKind::Until) { return self.parse_until(); }
-        if self.at(TokenKind::Case) { return self.parse_case(); }
-        if self.at(TokenKind::Select) { return self.parse_select(); }
-        if self.at(TokenKind::Function) { return self.parse_function_def(); }
-        if self.at(TokenKind::Time) { return self.parse_time(); }
-        if self.at(TokenKind::Coproc) { return self.parse_coproc(); }
+        if self.at(TokenKind::LeftParen) {
+            return self.parse_subshell();
+        }
+        if self.at(TokenKind::LeftBrace) {
+            return self.parse_brace_group();
+        }
+        if self.at(TokenKind::If) {
+            return self.parse_if();
+        }
+        if self.at(TokenKind::For) {
+            return self.parse_for();
+        }
+        if self.at(TokenKind::While) {
+            return self.parse_while();
+        }
+        if self.at(TokenKind::Until) {
+            return self.parse_until();
+        }
+        if self.at(TokenKind::Case) {
+            return self.parse_case();
+        }
+        if self.at(TokenKind::Select) {
+            return self.parse_select();
+        }
+        if self.at(TokenKind::Function) {
+            return self.parse_function_def();
+        }
+        if self.at(TokenKind::Time) {
+            return self.parse_time();
+        }
+        if self.at(TokenKind::Coproc) {
+            return self.parse_coproc();
+        }
 
         match self.kind() {
             _ => {
@@ -456,7 +497,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        SimpleCommand { assignments, words, redirects }
+        SimpleCommand {
+            assignments,
+            words,
+            redirects,
+        }
     }
 
     fn is_assignment(&self) -> bool {
@@ -476,13 +521,17 @@ impl<'a> Parser<'a> {
             check_name
         };
         let is_ident = !ident_part.is_empty()
-            && ident_part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            && ident_part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
             && !ident_part.bytes().next().unwrap_or(b'0').is_ascii_digit();
         if !is_ident {
             return false;
         }
         // Check if next token is Equals
-        self.tokens.get(self.pos + 1).is_some_and(|t| t.kind == TokenKind::Equals)
+        self.tokens
+            .get(self.pos + 1)
+            .is_some_and(|t| t.kind == TokenKind::Equals)
     }
 
     fn parse_assignment(&mut self) -> Assignment {
@@ -502,12 +551,19 @@ impl<'a> Parser<'a> {
             let close = base.rfind(']').unwrap_or(base.len());
             let name_part = &base[..bracket];
             let sub_part = &base[bracket + 1..close];
-            (CompactString::from(name_part), Some(CompactString::from(sub_part)))
+            (
+                CompactString::from(name_part),
+                Some(CompactString::from(sub_part)),
+            )
         } else {
             (CompactString::from(base), None)
         };
 
-        let op = if is_append { AssignOp::Append } else { AssignOp::Assign };
+        let op = if is_append {
+            AssignOp::Append
+        } else {
+            AssignOp::Assign
+        };
 
         // Check for array literal: name=(word word ...)
         if self.at(TokenKind::LeftParen) {
@@ -515,7 +571,9 @@ impl<'a> Parser<'a> {
             let mut words = Vec::new();
             while !self.at(TokenKind::RightParen) && !self.at(TokenKind::Eof) {
                 self.skip_newlines();
-                if self.at(TokenKind::RightParen) { break; }
+                if self.at(TokenKind::RightParen) {
+                    break;
+                }
                 if self.at_word() {
                     words.push(self.parse_word());
                 } else {
@@ -582,7 +640,10 @@ impl<'a> Parser<'a> {
                     let name_tok = self.advance();
                     end_pos = name_tok.span.end;
                     parts.push(WordPart::DollarVar(name_tok.text.clone()));
-                } else if matches!(self.kind(), TokenKind::Question | TokenKind::Bang | TokenKind::At | TokenKind::Star) {
+                } else if matches!(
+                    self.kind(),
+                    TokenKind::Question | TokenKind::Bang | TokenKind::At | TokenKind::Star
+                ) {
                     // Special parameters: $?, $!, $@, $*
                     let special_tok = self.advance();
                     end_pos = special_tok.span.end;
@@ -676,9 +737,7 @@ impl<'a> Parser<'a> {
                 parts.push(WordPart::ArithSub(CompactString::from(expr)));
             }
             TokenKind::Backtick => {
-                parts.push(WordPart::CommandSub(Box::new(Program {
-                    commands: vec![],
-                })));
+                parts.push(WordPart::CommandSub(Box::new(Program { commands: vec![] })));
             }
             TokenKind::Star => parts.push(WordPart::Glob(GlobKind::Star)),
             TokenKind::Question => parts.push(WordPart::Glob(GlobKind::Question)),
@@ -696,14 +755,19 @@ impl<'a> Parser<'a> {
                 let mut inner_tokens = Vec::new();
                 let mut depth = 1u32;
                 while !self.at_eof() && depth > 0 {
-                    if self.at(TokenKind::LeftParen) || self.at(TokenKind::DollarParen)
-                        || self.at(TokenKind::ProcessSubIn) || self.at(TokenKind::ProcessSubOut)
+                    if self.at(TokenKind::LeftParen)
+                        || self.at(TokenKind::DollarParen)
+                        || self.at(TokenKind::ProcessSubIn)
+                        || self.at(TokenKind::ProcessSubOut)
                     {
                         depth += 1;
                         inner_tokens.push(self.advance().clone());
                     } else if self.at(TokenKind::RightParen) {
                         depth -= 1;
-                        if depth == 0 { self.advance(); break; }
+                        if depth == 0 {
+                            self.advance();
+                            break;
+                        }
                         inner_tokens.push(self.advance().clone());
                     } else {
                         inner_tokens.push(self.advance().clone());
@@ -716,7 +780,10 @@ impl<'a> Parser<'a> {
                 });
                 let mut sub_parser = Parser::new(&inner_tokens);
                 let body = sub_parser.parse();
-                parts.push(WordPart::ProcessSub { kind, body: Box::new(body) });
+                parts.push(WordPart::ProcessSub {
+                    kind,
+                    body: Box::new(body),
+                });
             }
             TokenKind::Tilde => {
                 // ~user or just ~
@@ -740,7 +807,8 @@ impl<'a> Parser<'a> {
         // Merge adjacent tokens (no whitespace) into the same word.
         // This handles cases like FOO=bar where the lexer splits on =,
         // and brace expansions like a{1,2}b.
-        while self.pos < self.tokens.len() && self.peek().span.start == end_pos
+        while self.pos < self.tokens.len()
+            && self.peek().span.start == end_pos
             && (self.at_word() || self.at_brace_in_word())
         {
             let next = self.advance().clone();
@@ -753,16 +821,20 @@ impl<'a> Parser<'a> {
                     parts.push(WordPart::Literal(CompactString::from("=")));
                 }
                 TokenKind::Dollar => {
-                    let adjacent = self.pos < self.tokens.len()
-                        && self.peek().span.start == end_pos;
-                    if adjacent && (self.kind() == TokenKind::Word || self.kind() == TokenKind::Number) {
+                    let adjacent =
+                        self.pos < self.tokens.len() && self.peek().span.start == end_pos;
+                    if adjacent
+                        && (self.kind() == TokenKind::Word || self.kind() == TokenKind::Number)
+                    {
                         let name_tok = self.advance();
                         end_pos = name_tok.span.end;
                         parts.push(WordPart::DollarVar(name_tok.text.clone()));
-                    } else if adjacent && matches!(
-                        self.kind(),
-                        TokenKind::Question | TokenKind::Bang | TokenKind::At | TokenKind::Star
-                    ) {
+                    } else if adjacent
+                        && matches!(
+                            self.kind(),
+                            TokenKind::Question | TokenKind::Bang | TokenKind::At | TokenKind::Star
+                        )
+                    {
                         // Special parameters: $?, $!, $@, $*. Mirror the
                         // initial-token handling so `rc=$?` and similar
                         // compound words get DollarVar rather than falling
@@ -771,9 +843,9 @@ impl<'a> Parser<'a> {
                         end_pos = special_tok.span.end;
                         let name = match special_tok.kind {
                             TokenKind::Question => "?",
-                            TokenKind::Bang     => "!",
-                            TokenKind::At       => "@",
-                            TokenKind::Star     => "*",
+                            TokenKind::Bang => "!",
+                            TokenKind::At => "@",
+                            TokenKind::Star => "*",
                             _ => unreachable!(),
                         };
                         parts.push(WordPart::DollarVar(CompactString::from(name)));
@@ -877,7 +949,10 @@ impl<'a> Parser<'a> {
     /// Check if we're at `((` — two consecutive LeftParen tokens.
     fn is_arith_cmd_ahead(&self) -> bool {
         self.at(TokenKind::LeftParen)
-            && self.tokens.get(self.pos + 1).is_some_and(|t| t.kind == TokenKind::LeftParen)
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .is_some_and(|t| t.kind == TokenKind::LeftParen)
     }
 
     /// Parse `(( expr ))` — arithmetic evaluation command.
@@ -894,7 +969,11 @@ impl<'a> Parser<'a> {
             if self.at(TokenKind::RightParen) {
                 if depth == 0 {
                     // Check if next is also RightParen → end of (( ))
-                    if self.tokens.get(self.pos + 1).is_some_and(|t| t.kind == TokenKind::RightParen) {
+                    if self
+                        .tokens
+                        .get(self.pos + 1)
+                        .is_some_and(|t| t.kind == TokenKind::RightParen)
+                    {
                         self.advance(); // first )
                         self.advance(); // second )
                         break;
@@ -960,7 +1039,8 @@ impl<'a> Parser<'a> {
         let condition = self.parse_compound_body(&[TokenKind::Then]);
         self.expect(TokenKind::Then);
         self.skip_newlines();
-        let then_body = self.parse_compound_body(&[TokenKind::Elif, TokenKind::Else, TokenKind::Fi]);
+        let then_body =
+            self.parse_compound_body(&[TokenKind::Elif, TokenKind::Else, TokenKind::Fi]);
 
         let mut elifs = Vec::new();
         while self.eat(TokenKind::Elif) {
@@ -968,7 +1048,8 @@ impl<'a> Parser<'a> {
             let elif_cond = self.parse_compound_body(&[TokenKind::Then]);
             self.expect(TokenKind::Then);
             self.skip_newlines();
-            let elif_body = self.parse_compound_body(&[TokenKind::Elif, TokenKind::Else, TokenKind::Fi]);
+            let elif_body =
+                self.parse_compound_body(&[TokenKind::Elif, TokenKind::Else, TokenKind::Fi]);
             elifs.push((elif_cond, elif_body));
         }
 
@@ -1022,7 +1103,12 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::Done);
             (body, self.parse_trailing_redirects())
         };
-        Command::For(Box::new(ForClause { var, words, body, redirects }))
+        Command::For(Box::new(ForClause {
+            var,
+            words,
+            body,
+            redirects,
+        }))
     }
 
     fn parse_while(&mut self) -> Command {
@@ -1042,7 +1128,11 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::Done);
             (body, self.parse_trailing_redirects())
         };
-        Command::While(Box::new(WhileClause { condition, body, redirects }))
+        Command::While(Box::new(WhileClause {
+            condition,
+            body,
+            redirects,
+        }))
     }
 
     fn parse_until(&mut self) -> Command {
@@ -1062,7 +1152,11 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::Done);
             (body, self.parse_trailing_redirects())
         };
-        Command::Until(Box::new(UntilClause { condition, body, redirects }))
+        Command::Until(Box::new(UntilClause {
+            condition,
+            body,
+            redirects,
+        }))
     }
 
     fn parse_case(&mut self) -> Command {
@@ -1109,13 +1203,21 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
 
             if !patterns.is_empty() {
-                items.push(CaseItem { patterns, body, terminator });
+                items.push(CaseItem {
+                    patterns,
+                    body,
+                    terminator,
+                });
             }
         }
 
         self.expect(TokenKind::Esac);
         let redirects = self.parse_trailing_redirects();
-        Command::Case(Box::new(CaseClause { word, items, redirects }))
+        Command::Case(Box::new(CaseClause {
+            word,
+            items,
+            redirects,
+        }))
     }
 
     fn parse_select(&mut self) -> Command {
@@ -1140,7 +1242,12 @@ impl<'a> Parser<'a> {
         let body = self.parse_compound_body(&[TokenKind::Done]);
         self.expect(TokenKind::Done);
         let redirects = self.parse_trailing_redirects();
-        Command::Select(Box::new(SelectClause { var, words, body, redirects }))
+        Command::Select(Box::new(SelectClause {
+            var,
+            words,
+            body,
+            redirects,
+        }))
     }
 
     fn parse_function_def(&mut self) -> Command {
@@ -1153,7 +1260,11 @@ impl<'a> Parser<'a> {
         self.skip_newlines();
         let body = self.parse_command();
         let redirects = self.parse_trailing_redirects();
-        Command::FunctionDef(Box::new(FunctionDef { name, body, redirects }))
+        Command::FunctionDef(Box::new(FunctionDef {
+            name,
+            body,
+            redirects,
+        }))
     }
 
     fn parse_function_def_short(&mut self) -> Command {
@@ -1164,7 +1275,11 @@ impl<'a> Parser<'a> {
         self.skip_newlines();
         let body = self.parse_command();
         let redirects = self.parse_trailing_redirects();
-        Command::FunctionDef(Box::new(FunctionDef { name, body, redirects }))
+        Command::FunctionDef(Box::new(FunctionDef {
+            name,
+            body,
+            redirects,
+        }))
     }
 
     fn parse_time(&mut self) -> Command {
@@ -1176,7 +1291,9 @@ impl<'a> Parser<'a> {
     fn parse_coproc(&mut self) -> Command {
         self.expect(TokenKind::Coproc);
         let name = if self.kind() == TokenKind::Word
-            && !self.tokens.get(self.pos + 1)
+            && !self
+                .tokens
+                .get(self.pos + 1)
                 .is_some_and(|t| t.kind == TokenKind::LeftParen || t.kind == TokenKind::LeftBrace)
         {
             None
@@ -1310,7 +1427,11 @@ impl<'a> Parser<'a> {
 
         // Check for != (Bang followed by Equals)
         if self.kind() == TokenKind::Bang {
-            if self.tokens.get(self.pos + 1).is_some_and(|t| t.kind == TokenKind::Equals) {
+            if self
+                .tokens
+                .get(self.pos + 1)
+                .is_some_and(|t| t.kind == TokenKind::Equals)
+            {
                 self.advance(); // !
                 self.advance(); // =
                 let right = self.parse_cond_word();
@@ -1386,9 +1507,15 @@ impl<'a> Parser<'a> {
         let mut exprs = [String::new(), String::new(), String::new()];
         let mut idx = 0;
         loop {
-            if self.at_eof() { break; }
+            if self.at_eof() {
+                break;
+            }
             if self.at(TokenKind::RightParen) {
-                if self.tokens.get(self.pos + 1).is_some_and(|t| t.kind == TokenKind::RightParen) {
+                if self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|t| t.kind == TokenKind::RightParen)
+                {
                     self.advance(); // first )
                     self.advance(); // second )
                     break;
@@ -1404,7 +1531,9 @@ impl<'a> Parser<'a> {
             }
             if self.at(TokenKind::Semi) {
                 self.advance();
-                if idx < 2 { idx += 1; }
+                if idx < 2 {
+                    idx += 1;
+                }
                 continue;
             }
             let tok = self.advance().clone();
@@ -1462,7 +1591,11 @@ impl<'a> Parser<'a> {
             let cmd = self.parse_complete_command();
             (vec![cmd], vec![])
         };
-        Command::Repeat(Box::new(RepeatClause { count, body, redirects }))
+        Command::Repeat(Box::new(RepeatClause {
+            count,
+            body,
+            redirects,
+        }))
     }
 }
 
@@ -1537,7 +1670,9 @@ fn parse_double_quoted_parts(content: &str) -> Vec<WordPart> {
         if bytes[i] == b'$' && i + 1 < bytes.len() {
             // Flush literal before $
             if i > literal_start {
-                parts.push(WordPart::Literal(CompactString::from(&content[literal_start..i])));
+                parts.push(WordPart::Literal(CompactString::from(
+                    &content[literal_start..i],
+                )));
             }
 
             if bytes[i + 1] == b'{' {
@@ -1584,7 +1719,10 @@ fn parse_double_quoted_parts(content: &str) -> Vec<WordPart> {
             } else {
                 // Special vars: $?, $!, $$, $#, $*, $@, $0-$9
                 let special = bytes[i + 1];
-                if matches!(special, b'?' | b'!' | b'$' | b'#' | b'*' | b'@' | b'0'..=b'9') {
+                if matches!(
+                    special,
+                    b'?' | b'!' | b'$' | b'#' | b'*' | b'@' | b'0'..=b'9'
+                ) {
                     parts.push(WordPart::DollarVar(CompactString::from(
                         &content[i + 1..i + 2],
                     )));
@@ -1604,7 +1742,9 @@ fn parse_double_quoted_parts(content: &str) -> Vec<WordPart> {
 
     // Flush remaining literal
     if literal_start < bytes.len() {
-        parts.push(WordPart::Literal(CompactString::from(&content[literal_start..])));
+        parts.push(WordPart::Literal(CompactString::from(
+            &content[literal_start..],
+        )));
     }
 
     if parts.is_empty() {
@@ -1633,7 +1773,9 @@ mod tests {
             let tok = lexer.next_token();
             let eof = tok.kind == TokenKind::Eof;
             tokens.push(tok);
-            if eof { break; }
+            if eof {
+                break;
+            }
         }
         tokens
     }
@@ -1761,7 +1903,11 @@ mod tests {
         assert_eq!(cmd.words.len(), 2);
         let parts = &cmd.words[1].parts;
         // Should contain at least a literal and a DollarVar
-        assert!(parts.iter().any(|p| matches!(p, WordPart::DollarVar(n) if n.as_str() == "name")));
+        assert!(
+            parts
+                .iter()
+                .any(|p| matches!(p, WordPart::DollarVar(n) if n.as_str() == "name"))
+        );
     }
 
     #[test]

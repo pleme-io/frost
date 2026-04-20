@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn sentinel_format_is_stable() {
         assert_eq!(picker_sentinel("history"), "__frost_picker_history__");
-        assert_eq!(picker_sentinel("files"),   "__frost_picker_files__");
+        assert_eq!(picker_sentinel("files"), "__frost_picker_files__");
     }
 
     #[test]

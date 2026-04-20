@@ -118,10 +118,7 @@ impl Builtin for Pushd {
             Err(e) => {
                 eprintln!("pushd: {target}: {e}");
                 // Undo the stack push on failure.
-                let restored = stack
-                    .splitn(2, '\n')
-                    .nth(1)
-                    .unwrap_or("");
+                let restored = stack.splitn(2, '\n').nth(1).unwrap_or("");
                 if restored.is_empty() {
                     env.unset_var(DIRSTACK_VAR);
                 } else {
@@ -313,7 +310,10 @@ mod tests {
         // cwd starts at /tmp
         Pushd.execute(&["/var/log"], &mut env);
         let stack = env.get_var(DIRSTACK_VAR).unwrap();
-        assert!(stack.starts_with("/tmp"), "stack should contain old dir: {stack}");
+        assert!(
+            stack.starts_with("/tmp"),
+            "stack should contain old dir: {stack}"
+        );
     }
 
     #[test]

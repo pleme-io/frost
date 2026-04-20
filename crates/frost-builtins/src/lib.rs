@@ -110,12 +110,18 @@ pub struct BuiltinResult {
 impl BuiltinResult {
     /// Simple success with no action.
     pub fn ok() -> Self {
-        Self { status: 0, action: BuiltinAction::None }
+        Self {
+            status: 0,
+            action: BuiltinAction::None,
+        }
     }
 
     /// Simple failure with no action.
     pub fn fail(status: i32) -> Self {
-        Self { status, action: BuiltinAction::None }
+        Self {
+            status,
+            action: BuiltinAction::None,
+        }
     }
 
     /// Result with an action.
@@ -141,7 +147,10 @@ pub trait Builtin: Send + Sync {
     /// Default implementation wraps `execute()` for backward compatibility.
     fn execute_with_action(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> BuiltinResult {
         let status = self.execute(args, env);
-        BuiltinResult { status, action: BuiltinAction::None }
+        BuiltinResult {
+            status,
+            action: BuiltinAction::None,
+        }
     }
 }
 
@@ -291,19 +300,69 @@ mod tests {
     fn default_registry_contains_all_builtins() {
         let reg = default_builtins();
         for name in &[
-            "cd", "echo", "print", "exit", "export", "true", "false",
-            "return", "break", "continue", "eval", "source", ".",
-            "set", "unset", "test", "[", ":", "shift", "type",
-            "whence", "command", "builtin", "alias", "unalias",
-            "typeset", "local", "declare", "integer", "float", "readonly",
-            "setopt", "unsetopt", "autoload", "zmodload", "functions",
-            "let", "printf", "read",
-            "getopts", "kill", "hash",
-            "jobs", "fg", "bg", "wait", "disown",
-            "pushd", "popd", "dirs",
-            "trap", "umask", "fc", "noglob", "emulate",
-            "disable", "enable",
-            "compdef", "compctl", "zle", "bindkey", "zstyle", "which",
+            "cd",
+            "echo",
+            "print",
+            "exit",
+            "export",
+            "true",
+            "false",
+            "return",
+            "break",
+            "continue",
+            "eval",
+            "source",
+            ".",
+            "set",
+            "unset",
+            "test",
+            "[",
+            ":",
+            "shift",
+            "type",
+            "whence",
+            "command",
+            "builtin",
+            "alias",
+            "unalias",
+            "typeset",
+            "local",
+            "declare",
+            "integer",
+            "float",
+            "readonly",
+            "setopt",
+            "unsetopt",
+            "autoload",
+            "zmodload",
+            "functions",
+            "let",
+            "printf",
+            "read",
+            "getopts",
+            "kill",
+            "hash",
+            "jobs",
+            "fg",
+            "bg",
+            "wait",
+            "disown",
+            "pushd",
+            "popd",
+            "dirs",
+            "trap",
+            "umask",
+            "fc",
+            "noglob",
+            "emulate",
+            "disable",
+            "enable",
+            "compdef",
+            "compctl",
+            "zle",
+            "bindkey",
+            "zstyle",
+            "which",
         ] {
             assert!(reg.contains(name), "missing builtin: {name}");
         }
