@@ -624,7 +624,8 @@ fn apply_source_with_context(
     // Directory bookmarks — expand the path once at rc-load (tilde
     // + $VAR) and register a cd-alias that holds the resolved
     // absolute path. Also stash in the summary's `marks` map for
-    // downstream consumers.
+    // downstream consumers, and seed completion_descriptions so the
+    // Tab menu shows `name → /resolved/path` for each bookmark.
     let marks: Vec<MarkSpec> =
         tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
     for m in marks {
@@ -632,6 +633,12 @@ fn apply_source_with_context(
         let quoted = mark::shell_quote_path(&resolved);
         env.aliases.insert(m.name.clone(), format!("cd {quoted}"));
         summary.aliases += 1;
+        // Tab-menu description so `mark<Tab>` shows each bookmark
+        // alongside its resolved path. completion_descriptions is
+        // consulted by frost-complete at command position.
+        summary
+            .completion_descriptions
+            .insert(m.name.clone(), format!("→ {resolved}"));
         summary.marks.insert(m.name, resolved);
     }
 
