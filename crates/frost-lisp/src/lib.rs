@@ -35,6 +35,7 @@ mod compcomp;
 mod completion;
 mod env;
 mod function;
+mod history;
 mod hook;
 mod integration;
 mod mark;
@@ -53,6 +54,7 @@ pub use compcomp::{FlagSpec, PositSpec, SubcmdSpec, ValueKind};
 pub use completion::CompletionSpec;
 pub use env::EnvSpec;
 pub use function::FunctionSpec;
+pub use history::HistorySpec;
 pub use hook::{hook_function_name, HookSpec};
 pub use integration::{lookup_integration, IntegrationSpec, KNOWN_INTEGRATIONS};
 pub use mark::{expand_mark_path, shell_quote_path, MarkSpec};
@@ -344,6 +346,65 @@ fn apply_source_with_context(
         if e.export {
             env.export_var(&e.name);
             summary.env_exports += 1;
+        }
+    }
+
+    // History config — consolidates HISTFILE / HISTSIZE / HISTIGNORE
+    // env vars + related shell options into one form. Handled AFTER
+    // the env pass so raw defenv entries still win if both specify
+    // the same variable (last-writer-wins consistent with aliases).
+    // Tilde / $VAR expansion runs on :file so the stored HISTFILE is
+    // the absolute path.
+    let histories: Vec<HistorySpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for h in histories {
+        if let Some(file) = &h.file {
+            let resolved = mark::expand_mark_path(file);
+            env.set_var("HISTFILE", &resolved);
+            env.export_var("HISTFILE");
+            summary.env_vars += 1;
+            summary.env_exports += 1;
+        }
+        if let Some(size) = h.size {
+            env.set_var("HISTSIZE", &size.to_string());
+            env.export_var("HISTSIZE");
+            summary.env_vars += 1;
+            summary.env_exports += 1;
+        }
+        if let Some(size) = h.save_size {
+            env.set_var("SAVEHIST", &size.to_string());
+            env.export_var("SAVEHIST");
+            summary.env_vars += 1;
+            summary.env_exports += 1;
+        }
+        if !h.ignore.is_empty() {
+            let joined = h.ignore.join(":");
+            env.set_var("HISTIGNORE", &joined);
+            env.export_var("HISTIGNORE");
+            summary.env_vars += 1;
+            summary.env_exports += 1;
+        }
+        // Shell options — best-effort. Unknown option names at this
+        // point are a silent no-op (the option enumeration lives in
+        // frost-options; we match the well-known histignore* and
+        // extendedhistory / sharehistory flags).
+        for (flag, opt_name) in [
+            (h.ignore_dups, "histignoredups"),
+            (h.ignore_space, "histignorespace"),
+            (h.extended, "extendedhistory"),
+            (h.share, "sharehistory"),
+        ] {
+            if let Some(b) = flag {
+                if let Some(opt) = frost_options::Options::from_name(opt_name) {
+                    if b {
+                        env.set_option(opt);
+                        summary.options_enabled += 1;
+                    } else {
+                        env.unset_option(opt);
+                        summary.options_disabled += 1;
+                    }
+                }
+            }
         }
     }
 
@@ -1323,6 +1384,33 @@ mod tests {
         let s = apply_source(src, &mut env).unwrap();
         assert_eq!(s.theme.hint.as_deref(), Some("#222222"));
         assert_eq!(s.theme.command.as_deref(), Some("#333333"));
+    }
+
+    #[test]
+    fn apply_defhistory_sets_env_vars_and_options() {
+        unsafe { std::env::set_var("X_HIST_HOME", "/tmp/histtest"); }
+        let mut env = ShellEnv::new();
+        let src = r##"
+            (defhistory :file "$X_HIST_HOME/.frost_history"
+                        :size 50000
+                        :save-size 50000
+                        :ignore ("ls" "pwd" "exit")
+                        :ignore-dups #t
+                        :ignore-space #t
+                        :extended #t)
+        "##;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(env.get_var("HISTFILE"), Some("/tmp/histtest/.frost_history"));
+        assert_eq!(env.get_var("HISTSIZE"), Some("50000"));
+        assert_eq!(env.get_var("SAVEHIST"), Some("50000"));
+        assert_eq!(env.get_var("HISTIGNORE"), Some("ls:pwd:exit"));
+        assert!(env.is_option_set(frost_options::ShellOption::HistIgnoreDups));
+        assert!(env.is_option_set(frost_options::ShellOption::HistIgnoreSpace));
+        // Some of the env pairs are also counted — we just want the
+        // summary non-trivial.
+        assert!(s.env_vars >= 4);
+        assert!(s.options_enabled >= 2);
+        unsafe { std::env::remove_var("X_HIST_HOME"); }
     }
 
     #[test]
