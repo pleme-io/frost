@@ -39,6 +39,7 @@ mod history;
 mod hook;
 mod integration;
 mod mark;
+mod notify;
 mod option;
 mod path;
 mod picker;
@@ -58,6 +59,7 @@ pub use history::HistorySpec;
 pub use hook::{hook_function_name, HookSpec};
 pub use integration::{lookup_integration, IntegrationSpec, KNOWN_INTEGRATIONS};
 pub use mark::{expand_mark_path, shell_quote_path, MarkSpec};
+pub use notify::NotifySpec;
 pub use option::OptionSetSpec;
 pub use path::{apply_path, expand_vars, PathSpec};
 pub use picker::{is_valid_action, picker_sentinel, PickerSpec, VALID_ACTIONS};
@@ -491,6 +493,24 @@ fn apply_source_with_context(
                 existing.push_str(&piece);
             }
             None => synthetic_precmd = Some(piece),
+        }
+    }
+
+    // defnotify — long-command desktop notification. Each form
+    // contributes one precmd body that checks duration + fires the
+    // platform notifier. Multiple forms compose (e.g. notify at 30s
+    // with "quick build" title AND notify at 5min with "long build"
+    // title) since hook-composition stacks them.
+    let notifies: Vec<NotifySpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for n in notifies {
+        let body = n.synthesize_precmd_body();
+        match &mut synthetic_precmd {
+            Some(existing) => {
+                existing.push('\n');
+                existing.push_str(&body);
+            }
+            None => synthetic_precmd = Some(body),
         }
     }
 
@@ -1384,6 +1404,27 @@ mod tests {
         let s = apply_source(src, &mut env).unwrap();
         assert_eq!(s.theme.hint.as_deref(), Some("#222222"));
         assert_eq!(s.theme.command.as_deref(), Some("#333333"));
+    }
+
+    #[test]
+    fn apply_defnotify_synthesizes_precmd_hook() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defnotify :threshold-ms 45000 :title "my-shell" :message "done")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert!(s.hooks >= 1, "defnotify should contribute at least one hook");
+        let precmd = env.functions.get("__frost_hook_precmd")
+            .expect("precmd registered");
+        let rendered = format!("{:?}", precmd.body);
+        // Threshold + title land in the body.
+        assert!(rendered.contains("45000"), "threshold missing: {rendered}");
+        assert!(rendered.contains("my-shell"), "title missing: {rendered}");
+        // Duration env var consulted.
+        assert!(rendered.contains("FROST_CMD_DURATION_MS"));
+        // Both platform notifiers present for portable dispatch.
+        assert!(rendered.contains("osascript"));
+        assert!(rendered.contains("notify-send"));
     }
 
     #[test]

@@ -124,6 +124,20 @@
 (defmark :name "cfg"        :path "${XDG_CONFIG_HOME:-$HOME/.config}")
 (defmark :name "dl"         :path "$HOME/Downloads")
 
+;; frostmourne :: 04-history
+;; ─────────────────────────
+;; Consolidated history configuration — one form replaces a scatter
+;; of (defenv :name "HIST*" …) + (defopts :enable ("histignore*" …)).
+
+(defhistory
+  :file         "$HOME/.frost_history"
+  :size         50000
+  :save-size    50000
+  :ignore       ("ls" "ll" "la" "pwd" "exit" "clear" "history")
+  :ignore-dups  #t
+  :ignore-space #t
+  :extended     #t)
+
 ;; frostmourne :: 10-prompt
 ;; ────────────────────────
 ;; Two-line prompt, all information driven by vars the hooks in
@@ -171,6 +185,7 @@ rc=$?
 if [ -n \"$FROST_CMD_START\" ]; then
   now=$(date +%s)
   dur=$((now - FROST_CMD_START))
+  FROST_CMD_DURATION_MS=$((dur * 1000))
   if [ \"$dur\" -ge 1 ]; then
     FROST_CMD_DURATION=\" ${dur}s\"
   else
@@ -179,8 +194,10 @@ if [ -n \"$FROST_CMD_START\" ]; then
   unset FROST_CMD_START
 else
   FROST_CMD_DURATION=\"\"
+  FROST_CMD_DURATION_MS=0
 fi
 export FROST_CMD_DURATION
+export FROST_CMD_DURATION_MS
 branch=$(git branch --show-current 2>/dev/null)
 if [ -n \"$branch\" ]; then
   dirty=\"\"
