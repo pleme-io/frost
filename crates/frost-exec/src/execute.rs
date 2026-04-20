@@ -900,19 +900,24 @@ impl<'env> Executor<'env> {
             let mut out = Vec::with_capacity(resolved_words.len());
             for word in &resolved_words {
                 let expanded = self.expand_word_multi(word);
+                let preserve_empties = word_has_quoted_part(word);
                 if word_has_unquoted_glob(word)
                     && self.env.is_option_set(frost_options::ShellOption::Glob)
                 {
                     for candidate in expanded {
                         self.apply_glob_to(candidate, &mut out);
                     }
-                } else {
+                } else if preserve_empties {
+                    // Quoted parts keep empty results (`[ -n "" ]` is
+                    // three args, not two).
                     out.extend(expanded);
+                } else {
+                    // Unquoted word that expanded to nothing — drop.
+                    // Matches POSIX "null-token removal" for bare vars.
+                    out.extend(expanded.into_iter().filter(|s| !s.is_empty()));
                 }
             }
-            out.into_iter()
-                .filter(|s| !s.is_empty() || cmd.words.len() == 1)
-                .collect()
+            out
         };
 
         if argv.is_empty() {
@@ -1477,6 +1482,21 @@ fn expand_aliases(
 /// filesystem glob expansion after all other expansions complete — a `*`
 /// that appears only inside a single-quoted literal or inside a `$var`
 /// value is NOT a glob under zsh's default semantics.
+/// Whether a word contains any quoted part (single- or double-quoted)
+/// or a literal. Words that consist purely of unquoted variable/subst
+/// references get "null-token removal" when they expand to empty —
+/// matching POSIX. Quoted empties are preserved so `[ -n "" ]` stays
+/// three arguments and `echo "" foo ""` preserves the empties.
+fn word_has_quoted_part(w: &Word) -> bool {
+    use frost_parser::ast::WordPart;
+    w.parts.iter().any(|p| {
+        matches!(
+            p,
+            WordPart::SingleQuoted(_) | WordPart::DoubleQuoted(_) | WordPart::Literal(_)
+        )
+    })
+}
+
 fn word_has_unquoted_glob(w: &Word) -> bool {
     use frost_parser::ast::WordPart;
     fn contains(parts: &[WordPart]) -> bool {

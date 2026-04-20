@@ -123,6 +123,41 @@ pub fn render(template: &str, env: &PromptEnv, prompt_subst: bool) -> String {
     out
 }
 
+/// Run a regex-free pass over the template that drops `$(…)` command
+/// substitutions through literally and *does not* process the `%`
+/// escapes inside them. This matches zsh behaviour — the output of a
+/// subshell is not re-subjected to `%` expansion.
+///
+/// Consumers that want subst *evaluated* should pre-resolve `$(…)`
+/// in the hook that populates [`PromptEnv::extra_vars`] and stick to
+/// `$VAR` in the template. frost-prompt itself doesn't spawn
+/// subshells.
+fn scan_dollar_paren_literal<I>(chars: &mut std::iter::Peekable<I>, out: &mut String)
+where
+    I: Iterator<Item = char>,
+{
+    // We've already consumed the leading `$`. Push it and the `(`.
+    out.push('$');
+    out.push('(');
+    chars.next(); // consume '('
+    let mut depth: u32 = 1;
+    while let Some(c) = chars.next() {
+        if c == '(' {
+            depth += 1;
+        } else if c == ')' {
+            depth -= 1;
+            out.push(')');
+            if depth == 0 {
+                return;
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    // Unterminated — let it ride; a prompt with an open paren shouldn't
+    // panic.
+}
+
 fn render_percent<I>(chars: &mut std::iter::Peekable<I>, env: &PromptEnv, out: &mut String)
 where
     I: Iterator<Item = char>,
@@ -157,6 +192,15 @@ where
             out.push_str(buf.format(env.exit_status));
         }
         '(' => render_conditional(chars, env, out),
+        'D' => render_date(chars, out),
+        'T' => {
+            // zsh `%T` == `%D{%H:%M}` — current time, hh:mm (24h).
+            out.push_str(&format_now("%H:%M"));
+        }
+        '*' => {
+            // zsh `%*` == `%D{%H:%M:%S}` — current time with seconds.
+            out.push_str(&format_now("%H:%M:%S"));
+        }
 
         // ── Color + attribute escapes (emit ANSI SGR) ──────────────
         // These match zsh when the terminal supports colors; we unconditionally
@@ -334,6 +378,14 @@ where
         return;
     };
 
+    // `$(…)` is command substitution — pass through literally so the `%`
+    // escapes inside (e.g. `$(date +%H:%M:%S)`) aren't eaten by zsh's
+    // `%`-escape pass. Evaluating the subst is the caller's job.
+    if next == '(' {
+        scan_dollar_paren_literal(chars, out);
+        return;
+    }
+
     if next == '{' {
         chars.next(); // consume '{'
         let mut name = String::new();
@@ -364,6 +416,55 @@ where
     }
 
     out.push('$');
+}
+
+/// Render `%D{fmt}` / `%D` — strftime-formatted current local time.
+/// Bare `%D` defaults to `%Y-%m-%d` per zsh.
+fn render_date<I>(chars: &mut std::iter::Peekable<I>, out: &mut String)
+where
+    I: Iterator<Item = char>,
+{
+    if chars.peek() != Some(&'{') {
+        out.push_str(&format_now("%Y-%m-%d"));
+        return;
+    }
+    chars.next(); // consume '{'
+    let mut fmt = String::new();
+    for c in chars.by_ref() {
+        if c == '}' {
+            break;
+        }
+        fmt.push(c);
+    }
+    let effective = if fmt.is_empty() { "%Y-%m-%d" } else { &fmt };
+    out.push_str(&format_now(effective));
+}
+
+/// Format the current local time via libc's strftime — keeps the
+/// crate dependency-light (just libc, already in use for hostname).
+fn format_now(fmt: &str) -> String {
+    unsafe {
+        let mut t: libc::time_t = 0;
+        libc::time(&mut t);
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&t, &mut tm).is_null() {
+            return String::new();
+        }
+        let Ok(c_fmt) = std::ffi::CString::new(fmt) else {
+            return String::new();
+        };
+        let mut buf = [0u8; 256];
+        let n = libc::strftime(
+            buf.as_mut_ptr().cast::<libc::c_char>(),
+            buf.len(),
+            c_fmt.as_ptr(),
+            &tm,
+        );
+        if n == 0 {
+            return String::new();
+        }
+        String::from_utf8_lossy(&buf[..n]).into_owned()
+    }
 }
 
 fn cwd_with_tilde(cwd: &str, home: &str) -> String {
@@ -517,5 +618,75 @@ mod tests {
         let env = PromptEnv::default();
         // `%F` without `{...}` just passes through.
         assert_eq!(render("%Fhi", &env, false), "%Fhi");
+    }
+
+    #[test]
+    fn dollar_paren_is_opaque_preserving_percents_inside() {
+        // Regression for the frostmourne bug: `$(date +%H:%M:%S)` was
+        // being re-entered by the `%` pass, so `%M` → hostname, `%S` →
+        // standout-start escape. With prompt_subst on, `$(…)` must be
+        // passed through literally so an outer evaluator (if any) sees
+        // it intact — and the `%` chars must NOT be consumed.
+        let env = PromptEnv {
+            hostname: "blackmatter.local".into(),
+            ..PromptEnv::default()
+        };
+        assert_eq!(
+            render("$(date +%H:%M:%S)", &env, true),
+            "$(date +%H:%M:%S)",
+            "command substitution should be preserved intact",
+        );
+    }
+
+    #[test]
+    fn dollar_paren_respects_nesting() {
+        let env = PromptEnv::default();
+        assert_eq!(render("$(echo $(nested))", &env, true), "$(echo $(nested))",);
+    }
+
+    #[test]
+    fn dollar_paren_ignored_when_subst_off() {
+        let env = PromptEnv::default();
+        // When prompt_subst is off, the leading `$` is literal too,
+        // but the `%` chars inside still get swallowed by the `%`
+        // pass (documented behaviour — users who disable prompt_subst
+        // are opting into zsh-strict semantics where `%` always wins).
+        let out = render("$(date +%H)", &env, false);
+        assert!(out.starts_with("$(date +"));
+    }
+
+    #[test]
+    fn date_escape_formats_current_time() {
+        let env = PromptEnv::default();
+        let out = render("%D{%H:%M:%S}", &env, false);
+        // strftime("%H:%M:%S") produces exactly 8 characters, hh:mm:ss.
+        assert_eq!(out.len(), 8);
+        assert_eq!(out.chars().nth(2), Some(':'));
+        assert_eq!(out.chars().nth(5), Some(':'));
+    }
+
+    #[test]
+    fn date_escape_without_braces_defaults_to_iso() {
+        let env = PromptEnv::default();
+        let out = render("%D", &env, false);
+        // `YYYY-MM-DD` — 10 chars with dashes at 4 and 7.
+        assert_eq!(out.len(), 10);
+        assert_eq!(out.chars().nth(4), Some('-'));
+        assert_eq!(out.chars().nth(7), Some('-'));
+    }
+
+    #[test]
+    fn time_escape_is_hhmm() {
+        let env = PromptEnv::default();
+        let out = render("%T", &env, false);
+        assert_eq!(out.len(), 5);
+        assert_eq!(out.chars().nth(2), Some(':'));
+    }
+
+    #[test]
+    fn star_escape_is_hhmmss() {
+        let env = PromptEnv::default();
+        let out = render("%*", &env, false);
+        assert_eq!(out.len(), 8);
     }
 }
