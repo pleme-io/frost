@@ -100,6 +100,30 @@
 (defabbr :name "psg"   :expansion "ps aux | grep -v grep | grep")
 (defabbr :name "histg" :expansion "history | grep")
 
+;; frostmourne :: 03-marks
+;; ───────────────────────
+;; Directory bookmarks — type the mark name, land in the directory.
+;; Resolved at rc-load so the alias body is the absolute path (no
+;; runtime $HOME dance). Mirrors blzsh's `alias code='cd …'` pattern
+;; with one clear declarative surface.
+
+;; ── Workspace roots ─────────────────────────────────────────────
+(defmark :name "code"    :path "$HOME/code")
+(defmark :name "github"  :path "$HOME/code/github")
+(defmark :name "pleme"   :path "$HOME/code/github/pleme-io")
+(defmark :name "drzln"   :path "$HOME/code/github/drzln")
+
+;; ── Primary pleme-io projects ───────────────────────────────────
+(defmark :name "nix"        :path "$HOME/code/github/pleme-io/nix")
+(defmark :name "frost-"     :path "$HOME/code/github/pleme-io/frost")
+(defmark :name "mourne"     :path "$HOME/code/github/pleme-io/frostmourne")
+(defmark :name "sub"        :path "$HOME/code/github/pleme-io/substrate")
+(defmark :name "bm"         :path "$HOME/code/github/pleme-io/blackmatter")
+
+;; ── XDG config roots ────────────────────────────────────────────
+(defmark :name "cfg"        :path "${XDG_CONFIG_HOME:-$HOME/.config}")
+(defmark :name "dl"         :path "$HOME/Downloads")
+
 ;; frostmourne :: 10-prompt
 ;; ────────────────────────
 ;; Two-line prompt, all information driven by vars the hooks in
@@ -181,12 +205,23 @@ export FROST_LAST_STATUS_GLYPH")
 
 ;; frostmourne :: 30-bindings
 ;; ──────────────────────────
-;; Authoring-only today — the ZLE dispatcher that consults
-;; `__frost_bind_<CANON_KEY>` in env.functions is queued for a
-;; follow-up. These bindings describe the intent that lands the moment
-;; the dispatcher wires up.
-
-(defbind :key "C-x e" :action "exec $EDITOR")
+;; Keystroke bindings that drive the ZLE. Three flavors:
+;;
+;;   :action "<shell>"        — runs the text as a shell command
+;;                              (legacy path, wrapped in a function)
+;;   :action "__frost_widget_<name>__" — dispatches to a built-in
+;;                              edit-buffer widget (edit-line,
+;;                              clear-screen)
+;;   :action "__frost_picker_<name>__" — dispatches to a skim-backed
+;;                              picker (history, files, cd, content)
+;;
+;; C-x e is the classic emacs/bash/zsh keystroke for "open the current
+;; command line in $EDITOR, edit it there, and inject the result back
+;; into the prompt". frost ships this as the `edit_line` widget; it
+;; writes the current buffer to a tempfile, spawns $EDITOR on it, and
+;; splices the edited contents back via reedline's
+;; run_edit_commands(Clear + InsertString) on the next read_line.
+(defbind :key "C-x e" :action "__frost_widget_edit_line__")
 (defbind :key "C-l"   :action "clear")
 (defbind :key "M-?"   :action "help")
 

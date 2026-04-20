@@ -48,7 +48,7 @@ mod trap;
 
 pub use abbr::{expand_abbreviation, AbbrSpec};
 pub use alias::AliasSpec;
-pub use bind::{bind_function_name, BindSpec};
+pub use bind::{bind_function_name, is_widget_action, BindSpec};
 pub use compcomp::{FlagSpec, PositSpec, SubcmdSpec, ValueKind};
 pub use completion::CompletionSpec;
 pub use env::EnvSpec;
@@ -512,24 +512,43 @@ fn apply_source_with_context(
     for b in binds {
         match frost_chord_kind(&b.key) {
             ChordKind::Single => {
-                let fn_name = bind_function_name(&b.key);
-                install_body_as_function(env, &fn_name, &b.action);
-                summary.bind_map.push((b.key.clone(), fn_name));
-                summary.binds += 1;
+                if is_widget_action(&b.action) {
+                    // Widget sentinel — route the chord directly to
+                    // the widget dispatcher (mirrors defpicker). No
+                    // shell-function wrap, so reedline's
+                    // ExecuteHostCommand returns the sentinel verbatim
+                    // and the REPL's widget layer catches it.
+                    summary.bind_map.push((b.key.clone(), b.action.clone()));
+                    summary.binds += 1;
+                } else {
+                    let fn_name = bind_function_name(&b.key);
+                    install_body_as_function(env, &fn_name, &b.action);
+                    summary.bind_map.push((b.key.clone(), fn_name));
+                    summary.binds += 1;
+                }
             }
             ChordKind::TwoKey { first, second } => {
-                // Function name encodes both chords so multiple
-                // (C-x e) vs (C-x a) entries don't collide.
-                let fn_name = format!(
-                    "__frost_bind_{}_{}",
-                    sanitize_chord(&first),
-                    sanitize_chord(&second),
-                );
-                install_body_as_function(env, &fn_name, &b.action);
+                // Two-key routing. Widget actions (e.g.
+                // `__frost_widget_edit_line__`) go in the
+                // continuation slot AS-IS so the REPL's widget
+                // dispatcher sees the sentinel directly. Shell
+                // actions go through install_body_as_function under
+                // a two-key-encoded name.
+                let stored_action = if is_widget_action(&b.action) {
+                    b.action.clone()
+                } else {
+                    let fn_name = format!(
+                        "__frost_bind_{}_{}",
+                        sanitize_chord(&first),
+                        sanitize_chord(&second),
+                    );
+                    install_body_as_function(env, &fn_name, &b.action);
+                    fn_name
+                };
                 summary.multi_key_bindings.push((
                     first.clone(),
                     second.clone(),
-                    fn_name,
+                    stored_action,
                 ));
                 // Bind the first chord to the prefix sentinel once
                 // per unique first-chord (`C-x e` and `C-x a` share
@@ -1039,6 +1058,42 @@ mod tests {
         let mut env = ShellEnv::new();
         let src = r#"(deftrap :signal "NONESUCH" :body "true")"#;
         assert!(matches!(apply_source(src, &mut env), Err(LispError::UnknownSignal(_))));
+    }
+
+    #[test]
+    fn apply_defbind_widget_routes_direct_to_bind_map() {
+        // Widget-sentinel actions skip the function-wrap step so
+        // reedline's ExecuteHostCommand returns the sentinel
+        // verbatim and the REPL's widget dispatcher catches it.
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defbind :key "C-l" :action "__frost_widget_clear__")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        let entry = s.bind_map.iter().find(|(k, _)| k == "C-l").unwrap();
+        assert_eq!(entry.1, "__frost_widget_clear__",
+            "widget action should round-trip to bind_map as-is, not wrapped");
+        // No shell function registered for this chord.
+        assert!(!env.functions.contains_key("__frost_bind_C-L"));
+    }
+
+    #[test]
+    fn apply_defbind_two_key_widget_routes_as_sentinel() {
+        // Two-key + widget action: the stored continuation should be
+        // the widget sentinel (not a function name) so the REPL
+        // dispatches widget semantics after reading the second key.
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defbind :key "C-x e" :action "__frost_widget_edit_line__")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.multi_key_bindings.len(), 1);
+        let (first, second, stored) = &s.multi_key_bindings[0];
+        assert_eq!(first, "C-x");
+        assert_eq!(second, "e");
+        assert_eq!(stored, "__frost_widget_edit_line__");
+        // No wrapper function under the two-key compound name.
+        assert!(!env.functions.contains_key("__frost_bind_C-x_e"));
     }
 
     #[test]
