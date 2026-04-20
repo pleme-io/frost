@@ -40,9 +40,15 @@ pub struct PathSpec {
 /// Unknown vars expand to empty (documented behavior — safer than
 /// leaving literal tokens in PATH).
 ///
-/// The expander is deliberately simple: `$NAME` is one alphanumeric
-/// run, `${NAME}` is anything up to `}`. No command substitution, no
-/// arithmetic, no parameter modifiers. Paths don't need that.
+/// The expander handles:
+///   * `$NAME`             — one alphanumeric run
+///   * `${NAME}`           — braced, any chars up to `}`
+///   * `${NAME:-default}`  — POSIX-style fallback: default used
+///                            when NAME is unset or empty. The
+///                            default is itself re-expanded so you
+///                            can nest (`${X:-${Y:-$HOME}}`).
+///
+/// No command substitution, no arithmetic, no other param modifiers.
 pub fn expand_vars(s: &str, lookup: &dyn Fn(&str) -> Option<String>) -> String {
     let mut out = String::with_capacity(s.len());
     let mut it = s.char_indices().peekable();
@@ -51,21 +57,50 @@ pub fn expand_vars(s: &str, lookup: &dyn Fn(&str) -> Option<String>) -> String {
             out.push(c);
             continue;
         }
-        // Braced form: ${NAME}
+        // Braced form: ${NAME} or ${NAME:-default}
         if let Some((_, '{')) = it.peek().copied() {
             it.next();
+            // Scan to the closing `}`, tracking nesting so a default
+            // expression like `${X:-${Y}}` doesn't terminate early.
             let start = i + 2;
             let mut end = start;
+            let mut depth: i32 = 0;
             while let Some((j, ch)) = it.peek().copied() {
-                if ch == '}' {
+                if ch == '{' {
+                    depth += 1;
+                    end = j + ch.len_utf8();
                     it.next();
-                    break;
+                    continue;
+                }
+                if ch == '}' {
+                    if depth == 0 {
+                        it.next();
+                        break;
+                    }
+                    depth -= 1;
+                    end = j + ch.len_utf8();
+                    it.next();
+                    continue;
                 }
                 end = j + ch.len_utf8();
                 it.next();
             }
-            let name = &s[start..end];
-            if let Some(v) = lookup(name) {
+            let body = &s[start..end];
+            // Split on first `:-` for the POSIX fallback form.
+            if let Some(sep) = body.find(":-") {
+                let name = &body[..sep];
+                let default_expr = &body[sep + 2..];
+                let value = lookup(name).filter(|v| !v.is_empty());
+                match value {
+                    Some(v) => out.push_str(&v),
+                    None => {
+                        // Recursively expand the default — this makes
+                        // `${X:-$HOME/.config}` work.
+                        let expanded = expand_vars(default_expr, lookup);
+                        out.push_str(&expanded);
+                    }
+                }
+            } else if let Some(v) = lookup(body) {
                 out.push_str(&v);
             }
             continue;
@@ -98,7 +133,11 @@ pub fn expand_vars(s: &str, lookup: &dyn Fn(&str) -> Option<String>) -> String {
 /// new value. Dedupes: if an entry already appears in `current`, the
 /// spec's copy wins (so prepend actually bumps priority) while a
 /// single copy is kept.
-pub fn apply_path(current: &str, spec: &PathSpec, lookup: &dyn Fn(&str) -> Option<String>) -> String {
+pub fn apply_path(
+    current: &str,
+    spec: &PathSpec,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> String {
     let expand = |v: &str| expand_vars(v, lookup);
 
     let existing: Vec<String> = current
@@ -124,7 +163,8 @@ pub fn apply_path(current: &str, spec: &PathSpec, lookup: &dyn Fn(&str) -> Optio
     // deduplicating in-order.
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<String> = Vec::new();
-    for entry in new_prepend.into_iter()
+    for entry in new_prepend
+        .into_iter()
         .chain(existing.into_iter())
         .chain(new_append.into_iter())
     {
@@ -157,6 +197,58 @@ mod tests {
         // Dangling $ kept literal (each one individually).
         assert_eq!(expand_vars("echo $$", &f), "echo $$");
         assert_eq!(expand_vars("$", &f), "$");
+    }
+
+    #[test]
+    fn expand_posix_fallback_unset_uses_default() {
+        let m: HashMap<&str, &str> = [("HOME", "/Users/me")].into_iter().collect();
+        let f = lookup_from(&m);
+        // Unset variable falls back to the literal default.
+        assert_eq!(
+            expand_vars("${XDG_CONFIG_HOME:-/fallback}", &f),
+            "/fallback"
+        );
+        // Default expression itself gets expanded — the canonical
+        // `~/.config` idiom: use XDG_CONFIG_HOME if set, else $HOME/.config.
+        assert_eq!(
+            expand_vars("${XDG_CONFIG_HOME:-$HOME/.config}", &f),
+            "/Users/me/.config"
+        );
+        // Braced HOME inside default.
+        assert_eq!(
+            expand_vars("${XDG_CONFIG_HOME:-${HOME}/.config}", &f),
+            "/Users/me/.config"
+        );
+    }
+
+    #[test]
+    fn expand_posix_fallback_set_wins_over_default() {
+        let m: HashMap<&str, &str> = [("HOME", "/Users/me"), ("XDG_CONFIG_HOME", "/Users/me/cfg")]
+            .into_iter()
+            .collect();
+        let f = lookup_from(&m);
+        // Set variable overrides the default completely.
+        assert_eq!(
+            expand_vars("${XDG_CONFIG_HOME:-$HOME/.config}", &f),
+            "/Users/me/cfg"
+        );
+    }
+
+    #[test]
+    fn expand_posix_fallback_empty_treated_as_unset() {
+        let m: HashMap<&str, &str> = [("HOME", "/Users/me"), ("EMPTY", "")].into_iter().collect();
+        let f = lookup_from(&m);
+        // POSIX `:-` treats empty as unset, so default applies.
+        assert_eq!(expand_vars("${EMPTY:-fallback}", &f), "fallback");
+        assert_eq!(expand_vars("${EMPTY:-$HOME/x}", &f), "/Users/me/x");
+    }
+
+    #[test]
+    fn expand_posix_fallback_nested() {
+        let m: HashMap<&str, &str> = [("HOME", "/Users/me")].into_iter().collect();
+        let f = lookup_from(&m);
+        // `${X:-${Y:-$HOME}}` — both outer and inner unset, innermost default wins.
+        assert_eq!(expand_vars("${X:-${Y:-$HOME}}", &f), "/Users/me");
     }
 
     #[test]
