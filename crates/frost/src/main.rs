@@ -152,10 +152,25 @@ fn dispatch_widget(
         "insert-last-arg" | "insert_last_arg" | "last-arg" => {
             widget_insert_last_arg(zle, history);
         }
+        "toggle-sudo" | "toggle_sudo" | "sudo-toggle" => widget_toggle_sudo(zle),
         _ => {
             eprintln!("frost: unknown widget: {name}");
         }
     }
+}
+
+/// toggle-sudo widget (fish parity): prepend `sudo ` to the current
+/// buffer if absent, strip it if present. One-tap rescue when a
+/// command fails with EACCES. Preserves trailing whitespace but not
+/// leading — `sudo ` is inserted at column zero.
+fn widget_toggle_sudo(zle: &mut frost_zle::ZleEngine) {
+    let buffer = zle.current_buffer_contents().unwrap_or_default();
+    let new_buffer = if let Some(stripped) = buffer.strip_prefix("sudo ") {
+        stripped.to_string()
+    } else {
+        format!("sudo {buffer}")
+    };
+    zle.inject_prefill(&new_buffer);
 }
 
 /// insert-last-arg widget (classic M-. in bash/zsh): append the last
