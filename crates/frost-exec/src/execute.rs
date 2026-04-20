@@ -8,15 +8,14 @@ use std::ffi::CString;
 
 use nix::unistd::Pid;
 
+use compact_str::CompactString;
 use frost_builtins::BuiltinRegistry;
 use frost_expand::ExpandEnv;
 use frost_parser::ast::{
-    BraceGroup, CaseClause, CForClause, Command, CompleteCommand, CondExpr, CondOp,
-    ForClause, IfClause, List, ListOp, Pipeline, Program, ProcessSubKind, RepeatClause,
-    SelectClause, SimpleCommand, Subshell, TryAlwaysClause, UntilClause, WhileClause,
-    Word, WordPart,
+    BraceGroup, CForClause, CaseClause, Command, CompleteCommand, CondExpr, CondOp, ForClause,
+    IfClause, List, ListOp, Pipeline, ProcessSubKind, Program, RepeatClause, SelectClause,
+    SimpleCommand, Subshell, TryAlwaysClause, UntilClause, WhileClause, Word, WordPart,
 };
-use compact_str::CompactString;
 use std::os::fd::RawFd;
 
 use crate::env::ShellEnv;
@@ -128,7 +127,11 @@ impl<'env> Executor<'env> {
             let status = self.execute_command(&cmds[0])?;
             // Set $pipestatus for single-command pipelines
             self.set_pipestatus(&[status]);
-            return Ok(if pipeline.bang { invert(status) } else { status });
+            return Ok(if pipeline.bang {
+                invert(status)
+            } else {
+                status
+            });
         }
 
         let mut pipes = Vec::with_capacity(cmds.len() - 1);
@@ -194,13 +197,19 @@ impl<'env> Executor<'env> {
 
         // Check PIPE_FAIL option: if set, return nonzero if any command failed
         if self.env.is_option_set(frost_options::ShellOption::PipeFail) {
-            let pipe_fail_status = statuses.iter().copied()
+            let pipe_fail_status = statuses
+                .iter()
+                .copied()
                 .find(|&s| s != 0)
                 .unwrap_or(last_status);
             last_status = pipe_fail_status;
         }
 
-        Ok(if pipeline.bang { invert(last_status) } else { last_status })
+        Ok(if pipeline.bang {
+            invert(last_status)
+        } else {
+            last_status
+        })
     }
 
     /// Set the `$pipestatus` array variable.
@@ -228,7 +237,9 @@ impl<'env> Executor<'env> {
             Command::Case(clause) => self.execute_case(clause),
             Command::Select(clause) => self.execute_select(clause),
             Command::FunctionDef(fdef) => {
-                self.env.functions.insert(fdef.name.to_string(), (**fdef).clone());
+                self.env
+                    .functions
+                    .insert(fdef.name.to_string(), (**fdef).clone());
                 Ok(0)
             }
             Command::ArithCmd(expr) => {
@@ -333,7 +344,10 @@ impl<'env> Executor<'env> {
 
     fn execute_for(&mut self, clause: &ForClause) -> ExecResult {
         let words = match &clause.words {
-            Some(ws) => ws.iter().flat_map(|w| self.expand_word_multi(w)).collect::<Vec<_>>(),
+            Some(ws) => ws
+                .iter()
+                .flat_map(|w| self.expand_word_multi(w))
+                .collect::<Vec<_>>(),
             None => self.env.positional_params.clone(),
         };
 
@@ -369,7 +383,9 @@ impl<'env> Executor<'env> {
             for cmd in &clause.condition {
                 cond_status = self.execute_complete_command(cmd)?;
             }
-            if cond_status != 0 { break; }
+            if cond_status != 0 {
+                break;
+            }
             for cmd in &clause.body {
                 match self.execute_complete_command(cmd) {
                     Ok(s) => status = s,
@@ -399,7 +415,9 @@ impl<'env> Executor<'env> {
             for cmd in &clause.condition {
                 cond_status = self.execute_complete_command(cmd)?;
             }
-            if cond_status == 0 { break; }
+            if cond_status == 0 {
+                break;
+            }
             for cmd in &clause.body {
                 match self.execute_complete_command(cmd) {
                     Ok(s) => status = s,
@@ -543,8 +561,12 @@ impl<'env> Executor<'env> {
             CondOp::IsDir => fs::metadata(val).is_ok_and(|m| m.is_dir()),
             CondOp::IsSymlink => fs::symlink_metadata(val).is_ok_and(|m| m.is_symlink()),
             CondOp::IsReadable => fs::metadata(val).is_ok(), // simplified
-            CondOp::IsWritable => fs::metadata(val).is_ok_and(|m| m.permissions().mode() & 0o200 != 0),
-            CondOp::IsExecutable => fs::metadata(val).is_ok_and(|m| m.permissions().mode() & 0o111 != 0),
+            CondOp::IsWritable => {
+                fs::metadata(val).is_ok_and(|m| m.permissions().mode() & 0o200 != 0)
+            }
+            CondOp::IsExecutable => {
+                fs::metadata(val).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+            }
             CondOp::IsNonEmpty => fs::metadata(val).is_ok_and(|m| m.len() > 0),
             CondOp::IsBlockDev => fs::metadata(val).is_ok_and(|m| m.file_type().is_block_device()),
             CondOp::IsCharDev => fs::metadata(val).is_ok_and(|m| m.file_type().is_char_device()),
@@ -562,14 +584,12 @@ impl<'env> Executor<'env> {
                 fs::metadata(val).is_ok_and(|m| m.gid() == gid)
             }
             CondOp::ModifiedSinceRead => {
-                fs::metadata(val).is_ok_and(|m| {
-                    m.modified().ok() > m.accessed().ok()
-                })
+                fs::metadata(val).is_ok_and(|m| m.modified().ok() > m.accessed().ok())
             }
-            CondOp::IsTty => {
-                val.parse::<i32>().ok()
-                    .is_some_and(|fd| nix::unistd::isatty(fd).unwrap_or(false))
-            }
+            CondOp::IsTty => val
+                .parse::<i32>()
+                .ok()
+                .is_some_and(|fd| nix::unistd::isatty(fd).unwrap_or(false)),
             CondOp::OptionSet => {
                 // [[ -o option_name ]] — check if shell option is set
                 frost_options::Options::from_name(val)
@@ -637,7 +657,9 @@ impl<'env> Executor<'env> {
             // Check condition
             if !clause.condition.is_empty() {
                 let cond = crate::arith::eval_arithmetic_mut(&clause.condition, self.env);
-                if cond == 0 { break; }
+                if cond == 0 {
+                    break;
+                }
             }
 
             // Execute body
@@ -729,7 +751,8 @@ impl<'env> Executor<'env> {
         for assign in &cmd.assignments {
             if let Some(ref arr_words) = assign.array_value {
                 // Array assignment: name=(word1 word2 ...)
-                let elements: Vec<String> = arr_words.iter()
+                let elements: Vec<String> = arr_words
+                    .iter()
                     .flat_map(|w| self.expand_word_multi(w))
                     .collect();
                 use crate::env::ShellValue;
@@ -838,10 +861,9 @@ impl<'env> Executor<'env> {
                 match assign.op {
                     AssignOp::Append => {
                         // name+=val — append to existing value
-                        let existing = self.env.get_var(&assign.name)
-                            .unwrap_or("")
-                            .to_string();
-                        self.env.set_var(&assign.name, &format!("{existing}{value}"));
+                        let existing = self.env.get_var(&assign.name).unwrap_or("").to_string();
+                        self.env
+                            .set_var(&assign.name, &format!("{existing}{value}"));
                     }
                     AssignOp::Assign => {
                         self.env.set_var(&assign.name, &value);
@@ -859,11 +881,15 @@ impl<'env> Executor<'env> {
         // literal. The guard closes the parent-side fds on drop (any return
         // path) so the child subprocess sees EOF / an empty read and exits.
         let mut proc_sub_fds: Vec<RawFd> = Vec::new();
-        let resolved_words: Vec<Word> = cmd.words.iter().map(|w| {
-            let (rw, fds) = self.resolve_process_subs(w);
-            proc_sub_fds.extend(fds);
-            rw
-        }).collect();
+        let resolved_words: Vec<Word> = cmd
+            .words
+            .iter()
+            .map(|w| {
+                let (rw, fds) = self.resolve_process_subs(w);
+                proc_sub_fds.extend(fds);
+                rw
+            })
+            .collect();
         let _proc_sub_guard = ProcSubFdGuard { fds: proc_sub_fds };
 
         // Glob expansion runs after all other word expansions. We only glob
@@ -874,7 +900,9 @@ impl<'env> Executor<'env> {
             let mut out = Vec::with_capacity(resolved_words.len());
             for word in &resolved_words {
                 let expanded = self.expand_word_multi(word);
-                if word_has_unquoted_glob(word) && self.env.is_option_set(frost_options::ShellOption::Glob) {
+                if word_has_unquoted_glob(word)
+                    && self.env.is_option_set(frost_options::ShellOption::Glob)
+                {
                     for candidate in expanded {
                         self.apply_glob_to(candidate, &mut out);
                     }
@@ -926,7 +954,11 @@ impl<'env> Executor<'env> {
             }
 
             let arg_refs: Vec<&str> = argv[1..].iter().map(|s| s.as_str()).collect();
-            let result = self.builtins.get(name).unwrap().execute_with_action(&arg_refs, self.env);
+            let result = self
+                .builtins
+                .get(name)
+                .unwrap()
+                .execute_with_action(&arg_refs, self.env);
             let status = result.status;
 
             // Handle special exit codes from control flow builtins
@@ -1056,8 +1088,7 @@ impl<'env> Executor<'env> {
             // convention. Authored via `(defhook :event "chpwd" :body …)`
             // in the rc; frost-lisp stores the body under
             // `__frost_hook_chpwd` in env.functions.
-            if status == 0 && name == "cd"
-                && self.env.functions.contains_key("__frost_hook_chpwd")
+            if status == 0 && name == "cd" && self.env.functions.contains_key("__frost_hook_chpwd")
             {
                 // Clone the body out of the borrow so we can call
                 // execute_command without holding an immutable ref to env.
@@ -1083,9 +1114,8 @@ impl<'env> Executor<'env> {
         // catch "bad path" cases there, which is semantically
         // distinct from "PATH has no such name".
         let name = &argv[0];
-        let looks_like_path = name.starts_with('/')
-            || name.starts_with("./")
-            || name.starts_with("../");
+        let looks_like_path =
+            name.starts_with('/') || name.starts_with("./") || name.starts_with("../");
         if !looks_like_path && path_lookup(&self.env, name).is_none() {
             return Err(ExecError::CommandNotFound(name.clone()));
         }
@@ -1105,7 +1135,11 @@ impl<'env> Executor<'env> {
                     std::process::exit(1);
                 }
                 let arg_refs: Vec<&str> = argv[1..].iter().map(|s| s.as_str()).collect();
-                let status = self.builtins.get(&argv[0]).unwrap().execute(&arg_refs, self.env);
+                let status = self
+                    .builtins
+                    .get(&argv[0])
+                    .unwrap()
+                    .execute(&arg_refs, self.env);
                 std::process::exit(status);
             }
             sys::ForkOutcome::Parent { child_pid } => {
@@ -1144,7 +1178,11 @@ impl<'env> Executor<'env> {
                 }
                 let err = sys::exec(&c_argv, &c_envp);
                 eprintln!("frost: {}: {err}", argv[0]);
-                std::process::exit(if err == nix::errno::Errno::ENOENT { 127 } else { 126 });
+                std::process::exit(if err == nix::errno::Errno::ENOENT {
+                    127
+                } else {
+                    126
+                });
             }
             sys::ForkOutcome::Parent { child_pid } => {
                 match sys::wait_pid(child_pid).map_err(ExecError::Wait)? {
@@ -1173,7 +1211,8 @@ impl<'env> Executor<'env> {
             // Handle $var references
             while let Some(dollar) = result.find('$') {
                 let rest = &result[dollar + 1..];
-                let end = rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                let end = rest
+                    .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
                     .unwrap_or(rest.len());
                 let var_name = &rest[..end];
                 let var_val = self.env.get_var(var_name).unwrap_or("").to_string();
@@ -1219,29 +1258,37 @@ impl<'env> Executor<'env> {
     /// macOS and Linux both expose `/dev/fd/N`, so the returned path works
     /// without any `mkfifo` dance.
     fn resolve_process_subs(&mut self, word: &Word) -> (Word, Vec<RawFd>) {
-        if !word.parts.iter().any(|p| matches!(p, WordPart::ProcessSub { .. })) {
+        if !word
+            .parts
+            .iter()
+            .any(|p| matches!(p, WordPart::ProcessSub { .. }))
+        {
             return (word.clone(), Vec::new());
         }
         let mut new_parts = Vec::with_capacity(word.parts.len());
         let mut open_fds = Vec::new();
         for part in &word.parts {
             match part {
-                WordPart::ProcessSub { kind, body } => {
-                    match self.spawn_process_sub(*kind, body) {
-                        Ok((path, fd)) => {
-                            open_fds.push(fd);
-                            new_parts.push(WordPart::Literal(CompactString::from(path)));
-                        }
-                        Err(e) => {
-                            eprintln!("frost: process substitution failed: {e}");
-                            new_parts.push(WordPart::Literal(CompactString::from("")));
-                        }
+                WordPart::ProcessSub { kind, body } => match self.spawn_process_sub(*kind, body) {
+                    Ok((path, fd)) => {
+                        open_fds.push(fd);
+                        new_parts.push(WordPart::Literal(CompactString::from(path)));
                     }
-                }
+                    Err(e) => {
+                        eprintln!("frost: process substitution failed: {e}");
+                        new_parts.push(WordPart::Literal(CompactString::from("")));
+                    }
+                },
                 other => new_parts.push(other.clone()),
             }
         }
-        (Word { parts: new_parts, span: word.span }, open_fds)
+        (
+            Word {
+                parts: new_parts,
+                span: word.span,
+            },
+            open_fds,
+        )
     }
 
     /// Fork a subprocess connected via a pipe and return the parent-side
@@ -1265,7 +1312,9 @@ impl<'env> Executor<'env> {
                 // Broken pipe from println!". This matches zsh behavior —
                 // `echo <(echo foo)` just prints the path; the child's write
                 // to a never-read pipe should not be a visible error.
-                unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL); }
+                unsafe {
+                    libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+                }
 
                 let (src, dst, close_other) = match kind {
                     ProcessSubKind::Input => (pipe.write, 1, pipe.read),
@@ -1374,7 +1423,9 @@ fn path_lookup(env: &ShellEnv, name: &str) -> Option<std::path::PathBuf> {
     for dir in path.split(':').filter(|p| !p.is_empty()) {
         let candidate = std::path::Path::new(dir).join(name);
         if let Ok(meta) = std::fs::metadata(&candidate) {
-            if !meta.is_file() { continue; }
+            if !meta.is_file() {
+                continue;
+            }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -1388,24 +1439,33 @@ fn path_lookup(env: &ShellEnv, name: &str) -> Option<std::path::PathBuf> {
     None
 }
 
-fn expand_aliases(mut argv: Vec<String>, aliases: &std::collections::HashMap<String, String>) -> Vec<String> {
+fn expand_aliases(
+    mut argv: Vec<String>,
+    aliases: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for _ in 0..16 {
         // Hard cap: 16 expansion rounds covers real configs and prevents any
         // pathological mutual-recursive aliases from looping forever.
-        if argv.is_empty() { break; }
+        if argv.is_empty() {
+            break;
+        }
         let first = &argv[0];
-        if seen.contains(first) { break; }
-        let Some(value) = aliases.get(first) else { break; };
+        if seen.contains(first) {
+            break;
+        }
+        let Some(value) = aliases.get(first) else {
+            break;
+        };
         seen.insert(first.clone());
         // Tokenize the alias value on whitespace. This is intentionally
         // simpler than full shell tokenization — aliases commonly look
         // like `ls -la` or `grep --color=auto` and don't need quoting.
-        let mut replacement: Vec<String> = value
-            .split_whitespace()
-            .map(|s| s.to_string())
-            .collect();
-        if replacement.is_empty() { break; }
+        let mut replacement: Vec<String> =
+            value.split_whitespace().map(|s| s.to_string()).collect();
+        if replacement.is_empty() {
+            break;
+        }
         replacement.extend(argv.drain(1..));
         argv = replacement;
     }
@@ -1458,7 +1518,9 @@ impl ExpandEnv for ExpandBridge<'_> {
     }
 
     fn get_var_value(&self, name: &str) -> Option<frost_expand::ExpandValue> {
-        self.env.get_value(name).map(|sv| ShellEnv::to_expand_value(sv))
+        self.env
+            .get_value(name)
+            .map(|sv| ShellEnv::to_expand_value(sv))
     }
 
     fn exit_status(&self) -> i32 {
@@ -1578,10 +1640,10 @@ fn capture_command_sub(program: &Program, env: &ShellEnv) -> String {
             let mut output = Vec::new();
             let mut buf = [0u8; 4096];
             loop {
-                let n = unsafe {
-                    libc::read(pipe.read, buf.as_mut_ptr().cast(), buf.len())
-                };
-                if n <= 0 { break; }
+                let n = unsafe { libc::read(pipe.read, buf.as_mut_ptr().cast(), buf.len()) };
+                if n <= 0 {
+                    break;
+                }
                 output.extend_from_slice(&buf[..n as usize]);
             }
             sys::close(pipe.read).ok();
@@ -1604,7 +1666,9 @@ fn eval_arithmetic(expr: &str, env: &ShellEnv) -> i64 {
 mod tests {
     use super::*;
     use frost_lexer::Span;
-    use frost_parser::ast::{Assignment, AssignOp, CompleteCommand, List, Pipeline, SimpleCommand, Word, WordPart};
+    use frost_parser::ast::{
+        AssignOp, Assignment, CompleteCommand, List, Pipeline, SimpleCommand, Word, WordPart,
+    };
     use pretty_assertions::assert_eq;
 
     fn literal_word(s: &str) -> Word {
@@ -1637,7 +1701,11 @@ mod tests {
     #[test]
     fn resolve_literal_word() {
         let env = ShellEnv::new();
-        let exec = Executor { env: &mut ShellEnv::new(), builtins: frost_builtins::default_builtins(), jobs: JobTable::new() };
+        let exec = Executor {
+            env: &mut ShellEnv::new(),
+            builtins: frost_builtins::default_builtins(),
+            jobs: JobTable::new(),
+        };
         let word = literal_word("hello");
         assert_eq!(exec.expand_word(&word), "hello");
     }
@@ -1795,7 +1863,10 @@ mod tests {
     // ── Alias expansion ────────────────────────────────────────────
 
     fn alias_map(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]

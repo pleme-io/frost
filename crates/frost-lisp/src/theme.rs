@@ -88,18 +88,18 @@ pub struct ThemeSpec {
 /// hex values. Fields map 1:1 to [`ThemeSpec`].
 pub fn nord_default() -> ThemeSpec {
     ThemeSpec {
-        name:            Some("nord".into()),
-        command:         Some("#A3BE8C".into()),
+        name: Some("nord".into()),
+        command: Some("#A3BE8C".into()),
         unknown_command: Some("#EBCB8B".into()),
-        string:          Some("#88C0D0".into()),
-        variable:        Some("#EBCB8B".into()),
-        reserved:        Some("#B48EAD".into()),
-        operator:        Some("#BF616A".into()),
-        comment:          Some("#4C566A".into()),
-        hint:            Some("#4C566A".into()),
-        broken_path:     Some("#BF616A".into()),
-        glob:            Some("#EBCB8B".into()),
-        number:          Some("#81A1C1".into()),
+        string: Some("#88C0D0".into()),
+        variable: Some("#EBCB8B".into()),
+        reserved: Some("#B48EAD".into()),
+        operator: Some("#BF616A".into()),
+        comment: Some("#4C566A".into()),
+        hint: Some("#4C566A".into()),
+        broken_path: Some("#BF616A".into()),
+        glob: Some("#EBCB8B".into()),
+        number: Some("#81A1C1".into()),
     }
 }
 
@@ -107,54 +107,54 @@ pub fn nord_default() -> ThemeSpec {
 /// Nord. Official color table from morhetz/gruvbox.
 pub fn gruvbox_dark() -> ThemeSpec {
     ThemeSpec {
-        name:            Some("gruvbox-dark".into()),
-        command:         Some("#B8BB26".into()), // bright green
+        name: Some("gruvbox-dark".into()),
+        command: Some("#B8BB26".into()),         // bright green
         unknown_command: Some("#FABD2F".into()), // bright yellow
-        string:          Some("#83A598".into()), // bright blue
-        variable:        Some("#FABD2F".into()),
-        reserved:        Some("#D3869B".into()), // bright purple
-        operator:        Some("#FB4934".into()), // bright red
-        comment:         Some("#928374".into()), // neutral gray
-        hint:            Some("#928374".into()),
-        broken_path:     Some("#FB4934".into()),
-        glob:            Some("#FABD2F".into()),
-        number:          Some("#83A598".into()),
+        string: Some("#83A598".into()),          // bright blue
+        variable: Some("#FABD2F".into()),
+        reserved: Some("#D3869B".into()), // bright purple
+        operator: Some("#FB4934".into()), // bright red
+        comment: Some("#928374".into()),  // neutral gray
+        hint: Some("#928374".into()),
+        broken_path: Some("#FB4934".into()),
+        glob: Some("#FABD2F".into()),
+        number: Some("#83A598".into()),
     }
 }
 
 /// Tokyo Night — folke/tokyonight.nvim port. Cooler blues + violets.
 pub fn tokyo_night() -> ThemeSpec {
     ThemeSpec {
-        name:            Some("tokyo-night".into()),
-        command:         Some("#9ECE6A".into()), // green
+        name: Some("tokyo-night".into()),
+        command: Some("#9ECE6A".into()),         // green
         unknown_command: Some("#E0AF68".into()), // yellow
-        string:          Some("#7DCFFF".into()), // cyan
-        variable:        Some("#E0AF68".into()),
-        reserved:        Some("#BB9AF7".into()), // purple
-        operator:        Some("#F7768E".into()), // red/pink
-        comment:         Some("#565F89".into()), // muted blue-gray
-        hint:            Some("#565F89".into()),
-        broken_path:     Some("#F7768E".into()),
-        glob:            Some("#E0AF68".into()),
-        number:          Some("#FF9E64".into()), // orange
+        string: Some("#7DCFFF".into()),          // cyan
+        variable: Some("#E0AF68".into()),
+        reserved: Some("#BB9AF7".into()), // purple
+        operator: Some("#F7768E".into()), // red/pink
+        comment: Some("#565F89".into()),  // muted blue-gray
+        hint: Some("#565F89".into()),
+        broken_path: Some("#F7768E".into()),
+        glob: Some("#E0AF68".into()),
+        number: Some("#FF9E64".into()), // orange
     }
 }
 
 /// Catppuccin Mocha — catppuccin/catppuccin's flagship dark flavor.
 pub fn catppuccin_mocha() -> ThemeSpec {
     ThemeSpec {
-        name:            Some("catppuccin-mocha".into()),
-        command:         Some("#A6E3A1".into()), // green
+        name: Some("catppuccin-mocha".into()),
+        command: Some("#A6E3A1".into()),         // green
         unknown_command: Some("#F9E2AF".into()), // yellow
-        string:          Some("#94E2D5".into()), // teal
-        variable:        Some("#F9E2AF".into()),
-        reserved:        Some("#CBA6F7".into()), // mauve
-        operator:        Some("#F38BA8".into()), // pink/red
-        comment:         Some("#6C7086".into()), // overlay0
-        hint:            Some("#6C7086".into()),
-        broken_path:     Some("#F38BA8".into()),
-        glob:            Some("#F9E2AF".into()),
-        number:          Some("#FAB387".into()), // peach
+        string: Some("#94E2D5".into()),          // teal
+        variable: Some("#F9E2AF".into()),
+        reserved: Some("#CBA6F7".into()), // mauve
+        operator: Some("#F38BA8".into()), // pink/red
+        comment: Some("#6C7086".into()),  // overlay0
+        hint: Some("#6C7086".into()),
+        broken_path: Some("#F38BA8".into()),
+        glob: Some("#F9E2AF".into()),
+        number: Some("#FAB387".into()), // peach
     }
 }
 
@@ -177,20 +177,24 @@ pub fn preset_by_name(name: &str) -> Option<ThemeSpec> {
 /// [`nord_default`]). Used by `apply_source` so users can ship a
 /// theme with only the slots they want to override.
 pub fn merge_theme(base: ThemeSpec, overlay: ThemeSpec) -> ThemeSpec {
-    macro_rules! pick { ($f:ident) => { overlay.$f.or(base.$f) }; }
+    macro_rules! pick {
+        ($f:ident) => {
+            overlay.$f.or(base.$f)
+        };
+    }
     ThemeSpec {
-        name:            pick!(name),
-        command:         pick!(command),
+        name: pick!(name),
+        command: pick!(command),
         unknown_command: pick!(unknown_command),
-        string:          pick!(string),
-        variable:        pick!(variable),
-        reserved:        pick!(reserved),
-        operator:        pick!(operator),
-        comment:         pick!(comment),
-        hint:            pick!(hint),
-        broken_path:     pick!(broken_path),
-        glob:            pick!(glob),
-        number:          pick!(number),
+        string: pick!(string),
+        variable: pick!(variable),
+        reserved: pick!(reserved),
+        operator: pick!(operator),
+        comment: pick!(comment),
+        hint: pick!(hint),
+        broken_path: pick!(broken_path),
+        glob: pick!(glob),
+        number: pick!(number),
     }
 }
 
@@ -254,7 +258,12 @@ mod tests {
 
     #[test]
     fn each_preset_fills_every_slot() {
-        for spec in [nord_default(), gruvbox_dark(), tokyo_night(), catppuccin_mocha()] {
+        for spec in [
+            nord_default(),
+            gruvbox_dark(),
+            tokyo_night(),
+            catppuccin_mocha(),
+        ] {
             assert!(spec.name.is_some(), "theme without a name");
             assert!(spec.command.is_some());
             assert!(spec.unknown_command.is_some());

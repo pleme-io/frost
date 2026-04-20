@@ -21,20 +21,20 @@
 use std::path::{Path, PathBuf};
 
 use reedline::{
-    default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     Completer, DefaultHinter, EditCommand, EditMode, Emacs, FileBackedHistory, Highlighter, Hinter,
     KeyCode, KeyModifiers, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
-    Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
+    Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi, default_emacs_keybindings,
+    default_vi_insert_keybindings, default_vi_normal_keybindings,
 };
 
 use nu_ansi_term::{Color, Style};
 
 mod highlight;
-pub use highlight::{parse_hex_style, FrostHighlighter, Palette, PaletteSlots};
+pub use highlight::{FrostHighlighter, Palette, PaletteSlots, parse_hex_style};
 
 // Re-export so downstream crates can write completers without adding a
 // direct `reedline` dep.
-pub use reedline::{Completer as CompleterTrait, Suggestion, Span as CompletionSpan};
+pub use reedline::{Completer as CompleterTrait, Span as CompletionSpan, Suggestion};
 
 pub type ZleResult<T> = Result<T, ZleError>;
 
@@ -119,7 +119,10 @@ impl Prompt for FrostPrompt {
             PromptHistorySearchStatus::Passing => "",
             PromptHistorySearchStatus::Failing => "failing ",
         };
-        std::borrow::Cow::Owned(format!("({prefix}reverse-search: {}) ", history_search.term))
+        std::borrow::Cow::Owned(format!(
+            "({prefix}reverse-search: {}) ",
+            history_search.term
+        ))
     }
 }
 
@@ -182,9 +185,7 @@ impl ZleEngine {
     /// `Completer` trait and is consulted on every Tab press. Pair this with
     /// a completion menu so suggestions are rendered below the prompt.
     pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
-        let menu = ReedlineMenu::EngineCompleter(Box::new(
-            reedline::ColumnarMenu::default(),
-        ));
+        let menu = ReedlineMenu::EngineCompleter(Box::new(reedline::ColumnarMenu::default()));
         self.inner = std::mem::replace(&mut self.inner, Reedline::create())
             .with_completer(completer)
             .with_menu(menu);
@@ -197,8 +198,8 @@ impl ZleEngine {
     /// lexer-driven highlighter runs ~50µs on 80-char lines, well under
     /// the "feels instant" threshold.
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
-        self.inner = std::mem::replace(&mut self.inner, Reedline::create())
-            .with_highlighter(highlighter);
+        self.inner =
+            std::mem::replace(&mut self.inner, Reedline::create()).with_highlighter(highlighter);
         self
     }
 
@@ -214,19 +215,16 @@ impl ZleEngine {
         let style = hint_color
             .and_then(crate::highlight::parse_hex_style)
             .unwrap_or_else(|| Style::new().fg(Color::Fixed(244))); // Nord polar-night-4
-        let hinter = DefaultHinter::default()
-            .with_style(style)
-            .with_min_chars(1);
-        self.inner = std::mem::replace(&mut self.inner, Reedline::create())
-            .with_hinter(Box::new(hinter));
+        let hinter = DefaultHinter::default().with_style(style).with_min_chars(1);
+        self.inner =
+            std::mem::replace(&mut self.inner, Reedline::create()).with_hinter(Box::new(hinter));
         self
     }
 
     /// Install an arbitrary [`Hinter`]. Used by tests + any consumer
     /// that wants to override the default history-backed hint.
     pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Self {
-        self.inner = std::mem::replace(&mut self.inner, Reedline::create())
-            .with_hinter(hinter);
+        self.inner = std::mem::replace(&mut self.inner, Reedline::create()).with_hinter(hinter);
         self
     }
 
@@ -299,7 +297,11 @@ impl ZleEngine {
     /// interpret as "match nothing".
     pub fn current_buffer_contents(&self) -> Option<String> {
         let s = self.inner.current_buffer_contents();
-        if s.is_empty() { None } else { Some(s.to_string()) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        }
     }
 
     /// Clear the edit buffer and seed it with `text`. On the NEXT
@@ -413,10 +415,7 @@ pub fn classify_chord(s: &str) -> ParsedChord {
     // considered valid; otherwise we call it Invalid so typos still
     // surface.
     if trimmed.contains(char::is_whitespace) {
-        let parts: Vec<String> = trimmed
-            .split_whitespace()
-            .map(String::from)
-            .collect();
+        let parts: Vec<String> = trimmed.split_whitespace().map(String::from).collect();
         if parts.iter().all(|p| parse_single_chord(p).is_some()) {
             return ParsedChord::MultiKey(parts);
         }
@@ -484,27 +483,27 @@ fn parse_single_chord(s: &str) -> Option<(KeyModifiers, KeyCode)> {
             return None;
         }
         match m.to_ascii_uppercase().as_str() {
-            "C" | "CTRL"  => modifier |= KeyModifiers::CONTROL,
-            "M" | "ALT"   => modifier |= KeyModifiers::ALT,
+            "C" | "CTRL" => modifier |= KeyModifiers::CONTROL,
+            "M" | "ALT" => modifier |= KeyModifiers::ALT,
             "S" | "SHIFT" => modifier |= KeyModifiers::SHIFT,
             _ => return None,
         }
     }
     let key_code = match key_tok.to_ascii_lowercase().as_str() {
-        "tab"    => KeyCode::Tab,
-        "enter"  => KeyCode::Enter,
-        "esc"    => KeyCode::Esc,
-        "space"  => KeyCode::Char(' '),
-        "up"     => KeyCode::Up,
-        "down"   => KeyCode::Down,
-        "left"   => KeyCode::Left,
-        "right"  => KeyCode::Right,
-        "home"   => KeyCode::Home,
-        "end"    => KeyCode::End,
-        "pageup"   | "pgup"   => KeyCode::PageUp,
-        "pagedown" | "pgdn"   => KeyCode::PageDown,
+        "tab" => KeyCode::Tab,
+        "enter" => KeyCode::Enter,
+        "esc" => KeyCode::Esc,
+        "space" => KeyCode::Char(' '),
+        "up" => KeyCode::Up,
+        "down" => KeyCode::Down,
+        "left" => KeyCode::Left,
+        "right" => KeyCode::Right,
+        "home" => KeyCode::Home,
+        "end" => KeyCode::End,
+        "pageup" | "pgup" => KeyCode::PageUp,
+        "pagedown" | "pgdn" => KeyCode::PageDown,
         "backspace" => KeyCode::Backspace,
-        "delete"    => KeyCode::Delete,
+        "delete" => KeyCode::Delete,
         s if s.chars().count() == 1 => KeyCode::Char(s.chars().next().unwrap()),
         _ => return None,
     };
@@ -654,7 +653,10 @@ mod tests {
         assert!(matches!(classify_chord("C-r"), ParsedChord::Single(..)));
         assert!(matches!(classify_chord("Ctrl-L"), ParsedChord::Single(..)));
         assert!(matches!(classify_chord("M-?"), ParsedChord::Single(..)));
-        assert!(matches!(classify_chord("backspace"), ParsedChord::Single(..)));
+        assert!(matches!(
+            classify_chord("backspace"),
+            ParsedChord::Single(..)
+        ));
         assert!(matches!(classify_chord("C-S-a"), ParsedChord::Single(..)));
     }
 
@@ -668,7 +670,7 @@ mod tests {
             ParsedChord::MultiKey(vec!["C-x".into(), "e".into()])
         );
         assert_eq!(
-            classify_chord("M-k  M-h"),   // double space
+            classify_chord("M-k  M-h"), // double space
             ParsedChord::MultiKey(vec!["M-k".into(), "M-h".into()])
         );
         assert_eq!(
@@ -696,13 +698,14 @@ mod tests {
         assert_eq!(classify_chord(""), ParsedChord::Invalid);
         assert_eq!(classify_chord("   "), ParsedChord::Invalid);
         assert_eq!(classify_chord("C-"), ParsedChord::Invalid);
-        assert_eq!(classify_chord("-x"), ParsedChord::Invalid);       // leading separator
-        assert_eq!(classify_chord("C--x"), ParsedChord::Invalid);     // double sep
-        assert_eq!(classify_chord("Z-x"), ParsedChord::Invalid);      // unknown mod
-        assert_eq!(classify_chord("C-xx"), ParsedChord::Invalid);     // multi-char key
-        assert_eq!(classify_chord("C-🎉"), ParsedChord::Single(
-            KeyModifiers::CONTROL, KeyCode::Char('🎉')
-        ));  // unicode key is a single codepoint, OK
+        assert_eq!(classify_chord("-x"), ParsedChord::Invalid); // leading separator
+        assert_eq!(classify_chord("C--x"), ParsedChord::Invalid); // double sep
+        assert_eq!(classify_chord("Z-x"), ParsedChord::Invalid); // unknown mod
+        assert_eq!(classify_chord("C-xx"), ParsedChord::Invalid); // multi-char key
+        assert_eq!(
+            classify_chord("C-🎉"),
+            ParsedChord::Single(KeyModifiers::CONTROL, KeyCode::Char('🎉'))
+        ); // unicode key is a single codepoint, OK
     }
 
     #[test]
@@ -715,8 +718,8 @@ mod tests {
         let zle = ZleEngine::in_memory();
         let _ = zle.with_bindings([
             ("C-x e".to_string(), "edit".to_string()),
-            ("C-l".to_string(), "clear".to_string()),     // single — applied
-            ("M-?".to_string(), "help".to_string()),       // single — applied
+            ("C-l".to_string(), "clear".to_string()), // single — applied
+            ("M-?".to_string(), "help".to_string()),  // single — applied
             ("garbage-chord".to_string(), "no".to_string()), // typo — warns
         ]);
     }
@@ -752,9 +755,8 @@ mod tests {
         // the keymap — confirmed via `current_mode` unchanged. The
         // pre-fix bug was that each call DID rebuild, losing custom
         // bindings every iteration.
-        let mut zle = ZleEngine::in_memory().with_bindings([
-            ("C-r".to_string(), "__frost_picker_history__".to_string()),
-        ]);
+        let mut zle = ZleEngine::in_memory()
+            .with_bindings([("C-r".to_string(), "__frost_picker_history__".to_string())]);
         assert_eq!(zle.current_mode, Some(EditModeKind::Emacs));
         zle.set_edit_mode(EditModeKind::Emacs);
         zle.set_edit_mode(EditModeKind::Emacs);
@@ -769,8 +771,8 @@ mod tests {
         let mut zle = ZleEngine::in_memory().with_bindings([
             ("C-r".to_string(), "__frost_picker_history__".to_string()),
             ("C-t".to_string(), "__frost_picker_files__".to_string()),
-            ("C-x e".to_string(), "edit".to_string()),  // multi-key — skipped but stashed
-            ("bogus".to_string(), "nope".to_string()),  // invalid — warned but stashed
+            ("C-x e".to_string(), "edit".to_string()), // multi-key — skipped but stashed
+            ("bogus".to_string(), "nope".to_string()), // invalid — warned but stashed
         ]);
         zle.set_edit_mode(EditModeKind::Vi);
         assert_eq!(zle.current_mode, Some(EditModeKind::Vi));
@@ -784,12 +786,15 @@ mod tests {
     fn apply_custom_bindings_to_reports_applied_count() {
         use reedline::default_emacs_keybindings;
         let mut kb = default_emacs_keybindings();
-        let n = apply_custom_bindings_to(&mut kb, &[
-            ("C-r".into(),     "sentinel-r".into()),   // single — applies
-            ("C-t".into(),     "sentinel-t".into()),   // single — applies
-            ("C-x e".into(),   "multi".into()),         // multi-key — skipped
-            ("bogus".into(),   "nope".into()),          // invalid — skipped
-        ]);
+        let n = apply_custom_bindings_to(
+            &mut kb,
+            &[
+                ("C-r".into(), "sentinel-r".into()), // single — applies
+                ("C-t".into(), "sentinel-t".into()), // single — applies
+                ("C-x e".into(), "multi".into()),    // multi-key — skipped
+                ("bogus".into(), "nope".into()),     // invalid — skipped
+            ],
+        );
         assert_eq!(n, 2, "only two single-chord bindings should apply");
     }
 }

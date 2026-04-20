@@ -59,10 +59,7 @@ pub fn apply_redirects_expanded(
     Ok(())
 }
 
-fn apply_one_expanded(
-    redir: &Redirect,
-    env: &dyn ExpandEnv,
-) -> Result<(), RedirectError> {
+fn apply_one_expanded(redir: &Redirect, env: &dyn ExpandEnv) -> Result<(), RedirectError> {
     let resolve = |word: &frost_parser::ast::Word| -> String {
         frost_expand::expand_word_to_string(word, env)
     };
@@ -282,7 +279,10 @@ fn apply_herestring_fd(target_fd: i32, body: &str) -> Result<(), RedirectError> 
     let data = body.as_bytes();
     let mut written = 0;
     while written < data.len() {
-        match nix::unistd::write(unsafe { std::os::fd::BorrowedFd::borrow_raw(p.write) }, &data[written..]) {
+        match nix::unistd::write(
+            unsafe { std::os::fd::BorrowedFd::borrow_raw(p.write) },
+            &data[written..],
+        ) {
             Ok(n) => written += n,
             Err(_) => break,
         }

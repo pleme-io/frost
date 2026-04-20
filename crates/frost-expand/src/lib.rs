@@ -38,9 +38,13 @@ pub trait ExpandEnv {
     /// Evaluate an arithmetic expression and return its result.
     fn eval_arithmetic(&self, expr: &str) -> i64;
     /// Get a random number 0-32767 (for $RANDOM).
-    fn random(&self) -> u32 { 0 }
+    fn random(&self) -> u32 {
+        0
+    }
     /// Get seconds since shell start (for $SECONDS).
-    fn seconds_elapsed(&self) -> u64 { 0 }
+    fn seconds_elapsed(&self) -> u64 {
+        0
+    }
 }
 
 /// Typed variable values visible to the expansion engine.
@@ -73,7 +77,10 @@ impl ExpandValue {
 /// In double-quoted context, the result is always a single string.
 /// Unquoted arrays and `$@` produce multiple words.
 pub fn expand_word(word: &Word, env: &dyn ExpandEnv) -> Vec<String> {
-    let mut ctx = ExpandCtx { env, in_double_quote: false };
+    let mut ctx = ExpandCtx {
+        env,
+        in_double_quote: false,
+    };
     let parts = ctx.expand_word_parts(&word.parts);
     if parts.is_empty() {
         vec![String::new()]
@@ -181,9 +188,11 @@ impl<'a> ExpandCtx<'a> {
                 parts
             }
             WordPart::DollarVar(name) => self.expand_dollar_var(name),
-            WordPart::DollarBrace { param, operator, arg } => {
-                self.expand_dollar_brace(param, operator.as_deref(), arg.as_deref())
-            }
+            WordPart::DollarBrace {
+                param,
+                operator,
+                arg,
+            } => self.expand_dollar_brace(param, operator.as_deref(), arg.as_deref()),
             WordPart::CommandSub(program) => {
                 let output = self.env.capture_command_sub(program);
                 // Trim trailing newlines (POSIX/zsh behavior)
@@ -309,7 +318,9 @@ impl<'a> ExpandCtx<'a> {
             }
             n if n.len() == 1 && n.as_bytes()[0].is_ascii_digit() => {
                 let idx = (n.as_bytes()[0] - b'1') as usize;
-                let val = self.env.positional_params()
+                let val = self
+                    .env
+                    .positional_params()
                     .get(idx)
                     .cloned()
                     .unwrap_or_default();
@@ -533,18 +544,29 @@ impl<'a> ExpandCtx<'a> {
         // ${+name} — existence test
         if let Some(name) = raw.strip_prefix('+') {
             if !name.is_empty() {
-                return vec![if self.env.get_var(name).is_some() { "1" } else { "0" }.to_string()];
+                return vec![
+                    if self.env.get_var(name).is_some() {
+                        "1"
+                    } else {
+                        "0"
+                    }
+                    .to_string(),
+                ];
             }
         }
 
         // Find the parameter name (stops at operator chars)
-        let name_end = raw.find(|c: char| matches!(c, ':' | '-' | '+' | '=' | '?' | '#' | '%' | '/' | '^' | ','))
+        let name_end = raw
+            .find(|c: char| matches!(c, ':' | '-' | '+' | '=' | '?' | '#' | '%' | '/' | '^' | ','))
             .unwrap_or(raw.len());
 
         // Handle subscript: name[sub]
         // Look for brackets anywhere in the raw string (not just before name_end)
         let (name, subscript) = if let Some(bracket_pos) = raw[..name_end].find('[') {
-            let close = raw[bracket_pos..].find(']').map(|p| bracket_pos + p + 1).unwrap_or(name_end);
+            let close = raw[bracket_pos..]
+                .find(']')
+                .map(|p| bracket_pos + p + 1)
+                .unwrap_or(name_end);
             (&raw[..bracket_pos], Some(&raw[bracket_pos + 1..close - 1]))
         } else {
             (&raw[..name_end], None)
@@ -552,7 +574,9 @@ impl<'a> ExpandCtx<'a> {
 
         // Adjust name_end to skip past the subscript brackets
         let effective_name_end = if subscript.is_some() {
-            raw[name_end..].find(']').map(|p| name_end + p + 1)
+            raw[name_end..]
+                .find(']')
+                .map(|p| name_end + p + 1)
                 .or(Some(name_end))
                 .unwrap_or(name_end)
                 .max(name_end)
@@ -662,7 +686,11 @@ impl<'a> ExpandCtx<'a> {
         // ${name:?word}
         if let Some(word) = rest.strip_prefix(":?") {
             if val.is_empty() {
-                let msg = if word.is_empty() { "parameter not set" } else { word };
+                let msg = if word.is_empty() {
+                    "parameter not set"
+                } else {
+                    word
+                };
                 eprintln!("frost: {name}: {msg}");
                 return vec![String::new()];
             }
@@ -671,7 +699,11 @@ impl<'a> ExpandCtx<'a> {
         // ${name?word}
         if let Some(word) = rest.strip_prefix('?') {
             if self.env.get_var(name).is_none() {
-                let msg = if word.is_empty() { "parameter not set" } else { word };
+                let msg = if word.is_empty() {
+                    "parameter not set"
+                } else {
+                    word
+                };
                 eprintln!("frost: {name}: {msg}");
                 return vec![String::new()];
             }
@@ -722,14 +754,21 @@ impl<'a> ExpandCtx<'a> {
 
     /// Expand a structured `ParamExpansion` node.
     fn expand_param_exp(&mut self, pe: &frost_parser::ast::ParamExpansion) -> Vec<String> {
-        use frost_parser::ast::{ParamModifier, CaseOp, SubAnchor, Subscript};
+        use frost_parser::ast::{CaseOp, ParamModifier, SubAnchor, Subscript};
 
         // Step 1: Resolve the base value
         let name = pe.name.as_str();
 
         // Handle ${+name} — is-set test
         if pe.is_set_test {
-            return vec![if self.env.get_var(name).is_some() { "1" } else { "0" }.to_string()];
+            return vec![
+                if self.env.get_var(name).is_some() {
+                    "1"
+                } else {
+                    "0"
+                }
+                .to_string(),
+            ];
         }
 
         // Handle ${#name} — length
@@ -848,7 +887,11 @@ impl<'a> ExpandCtx<'a> {
                     };
                     if empty_or_unset {
                         let msg = expand_word(word, self.env).join("");
-                        let msg = if msg.is_empty() { "parameter not set".to_string() } else { msg };
+                        let msg = if msg.is_empty() {
+                            "parameter not set".to_string()
+                        } else {
+                            msg
+                        };
                         eprintln!("frost: {name}: {msg}");
                         String::new()
                     } else {
@@ -863,9 +906,14 @@ impl<'a> ExpandCtx<'a> {
                     let pat = expand_word_to_string(pattern, self.env);
                     trim_suffix(&val, &pat, *longest)
                 }
-                ParamModifier::Substitute { anchor, pattern, replacement } => {
+                ParamModifier::Substitute {
+                    anchor,
+                    pattern,
+                    replacement,
+                } => {
                     let pat = expand_word_to_string(pattern, self.env);
-                    let rep = replacement.as_ref()
+                    let rep = replacement
+                        .as_ref()
                         .map(|w| expand_word_to_string(w, self.env))
                         .unwrap_or_default();
                     match anchor {
@@ -972,12 +1020,10 @@ impl<'a> ExpandCtx<'a> {
                         }
                     }
                 }
-                ExpandValue::Associative(m) => {
-                    match sub {
-                        "@" | "*" => m.values().cloned().collect::<Vec<_>>().join(" "),
-                        _ => m.get(sub).cloned().unwrap_or_default(),
-                    }
-                }
+                ExpandValue::Associative(m) => match sub {
+                    "@" | "*" => m.values().cloned().collect::<Vec<_>>().join(" "),
+                    _ => m.get(sub).cloned().unwrap_or_default(),
+                },
                 _ => value.to_scalar(),
             }
         } else {
@@ -995,10 +1041,16 @@ impl<'a> ExpandCtx<'a> {
             "@" => self.env.positional_params().join(" "),
             "0" => "frost".to_string(),
             "RANDOM" if self.env.get_var("RANDOM").is_none() => self.env.random().to_string(),
-            "SECONDS" if self.env.get_var("SECONDS").is_none() => self.env.seconds_elapsed().to_string(),
+            "SECONDS" if self.env.get_var("SECONDS").is_none() => {
+                self.env.seconds_elapsed().to_string()
+            }
             n if n.len() == 1 && n.as_bytes()[0].is_ascii_digit() => {
                 let idx = (n.as_bytes()[0] - b'1') as usize;
-                self.env.positional_params().get(idx).cloned().unwrap_or_default()
+                self.env
+                    .positional_params()
+                    .get(idx)
+                    .cloned()
+                    .unwrap_or_default()
             }
             _ => self.env.get_var(name).unwrap_or("").to_string(),
         }
@@ -1029,7 +1081,11 @@ fn split_first_slash(s: &str) -> (&str, &str) {
 /// Remove a glob pattern from the beginning of `s`.
 fn trim_prefix(s: &str, pattern: &str, longest: bool) -> String {
     if pattern == "*" {
-        return if longest { String::new() } else { s.to_string() };
+        return if longest {
+            String::new()
+        } else {
+            s.to_string()
+        };
     }
 
     // Convert simple shell glob to prefix-matching
@@ -1060,7 +1116,11 @@ fn trim_prefix(s: &str, pattern: &str, longest: bool) -> String {
 /// Remove a glob pattern from the end of `s`.
 fn trim_suffix(s: &str, pattern: &str, longest: bool) -> String {
     if pattern == "*" {
-        return if longest { String::new() } else { s.to_string() };
+        return if longest {
+            String::new()
+        } else {
+            s.to_string()
+        };
     }
 
     if let Some(prefix) = pattern.strip_suffix('*') {
@@ -1113,7 +1173,9 @@ pub fn expand_ansi_c(s: &str) -> String {
                             if ('0'..='7').contains(&d) {
                                 val = val * 8 + (d as u32 - '0' as u32);
                                 chars.next();
-                            } else { break; }
+                            } else {
+                                break;
+                            }
                         }
                     }
                     out.push(char::from_u32(val).unwrap_or('\0'));
@@ -1126,7 +1188,9 @@ pub fn expand_ansi_c(s: &str) -> String {
                             if d.is_ascii_hexdigit() {
                                 val = val * 16 + d.to_digit(16).unwrap_or(0);
                                 chars.next();
-                            } else { break; }
+                            } else {
+                                break;
+                            }
                         }
                     }
                     out.push(char::from_u32(val).unwrap_or('\0'));
@@ -1139,7 +1203,9 @@ pub fn expand_ansi_c(s: &str) -> String {
                             if d.is_ascii_hexdigit() {
                                 val = val * 16 + d.to_digit(16).unwrap_or(0);
                                 chars.next();
-                            } else { break; }
+                            } else {
+                                break;
+                            }
                         }
                     }
                     out.push(char::from_u32(val).unwrap_or('\u{FFFD}'));
@@ -1152,7 +1218,9 @@ pub fn expand_ansi_c(s: &str) -> String {
                             if d.is_ascii_hexdigit() {
                                 val = val * 16 + d.to_digit(16).unwrap_or(0);
                                 chars.next();
-                            } else { break; }
+                            } else {
+                                break;
+                            }
                         }
                     }
                     out.push(char::from_u32(val).unwrap_or('\u{FFFD}'));
@@ -1165,7 +1233,9 @@ pub fn expand_ansi_c(s: &str) -> String {
                             if ('0'..='7').contains(&next) {
                                 val = val * 8 + (next as u32 - '0' as u32);
                                 chars.next();
-                            } else { break; }
+                            } else {
+                                break;
+                            }
                         }
                     }
                     out.push(char::from_u32(val).unwrap_or('\0'));
@@ -1299,10 +1369,7 @@ fn parse_brace_range(inner: &str) -> Option<Vec<String>> {
 
     // Try numeric range
     if let (Ok(start), Ok(end)) = (start_str.parse::<i64>(), end_str.parse::<i64>()) {
-        let step: i64 = step_str
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1)
-            .max(1);
+        let step: i64 = step_str.and_then(|s| s.parse().ok()).unwrap_or(1).max(1);
 
         // Detect zero-padding
         let pad_width = if start_str.starts_with('0') && start_str.len() > 1 {
@@ -1360,7 +1427,9 @@ fn parse_brace_range(inner: &str) -> Option<Vec<String>> {
                     if let Some(c) = char::from_u32(i) {
                         result.push(c.to_string());
                     }
-                    if i < step { break; }
+                    if i < step {
+                        break;
+                    }
                     i -= step;
                 }
             }
@@ -1374,8 +1443,8 @@ fn parse_brace_range(inner: &str) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use frost_parser::ast::{Program, Word, WordPart};
     use frost_lexer::Span;
+    use frost_parser::ast::{Program, Word, WordPart};
     use pretty_assertions::assert_eq;
 
     // Minimal ExpandEnv for testing
@@ -1402,9 +1471,15 @@ mod tests {
         fn get_var_value(&self, _name: &str) -> Option<ExpandValue> {
             None // simplified: no typed values in test
         }
-        fn exit_status(&self) -> i32 { self.exit_status }
-        fn pid(&self) -> u32 { 12345 }
-        fn positional_params(&self) -> &[String] { &self.params }
+        fn exit_status(&self) -> i32 {
+            self.exit_status
+        }
+        fn pid(&self) -> u32 {
+            12345
+        }
+        fn positional_params(&self) -> &[String] {
+            &self.params
+        }
         fn capture_command_sub(&self, _program: &Program) -> String {
             String::new()
         }
@@ -1414,7 +1489,10 @@ mod tests {
     }
 
     fn mk_word(parts: Vec<WordPart>) -> Word {
-        Word { parts, span: Span::new(0, 1) }
+        Word {
+            parts,
+            span: Span::new(0, 1),
+        }
     }
 
     #[test]
@@ -1459,9 +1537,9 @@ mod tests {
     fn expand_dollar_at_in_double_quotes() {
         let mut env = TestEnv::new();
         env.params = vec!["a".into(), "b".into(), "c".into()];
-        let word = mk_word(vec![
-            WordPart::DoubleQuoted(vec![WordPart::DollarVar("@".into())])
-        ]);
+        let word = mk_word(vec![WordPart::DoubleQuoted(vec![WordPart::DollarVar(
+            "@".into(),
+        )])]);
         // "$@" produces each param as a separate word
         assert_eq!(expand_word(&word, &env), vec!["a", "b", "c"]);
     }

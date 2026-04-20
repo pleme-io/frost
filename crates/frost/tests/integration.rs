@@ -106,7 +106,7 @@ mod execution {
     use super::*;
 
     #[test]
-        fn true_exits_zero() {
+    fn true_exits_zero() {
         let output = Command::new(frost_bin())
             .args(["-c", "true"])
             .output()
@@ -120,7 +120,7 @@ mod execution {
     }
 
     #[test]
-        fn false_exits_one() {
+    fn false_exits_one() {
         let output = Command::new(frost_bin())
             .args(["-c", "false"])
             .output()
@@ -135,7 +135,7 @@ mod execution {
     }
 
     #[test]
-        fn echo_hello() {
+    fn echo_hello() {
         let output = Command::new(frost_bin())
             .args(["-c", "echo hello"])
             .output()
@@ -150,7 +150,7 @@ mod execution {
     }
 
     #[test]
-        fn echo_multiple_words() {
+    fn echo_multiple_words() {
         let output = Command::new(frost_bin())
             .args(["-c", "echo hello world"])
             .output()
@@ -165,7 +165,7 @@ mod execution {
     }
 
     #[test]
-        fn exit_with_code() {
+    fn exit_with_code() {
         let output = Command::new(frost_bin())
             .args(["-c", "exit 42"])
             .output()
@@ -180,7 +180,7 @@ mod execution {
     }
 
     #[test]
-        fn export_and_variable_expansion() {
+    fn export_and_variable_expansion() {
         let output = Command::new(frost_bin())
             .args(["-c", "export FOO=bar; echo $FOO"])
             .output()
@@ -195,7 +195,7 @@ mod execution {
     }
 
     #[test]
-        fn output_redirection() {
+    fn output_redirection() {
         let test_file = "/tmp/frost-test-redir.txt";
         // Clean up any previous run.
         let _ = std::fs::remove_file(test_file);
@@ -205,12 +205,9 @@ mod execution {
             .output()
             .expect("failed to run frost");
 
-        assert!(
-            output.status.success(),
-            "redirection command should exit 0"
-        );
-        let content = std::fs::read_to_string(test_file)
-            .expect("redirect target file should exist");
+        assert!(output.status.success(), "redirection command should exit 0");
+        let content =
+            std::fs::read_to_string(test_file).expect("redirect target file should exist");
         assert_eq!(content, "hello\n", "file should contain 'hello\\n'");
 
         // Clean up.
@@ -218,7 +215,7 @@ mod execution {
     }
 
     #[test]
-        fn pipeline() {
+    fn pipeline() {
         let output = Command::new(frost_bin())
             .args(["-c", "echo a | cat"])
             .output()
@@ -233,7 +230,7 @@ mod execution {
     }
 
     #[test]
-        fn and_list_success() {
+    fn and_list_success() {
         let output = Command::new(frost_bin())
             .args(["-c", "true && echo yes"])
             .output()
@@ -248,7 +245,7 @@ mod execution {
     }
 
     #[test]
-        fn or_list_fallback() {
+    fn or_list_fallback() {
         let output = Command::new(frost_bin())
             .args(["-c", "false || echo fallback"])
             .output()
@@ -263,7 +260,7 @@ mod execution {
     }
 
     #[test]
-        fn and_list_short_circuit() {
+    fn and_list_short_circuit() {
         let output = Command::new(frost_bin())
             .args(["-c", "false && echo nope"])
             .output()
@@ -289,13 +286,12 @@ mod script {
     use std::io::Write;
 
     #[test]
-        fn run_script_file() {
+    fn run_script_file() {
         let dir = std::env::temp_dir();
         let script_path = dir.join("frost-test-script.sh");
 
         {
-            let mut f = std::fs::File::create(&script_path)
-                .expect("failed to create temp script");
+            let mut f = std::fs::File::create(&script_path).expect("failed to create temp script");
             writeln!(f, "echo from-script").expect("failed to write script");
         }
 
@@ -315,13 +311,12 @@ mod script {
     }
 
     #[test]
-        fn run_multiline_script() {
+    fn run_multiline_script() {
         let dir = std::env::temp_dir();
         let script_path = dir.join("frost-test-multiline.sh");
 
         {
-            let mut f = std::fs::File::create(&script_path)
-                .expect("failed to create temp script");
+            let mut f = std::fs::File::create(&script_path).expect("failed to create temp script");
             writeln!(f, "echo line1").unwrap();
             writeln!(f, "echo line2").unwrap();
         }
@@ -342,13 +337,12 @@ mod script {
     }
 
     #[test]
-        fn script_exit_code_propagates() {
+    fn script_exit_code_propagates() {
         let dir = std::env::temp_dir();
         let script_path = dir.join("frost-test-exit-code.sh");
 
         {
-            let mut f = std::fs::File::create(&script_path)
-                .expect("failed to create temp script");
+            let mut f = std::fs::File::create(&script_path).expect("failed to create temp script");
             writeln!(f, "exit 7").unwrap();
         }
 

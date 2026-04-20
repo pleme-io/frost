@@ -4,9 +4,9 @@
 //! context-aware: quoting state, heredoc delimiters, and alias
 //! expansion all influence tokenization (matching zsh behavior).
 
-mod token;
 mod cursor;
 mod lexer;
+mod token;
 
-pub use token::{Token, TokenKind, Span};
 pub use lexer::Lexer;
+pub use token::{Span, Token, TokenKind};

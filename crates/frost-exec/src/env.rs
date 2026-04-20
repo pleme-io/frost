@@ -395,9 +395,7 @@ impl ShellEnv {
         // Doesn't exist: create exported empty var in global scope
         let mut var = ShellVar::new("");
         var.export = true;
-        self.scopes[0]
-            .variables
-            .insert(name.to_owned(), var);
+        self.scopes[0].variables.insert(name.to_owned(), var);
     }
 
     /// Remove a variable. Silently refuses read-only vars.
@@ -445,9 +443,10 @@ impl ShellEnv {
             let n: i64 = var.as_str().parse().unwrap_or(0);
             var.set_value(ShellValue::Integer(n));
         } else {
-            scope
-                .variables
-                .insert(name.to_owned(), ShellVar::with_value(ShellValue::Integer(0)));
+            scope.variables.insert(
+                name.to_owned(),
+                ShellVar::with_value(ShellValue::Integer(0)),
+            );
         }
     }
 
@@ -462,9 +461,10 @@ impl ShellEnv {
             let f: f64 = var.as_str().parse().unwrap_or(0.0);
             var.set_value(ShellValue::Float(f));
         } else {
-            scope
-                .variables
-                .insert(name.to_owned(), ShellVar::with_value(ShellValue::Float(0.0)));
+            scope.variables.insert(
+                name.to_owned(),
+                ShellVar::with_value(ShellValue::Float(0.0)),
+            );
         }
     }
 
@@ -477,11 +477,7 @@ impl ShellEnv {
         };
         if let Some(var) = scope.variables.get_mut(name) {
             let s = var.as_str().to_owned();
-            let arr = if s.is_empty() {
-                Vec::new()
-            } else {
-                vec![s]
-            };
+            let arr = if s.is_empty() { Vec::new() } else { vec![s] };
             var.set_value(ShellValue::Array(arr));
         } else {
             scope.variables.insert(
@@ -787,11 +783,7 @@ mod tests {
 
     #[test]
     fn shell_value_array() {
-        let var = ShellVar::with_value(ShellValue::Array(vec![
-            "a".into(),
-            "b".into(),
-            "c".into(),
-        ]));
+        let var = ShellVar::with_value(ShellValue::Array(vec!["a".into(), "b".into(), "c".into()]));
         assert_eq!(var.as_str(), "a b c");
     }
 

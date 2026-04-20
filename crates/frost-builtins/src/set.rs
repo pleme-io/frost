@@ -6,7 +6,9 @@ pub struct Set;
 pub struct Unset;
 
 impl Builtin for Set {
-    fn name(&self) -> &str { "set" }
+    fn name(&self) -> &str {
+        "set"
+    }
 
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         if args.is_empty() {
@@ -37,7 +39,9 @@ impl Builtin for Set {
 }
 
 impl Builtin for Unset {
-    fn name(&self) -> &str { "unset" }
+    fn name(&self) -> &str {
+        "unset"
+    }
 
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         for arg in args {

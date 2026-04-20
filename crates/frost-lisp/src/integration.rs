@@ -62,10 +62,7 @@ pub fn lookup_integration(tool: &str) -> Option<IntegrationRecipe> {
             // etc. that wrap `zoxide query` with smart cd semantics.
             // frost doesn't run that init, so we alias directly to
             // `zoxide query` — one subprocess per jump, same UX.
-            aliases: &[
-                ("z",  "zoxide query"),
-                ("zi", "zoxide query -i"),
-            ],
+            aliases: &[("z", "zoxide query"), ("zi", "zoxide query -i")],
             precmd_body: None,
             preexec_body: None,
             // zoxide needs to record every directory change.
@@ -99,8 +96,8 @@ pub fn lookup_integration(tool: &str) -> Option<IntegrationRecipe> {
 
         "atuin" => Some(IntegrationRecipe {
             aliases: &[
-                ("h",           "atuin search -i"),
-                ("hist-stats",  "atuin stats"),
+                ("h", "atuin search -i"),
+                ("hist-stats", "atuin stats"),
                 ("hist-import", "atuin import auto"),
             ],
             precmd_body: None,

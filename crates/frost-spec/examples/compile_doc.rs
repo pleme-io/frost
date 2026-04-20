@@ -57,8 +57,5 @@ fn main() {
     }
 
     println!("\n=== serde JSON surface (same types, no extra code) ===");
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&builtins[3]).unwrap()
-    );
+    println!("{}", serde_json::to_string_pretty(&builtins[3]).unwrap());
 }

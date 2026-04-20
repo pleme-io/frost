@@ -62,7 +62,11 @@ pub fn match_pattern(pattern: &str, name: &str, opts: &GlobOptions) -> bool {
 ///
 /// Components of `pattern` are matched per-segment. `**` consumes any number
 /// of intermediate directories.
-pub fn expand_pattern(pattern: &str, cwd: &Path, opts: &GlobOptions) -> Result<Vec<PathBuf>, GlobError> {
+pub fn expand_pattern(
+    pattern: &str,
+    cwd: &Path,
+    opts: &GlobOptions,
+) -> Result<Vec<PathBuf>, GlobError> {
     let absolute = pattern.starts_with('/');
     let (root, rest) = split_root(pattern, cwd);
     let segments: Vec<&str> = split_segments(rest);
@@ -173,7 +177,11 @@ fn match_inner(pattern: &str, name: &str, case_insensitive: bool) -> bool {
     let p = pattern.as_bytes();
     let n = name.as_bytes();
     let case_cmp = |a: u8, b: u8| -> bool {
-        if case_insensitive { a.eq_ignore_ascii_case(&b) } else { a == b }
+        if case_insensitive {
+            a.eq_ignore_ascii_case(&b)
+        } else {
+            a == b
+        }
     };
 
     // Indexes and the last backtrack point if we hit a `*`.
@@ -214,7 +222,9 @@ fn match_inner(pattern: &str, name: &str, case_insensitive: bool) -> bool {
             }
             Some(b'\\') => {
                 // Escaped literal
-                if pi + 1 >= p.len() { return false; }
+                if pi + 1 >= p.len() {
+                    return false;
+                }
                 if case_cmp(p[pi + 1], n[ni]) {
                     pi += 2;
                     ni += 1;
@@ -250,7 +260,9 @@ fn match_inner(pattern: &str, name: &str, case_insensitive: bool) -> bool {
         }
     }
     // Trailing `*`s in pattern must also match.
-    while p.get(pi) == Some(&b'*') { pi += 1; }
+    while p.get(pi) == Some(&b'*') {
+        pi += 1;
+    }
     pi == p.len()
 }
 
@@ -260,7 +272,9 @@ fn match_class(p: &[u8], c: u8, case_insensitive: bool) -> Option<usize> {
     // `p[0]` is '['
     let mut i = 1usize;
     let negate = p.get(i) == Some(&b'!') || p.get(i) == Some(&b'^');
-    if negate { i += 1; }
+    if negate {
+        i += 1;
+    }
     let mut matched = false;
     let mut first = true;
     while i < p.len() {
@@ -274,11 +288,17 @@ fn match_class(p: &[u8], c: u8, case_insensitive: bool) -> Option<usize> {
             let lo = p[i];
             let hi = p[i + 2];
             let (cl, ll, hl) = if case_insensitive {
-                (c.to_ascii_lowercase(), lo.to_ascii_lowercase(), hi.to_ascii_lowercase())
+                (
+                    c.to_ascii_lowercase(),
+                    lo.to_ascii_lowercase(),
+                    hi.to_ascii_lowercase(),
+                )
             } else {
                 (c, lo, hi)
             };
-            if cl >= ll && cl <= hl { matched = true; }
+            if cl >= ll && cl <= hl {
+                matched = true;
+            }
             i += 3;
         } else {
             let eq = if case_insensitive {
@@ -286,7 +306,9 @@ fn match_class(p: &[u8], c: u8, case_insensitive: bool) -> Option<usize> {
             } else {
                 b == c
             };
-            if eq { matched = true; }
+            if eq {
+                matched = true;
+            }
             i += 1;
         }
         first = false;
@@ -300,12 +322,21 @@ fn match_class(p: &[u8], c: u8, case_insensitive: bool) -> Option<usize> {
 mod tests {
     use super::*;
 
-    fn opts() -> GlobOptions { GlobOptions::default() }
+    fn opts() -> GlobOptions {
+        GlobOptions::default()
+    }
 
     #[test]
     fn star_matches_any_chars() {
         assert!(match_pattern("*.txt", "foo.txt", &opts()));
-        assert!(match_pattern("*.txt", ".txt", &GlobOptions { dot_glob: true, ..opts() }));
+        assert!(match_pattern(
+            "*.txt",
+            ".txt",
+            &GlobOptions {
+                dot_glob: true,
+                ..opts()
+            }
+        ));
         assert!(match_pattern("foo*", "foobar", &opts()));
         assert!(!match_pattern("*.txt", "foo.md", &opts()));
     }
@@ -321,7 +352,14 @@ mod tests {
     fn leading_dot_is_hidden_by_default() {
         assert!(!match_pattern("*", ".hidden", &opts()));
         assert!(match_pattern(".*", ".hidden", &opts()));
-        assert!(match_pattern("*", ".hidden", &GlobOptions { dot_glob: true, ..opts() }));
+        assert!(match_pattern(
+            "*",
+            ".hidden",
+            &GlobOptions {
+                dot_glob: true,
+                ..opts()
+            }
+        ));
     }
 
     #[test]
@@ -336,7 +374,10 @@ mod tests {
 
     #[test]
     fn case_insensitive_matching() {
-        let o = GlobOptions { case_insensitive: true, ..opts() };
+        let o = GlobOptions {
+            case_insensitive: true,
+            ..opts()
+        };
         assert!(match_pattern("FOO", "foo", &o));
         assert!(match_pattern("[A-Z]", "m", &o));
     }
@@ -369,7 +410,10 @@ mod tests {
         std::fs::write(tmp.join("src/main.rs"), "").unwrap();
         std::fs::write(tmp.join("src/README.md"), "").unwrap();
         let out = expand_pattern("src/*.rs", &tmp, &opts()).unwrap();
-        assert_eq!(out, vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/main.rs")]);
+        assert_eq!(
+            out,
+            vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/main.rs")]
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 
@@ -384,12 +428,15 @@ mod tests {
         std::fs::write(tmp.join("a/b/c/three.rs"), "").unwrap();
         let mut out = expand_pattern("**/*.rs", &tmp, &opts()).unwrap();
         out.sort();
-        assert_eq!(out, vec![
-            PathBuf::from("a/b/c/three.rs"),
-            PathBuf::from("a/b/two.rs"),
-            PathBuf::from("a/one.rs"),
-            PathBuf::from("top.rs"),
-        ]);
+        assert_eq!(
+            out,
+            vec![
+                PathBuf::from("a/b/c/three.rs"),
+                PathBuf::from("a/b/two.rs"),
+                PathBuf::from("a/one.rs"),
+                PathBuf::from("top.rs"),
+            ]
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 

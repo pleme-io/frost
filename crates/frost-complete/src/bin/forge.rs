@@ -21,15 +21,21 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use frost_complete::{
-    emit_lisp, parse_fish, parse_skim_yaml, parse_zsh_compdef, ForgeError, ForgeOutput,
+    ForgeError, ForgeOutput, emit_lisp, parse_fish, parse_skim_yaml, parse_zsh_compdef,
 };
 
 /// One-stop error type for the forge binary.
 #[derive(Debug)]
 enum CliError {
-    Io { path: PathBuf, source: std::io::Error },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     Forge(ForgeError),
-    NoFishCompletion { tool: String, searched: usize },
+    NoFishCompletion {
+        tool: String,
+        searched: usize,
+    },
 }
 
 impl fmt::Display for CliError {
@@ -47,7 +53,9 @@ impl fmt::Display for CliError {
 
 impl std::error::Error for CliError {}
 impl From<ForgeError> for CliError {
-    fn from(e: ForgeError) -> Self { Self::Forge(e) }
+    fn from(e: ForgeError) -> Self {
+        Self::Forge(e)
+    }
 }
 type Result<T> = std::result::Result<T, CliError>;
 
@@ -117,13 +125,13 @@ enum Cmd {
 fn main() {
     let cli = Cli::parse();
     let result = match cli.cmd {
-        Cmd::Fish { path }      => from_file(&path),
-        Cmd::FishDir { dir }    => from_dir(&dir),
-        Cmd::Tool { tool }      => from_tool(&tool),
-        Cmd::Yaml { path }      => from_yaml_file(&path),
-        Cmd::YamlDir { dir }    => from_yaml_dir(&dir),
-        Cmd::Zsh { path }       => from_zsh_file(&path),
-        Cmd::ZshDir { dir }     => from_zsh_dir(&dir),
+        Cmd::Fish { path } => from_file(&path),
+        Cmd::FishDir { dir } => from_dir(&dir),
+        Cmd::Tool { tool } => from_tool(&tool),
+        Cmd::Yaml { path } => from_yaml_file(&path),
+        Cmd::YamlDir { dir } => from_yaml_dir(&dir),
+        Cmd::Zsh { path } => from_zsh_file(&path),
+        Cmd::ZshDir { dir } => from_zsh_dir(&dir),
     };
     match result {
         Ok(out) => {
@@ -258,9 +266,17 @@ fn tool_fish_candidates(tool: &str) -> Vec<PathBuf> {
     let name = format!("{tool}.fish");
 
     if let Ok(home) = std::env::var("HOME") {
-        out.push(PathBuf::from(&home).join(".config/fish/completions").join(&name));
+        out.push(
+            PathBuf::from(&home)
+                .join(".config/fish/completions")
+                .join(&name),
+        );
         // fish vendor completions (user-level)
-        out.push(PathBuf::from(&home).join(".local/share/fish/vendor_completions.d").join(&name));
+        out.push(
+            PathBuf::from(&home)
+                .join(".local/share/fish/vendor_completions.d")
+                .join(&name),
+        );
     }
 
     let system_dirs = [
@@ -283,7 +299,8 @@ fn tool_fish_candidates(tool: &str) -> Vec<PathBuf> {
     if let Ok(path) = std::env::var("PATH") {
         for entry in path.split(':') {
             if entry.ends_with("/bin") {
-                let share = PathBuf::from(entry.trim_end_matches("/bin")).join("share/fish/completions");
+                let share =
+                    PathBuf::from(entry.trim_end_matches("/bin")).join("share/fish/completions");
                 out.push(share.join(&name));
             }
         }
@@ -291,4 +308,3 @@ fn tool_fish_candidates(tool: &str) -> Vec<PathBuf> {
 
     out
 }
-

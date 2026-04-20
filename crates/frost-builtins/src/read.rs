@@ -251,11 +251,7 @@ fn read_chars(count: usize) -> Option<String> {
         }
     }
 
-    if buf.is_empty() {
-        None
-    } else {
-        Some(buf)
-    }
+    if buf.is_empty() { None } else { Some(buf) }
 }
 
 /// Process backslash escapes in read input (without -r).

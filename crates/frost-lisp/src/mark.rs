@@ -86,22 +86,34 @@ mod tests {
     fn expand_mark_path_handles_tilde() {
         // Set HOME explicitly for the test.
         let prev = env::var("HOME").ok();
-        unsafe { env::set_var("HOME", "/Users/sample"); }
+        unsafe {
+            env::set_var("HOME", "/Users/sample");
+        }
         assert_eq!(expand_mark_path("~/code"), "/Users/sample/code");
         assert_eq!(expand_mark_path("~"), "/Users/sample");
-        if let Some(h) = prev { unsafe { env::set_var("HOME", h); } }
+        if let Some(h) = prev {
+            unsafe {
+                env::set_var("HOME", h);
+            }
+        }
     }
 
     #[test]
     fn expand_mark_path_handles_env_var() {
         let prev = env::var("X_TEST_MARK_DIR").ok();
-        unsafe { env::set_var("X_TEST_MARK_DIR", "/opt/x"); }
+        unsafe {
+            env::set_var("X_TEST_MARK_DIR", "/opt/x");
+        }
         assert_eq!(expand_mark_path("$X_TEST_MARK_DIR/sub"), "/opt/x/sub");
         assert_eq!(expand_mark_path("${X_TEST_MARK_DIR}/a"), "/opt/x/a");
         if let Some(p) = prev {
-            unsafe { env::set_var("X_TEST_MARK_DIR", p); }
+            unsafe {
+                env::set_var("X_TEST_MARK_DIR", p);
+            }
         } else {
-            unsafe { env::remove_var("X_TEST_MARK_DIR"); }
+            unsafe {
+                env::remove_var("X_TEST_MARK_DIR");
+            }
         }
     }
 

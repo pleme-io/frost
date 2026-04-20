@@ -54,11 +54,7 @@ pub struct Summary {
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Run all tests in a parsed [`TestFile`] against the frost binary at `frost_path`.
-pub fn run_test_file(
-    test_file: &TestFile,
-    frost_path: &Path,
-    verbose: bool,
-) -> Vec<TestResult> {
+pub fn run_test_file(test_file: &TestFile, frost_path: &Path, verbose: bool) -> Vec<TestResult> {
     // Run %prep if present.
     if let Some(prep) = &test_file.prep {
         if verbose {
@@ -66,7 +62,9 @@ pub fn run_test_file(
         }
         let prep_result = run_code(frost_path, prep, None);
         match prep_result {
-            RunOutcome::Completed { exit_code, stderr, .. } => {
+            RunOutcome::Completed {
+                exit_code, stderr, ..
+            } => {
                 if exit_code != 0 {
                     eprintln!(
                         "[prep] WARNING: prep for {} exited with code {exit_code}",
@@ -134,10 +132,7 @@ fn run_single_test(
         } => evaluate_test(test, exit_code, &stdout, &stderr),
         RunOutcome::Timeout => (
             TestStatus::Crash,
-            Some(format!(
-                "test timed out after {}s",
-                TEST_TIMEOUT.as_secs()
-            )),
+            Some(format!("test timed out after {}s", TEST_TIMEOUT.as_secs())),
         ),
         RunOutcome::Error(e) => (TestStatus::Crash, Some(format!("execution error: {e}"))),
     };
@@ -198,9 +193,7 @@ fn evaluate_test(
     match &test.expected_exit {
         ExpectedExit::Code(expected) => {
             if exit_code != *expected {
-                failures.push(format!(
-                    "exit code: expected {expected}, got {exit_code}"
-                ));
+                failures.push(format!("exit code: expected {expected}, got {exit_code}"));
             }
         }
         ExpectedExit::Any => {}

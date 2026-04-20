@@ -48,26 +48,26 @@ mod source;
 mod theme;
 mod trap;
 
-pub use abbr::{expand_abbreviation, AbbrSpec};
+pub use abbr::{AbbrSpec, expand_abbreviation};
 pub use alias::AliasSpec;
-pub use bind::{bind_function_name, is_widget_action, BindSpec};
+pub use bind::{BindSpec, bind_function_name, is_widget_action};
 pub use compcomp::{FlagSpec, PositSpec, SubcmdSpec, ValueKind};
 pub use completion::CompletionSpec;
 pub use env::EnvSpec;
 pub use function::FunctionSpec;
 pub use history::HistorySpec;
-pub use hook::{hook_function_name, HookSpec};
-pub use integration::{lookup_integration, IntegrationSpec, KNOWN_INTEGRATIONS};
-pub use mark::{expand_mark_path, shell_quote_path, MarkSpec};
+pub use hook::{HookSpec, hook_function_name};
+pub use integration::{IntegrationSpec, KNOWN_INTEGRATIONS, lookup_integration};
+pub use mark::{MarkSpec, expand_mark_path, shell_quote_path};
 pub use notify::NotifySpec;
 pub use option::OptionSetSpec;
-pub use path::{apply_path, expand_vars, PathSpec};
-pub use picker::{is_valid_action, picker_sentinel, PickerSpec, VALID_ACTIONS};
+pub use path::{PathSpec, apply_path, expand_vars};
+pub use picker::{PickerSpec, VALID_ACTIONS, is_valid_action, picker_sentinel};
 pub use prompt::PromptSpec;
 pub use source::SourceSpec;
 pub use theme::{
-    catppuccin_mocha, gruvbox_dark, merge_theme, nord_default, preset_by_name, tokyo_night,
-    ThemeSpec,
+    ThemeSpec, catppuccin_mocha, gruvbox_dark, merge_theme, nord_default, preset_by_name,
+    tokyo_night,
 };
 pub use trap::TrapSpec;
 
@@ -79,7 +79,10 @@ pub type LispResult<T> = Result<T, LispError>;
 #[derive(Debug, thiserror::Error)]
 pub enum LispError {
     #[error("io error reading rc file {path}: {source}")]
-    Io { path: String, source: std::io::Error },
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
     #[error("tatara-lisp parse error: {0}")]
     Parse(String),
     #[error("unknown option name: {0}")]
@@ -95,7 +98,10 @@ pub enum LispError {
     #[error("defsource path not found: {path} (from rc at {rc})")]
     SourceNotFound { path: String, rc: String },
     #[error("defsource path unreadable: {path}: {source}")]
-    SourceIo { path: String, source: std::io::Error },
+    SourceIo {
+        path: String,
+        source: std::io::Error,
+    },
 }
 
 /// Summary of what a rc-application round actually changed. Returned by
@@ -246,12 +252,8 @@ fn apply_source_with_context(
             source: e,
         })?;
         let inner_dir = canonical.parent().map(|p| p.to_path_buf());
-        let inner_summary = apply_source_with_context(
-            &inner_src,
-            env,
-            inner_dir.as_deref(),
-            visited,
-        )?;
+        let inner_summary =
+            apply_source_with_context(&inner_src, env, inner_dir.as_deref(), visited)?;
         merge_summary(&mut summary, inner_summary);
     }
 
@@ -272,7 +274,8 @@ fn apply_source_with_context(
             .ok_or_else(|| LispError::UnknownIntegration(spec.tool.clone()))?;
         // Aliases → env.aliases, counted toward summary.aliases.
         for (name, value) in recipe.aliases {
-            env.aliases.insert((*name).to_string(), (*value).to_string());
+            env.aliases
+                .insert((*name).to_string(), (*value).to_string());
             summary.aliases += 1;
         }
         // Env vars → env.set_var + optional export.
@@ -530,8 +533,8 @@ fn apply_source_with_context(
     let mut hook_bodies: std::collections::HashMap<&'static str, String> =
         std::collections::HashMap::new();
     for h in hooks {
-        let fn_name = hook_function_name(&h.event)
-            .ok_or_else(|| LispError::UnknownHook(h.event.clone()))?;
+        let fn_name =
+            hook_function_name(&h.event).ok_or_else(|| LispError::UnknownHook(h.event.clone()))?;
         hook_bodies
             .entry(fn_name)
             .and_modify(|existing| {
@@ -629,11 +632,9 @@ fn apply_source_with_context(
                     install_body_as_function(env, &fn_name, &b.action);
                     fn_name
                 };
-                summary.multi_key_bindings.push((
-                    first.clone(),
-                    second.clone(),
-                    stored_action,
-                ));
+                summary
+                    .multi_key_bindings
+                    .push((first.clone(), second.clone(), stored_action));
                 // Bind the first chord to the prefix sentinel once
                 // per unique first-chord (`C-x e` and `C-x a` share
                 // `__frost_chord_prefix_C-x__`).
@@ -661,9 +662,13 @@ fn apply_source_with_context(
         let var = format!("__frost_complete_{}", c.command);
         let payload = serde_json::to_string(&c).unwrap_or_default();
         env.set_var(&var, &payload);
-        summary.completion_map.insert(c.command.clone(), c.args.clone());
+        summary
+            .completion_map
+            .insert(c.command.clone(), c.args.clone());
         if let Some(desc) = c.description.clone() {
-            summary.completion_descriptions.insert(c.command.clone(), desc);
+            summary
+                .completion_descriptions
+                .insert(c.command.clone(), desc);
         }
         summary.completions += 1;
     }
@@ -839,7 +844,8 @@ fn merge_summary(dst: &mut ApplySummary, src: ApplySummary) {
     dst.integrations += src.integrations;
     dst.completion_map.extend(src.completion_map);
     dst.bind_map.extend(src.bind_map);
-    dst.completion_descriptions.extend(src.completion_descriptions);
+    dst.completion_descriptions
+        .extend(src.completion_descriptions);
     dst.pickers.extend(src.pickers);
     dst.subcmds.extend(src.subcmds);
     dst.flags.extend(src.flags);
@@ -871,7 +877,8 @@ fn resolve_source_path(raw: &str, rc_dir: Option<&std::path::Path>) -> std::path
             std::path::PathBuf::from(&expanded)
         }
     } else if expanded == "~" {
-        std::env::var("HOME").map(std::path::PathBuf::from)
+        std::env::var("HOME")
+            .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from(&expanded))
     } else {
         std::path::PathBuf::from(&expanded)
@@ -939,7 +946,9 @@ fn install_body_as_function(env: &mut ShellEnv, fn_name: &str, body: &str) {
             let tk = lexer.next_token();
             let eof = tk.kind == frost_lexer::TokenKind::Eof;
             toks.push(tk);
-            if eof { break; }
+            if eof {
+                break;
+            }
         }
         toks
     };
@@ -987,7 +996,9 @@ pub fn default_rc_path() -> std::path::PathBuf {
     }
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
         let p = std::path::PathBuf::from(xdg).join("frost").join("rc.lisp");
-        if p.exists() { return p; }
+        if p.exists() {
+            return p;
+        }
     }
     let home = std::env::var("HOME").unwrap_or_default();
     std::path::PathBuf::from(home).join(".frostrc.lisp")
@@ -1009,7 +1020,10 @@ mod tests {
         let s = apply_source(src, &mut env).unwrap();
         assert_eq!(s.aliases, 2);
         assert_eq!(env.aliases.get("ll").map(String::as_str), Some("ls -la"));
-        assert_eq!(env.aliases.get("gst").map(String::as_str), Some("git status -sb"));
+        assert_eq!(
+            env.aliases.get("gst").map(String::as_str),
+            Some("git status -sb")
+        );
     }
 
     #[test]
@@ -1030,7 +1044,10 @@ mod tests {
     fn apply_unknown_option_errors() {
         let mut env = ShellEnv::new();
         let src = r#"(defopts :enable ("notAnOption"))"#;
-        assert!(matches!(apply_source(src, &mut env), Err(LispError::UnknownOption(_))));
+        assert!(matches!(
+            apply_source(src, &mut env),
+            Err(LispError::UnknownOption(_))
+        ));
     }
 
     #[test]
@@ -1098,9 +1115,10 @@ mod tests {
         "#;
         let s = apply_source(src, &mut env).unwrap();
         assert_eq!(s.hooks, 1);
-        assert!(env.functions.contains_key(
-            hook_function_name("precmd").unwrap()
-        ));
+        assert!(
+            env.functions
+                .contains_key(hook_function_name("precmd").unwrap())
+        );
     }
 
     #[test]
@@ -1117,17 +1135,26 @@ mod tests {
         let s = apply_source(src, &mut env).unwrap();
         assert_eq!(s.hooks, 2);
         // The stored function body should mention both.
-        let fn_def = env.functions.get("__frost_hook_chpwd").expect("chpwd registered");
+        let fn_def = env
+            .functions
+            .get("__frost_hook_chpwd")
+            .expect("chpwd registered");
         let rendered = format!("{:?}", fn_def.body);
         assert!(rendered.contains("first"), "first body missing: {rendered}");
-        assert!(rendered.contains("second"), "second body missing: {rendered}");
+        assert!(
+            rendered.contains("second"),
+            "second body missing: {rendered}"
+        );
     }
 
     #[test]
     fn apply_unknown_hook_errors() {
         let mut env = ShellEnv::new();
         let src = r#"(defhook :event "bogus" :body "true")"#;
-        assert!(matches!(apply_source(src, &mut env), Err(LispError::UnknownHook(_))));
+        assert!(matches!(
+            apply_source(src, &mut env),
+            Err(LispError::UnknownHook(_))
+        ));
     }
 
     #[test]
@@ -1152,7 +1179,10 @@ mod tests {
     fn apply_unknown_signal_errors() {
         let mut env = ShellEnv::new();
         let src = r#"(deftrap :signal "NONESUCH" :body "true")"#;
-        assert!(matches!(apply_source(src, &mut env), Err(LispError::UnknownSignal(_))));
+        assert!(matches!(
+            apply_source(src, &mut env),
+            Err(LispError::UnknownSignal(_))
+        ));
     }
 
     #[test]
@@ -1166,8 +1196,10 @@ mod tests {
         "#;
         let s = apply_source(src, &mut env).unwrap();
         let entry = s.bind_map.iter().find(|(k, _)| k == "C-l").unwrap();
-        assert_eq!(entry.1, "__frost_widget_clear__",
-            "widget action should round-trip to bind_map as-is, not wrapped");
+        assert_eq!(
+            entry.1, "__frost_widget_clear__",
+            "widget action should round-trip to bind_map as-is, not wrapped"
+        );
         // No shell function registered for this chord.
         assert!(!env.functions.contains_key("__frost_bind_C-L"));
     }
@@ -1201,29 +1233,46 @@ mod tests {
         "#;
         let s = apply_source(src, &mut env).unwrap();
         // Single-chord C-l goes through the normal bind_map entry.
-        assert!(s.bind_map.iter().any(|(k, fn_name)|
-            k == "C-l" && fn_name.starts_with("__frost_bind_")
-        ));
+        assert!(
+            s.bind_map
+                .iter()
+                .any(|(k, fn_name)| k == "C-l" && fn_name.starts_with("__frost_bind_"))
+        );
         // Two-key: ONE prefix sentinel regardless of how many share
         // the C-x prefix (both "C-x e" and "C-x a" add continuations
         // but only one prefix entry).
-        let prefix_entries: Vec<_> = s.bind_map.iter()
+        let prefix_entries: Vec<_> = s
+            .bind_map
+            .iter()
             .filter(|(_, fn_name)| fn_name.starts_with("__frost_chord_prefix_"))
             .collect();
-        assert_eq!(prefix_entries.len(), 1,
-            "expected exactly one prefix sentinel, got {prefix_entries:?}");
+        assert_eq!(
+            prefix_entries.len(),
+            1,
+            "expected exactly one prefix sentinel, got {prefix_entries:?}"
+        );
         assert_eq!(prefix_entries[0].0, "C-x");
         assert_eq!(prefix_entries[0].1, "__frost_chord_prefix_C-x__");
 
         // The continuation table has both entries.
         assert_eq!(s.multi_key_bindings.len(), 2);
-        assert!(s.multi_key_bindings.iter().any(|(f, r, _)| f == "C-x" && r == "e"));
-        assert!(s.multi_key_bindings.iter().any(|(f, r, _)| f == "C-x" && r == "a"));
+        assert!(
+            s.multi_key_bindings
+                .iter()
+                .any(|(f, r, _)| f == "C-x" && r == "e")
+        );
+        assert!(
+            s.multi_key_bindings
+                .iter()
+                .any(|(f, r, _)| f == "C-x" && r == "a")
+        );
 
         // Each continuation fn_name is registered in env.functions.
         for (_, _, fn_name) in &s.multi_key_bindings {
-            assert!(env.functions.contains_key(fn_name),
-                "continuation function {fn_name} not registered");
+            assert!(
+                env.functions.contains_key(fn_name),
+                "continuation function {fn_name} not registered"
+            );
         }
     }
 
@@ -1292,7 +1341,10 @@ mod tests {
         "#;
         let s = apply_source(src, &mut env).unwrap();
         assert_eq!(s.path_ops, 1);
-        assert_eq!(env.get_var("PATH"), Some("/Users/me/.local/bin:/opt/bin:/usr/bin:/bin"));
+        assert_eq!(
+            env.get_var("PATH"),
+            Some("/Users/me/.local/bin:/opt/bin:/usr/bin:/bin")
+        );
     }
 
     #[test]
@@ -1318,12 +1370,23 @@ mod tests {
             (defprompt :command "starship prompt --status=$?")
         "#;
         let s = apply_source(src, &mut env).unwrap();
-        assert_eq!(s.hooks, 1, "synthetic precmd hook should count toward summary");
-        let fn_def = env.functions.get("__frost_hook_precmd")
+        assert_eq!(
+            s.hooks, 1,
+            "synthetic precmd hook should count toward summary"
+        );
+        let fn_def = env
+            .functions
+            .get("__frost_hook_precmd")
             .expect("prompt command should register a precmd hook");
         let rendered = format!("{:?}", fn_def.body);
-        assert!(rendered.contains("starship prompt"), "starship not in body: {rendered}");
-        assert!(rendered.contains("PS1"), "PS1 assignment missing: {rendered}");
+        assert!(
+            rendered.contains("starship prompt"),
+            "starship not in body: {rendered}"
+        );
+        assert!(
+            rendered.contains("PS1"),
+            "PS1 assignment missing: {rendered}"
+        );
     }
 
     #[test]
@@ -1360,8 +1423,11 @@ mod tests {
             (deftheme :name "tokyo-night" :hint "#FF0000")
         "##;
         let s = apply_source(src, &mut env).unwrap();
-        assert_eq!(s.theme.hint.as_deref(), Some("#FF0000"),
-            "user slot override should win over preset value");
+        assert_eq!(
+            s.theme.hint.as_deref(),
+            Some("#FF0000"),
+            "user slot override should win over preset value"
+        );
         // Non-overridden tokyo-night colors come through.
         assert_eq!(s.theme.reserved.as_deref(), Some("#BB9AF7"));
     }
@@ -1413,8 +1479,13 @@ mod tests {
             (defnotify :threshold-ms 45000 :title "my-shell" :message "done")
         "#;
         let s = apply_source(src, &mut env).unwrap();
-        assert!(s.hooks >= 1, "defnotify should contribute at least one hook");
-        let precmd = env.functions.get("__frost_hook_precmd")
+        assert!(
+            s.hooks >= 1,
+            "defnotify should contribute at least one hook"
+        );
+        let precmd = env
+            .functions
+            .get("__frost_hook_precmd")
             .expect("precmd registered");
         let rendered = format!("{:?}", precmd.body);
         // Threshold + title land in the body.
@@ -1429,7 +1500,9 @@ mod tests {
 
     #[test]
     fn apply_defhistory_sets_env_vars_and_options() {
-        unsafe { std::env::set_var("X_HIST_HOME", "/tmp/histtest"); }
+        unsafe {
+            std::env::set_var("X_HIST_HOME", "/tmp/histtest");
+        }
         let mut env = ShellEnv::new();
         let src = r##"
             (defhistory :file "$X_HIST_HOME/.frost_history"
@@ -1441,7 +1514,10 @@ mod tests {
                         :extended #t)
         "##;
         let s = apply_source(src, &mut env).unwrap();
-        assert_eq!(env.get_var("HISTFILE"), Some("/tmp/histtest/.frost_history"));
+        assert_eq!(
+            env.get_var("HISTFILE"),
+            Some("/tmp/histtest/.frost_history")
+        );
         assert_eq!(env.get_var("HISTSIZE"), Some("50000"));
         assert_eq!(env.get_var("SAVEHIST"), Some("50000"));
         assert_eq!(env.get_var("HISTIGNORE"), Some("ls:pwd:exit"));
@@ -1451,13 +1527,17 @@ mod tests {
         // summary non-trivial.
         assert!(s.env_vars >= 4);
         assert!(s.options_enabled >= 2);
-        unsafe { std::env::remove_var("X_HIST_HOME"); }
+        unsafe {
+            std::env::remove_var("X_HIST_HOME");
+        }
     }
 
     #[test]
     fn apply_defmark_registers_alias_and_records_mark() {
         // Set a sentinel env var so the test is deterministic.
-        unsafe { std::env::set_var("X_MARK_TEST_HOME", "/tmp/marktest"); }
+        unsafe {
+            std::env::set_var("X_MARK_TEST_HOME", "/tmp/marktest");
+        }
         let mut env = ShellEnv::new();
         let src = r#"
             (defmark :name "tmpmark" :path "$X_MARK_TEST_HOME/sub")
@@ -1469,8 +1549,13 @@ mod tests {
             Some("cd '/tmp/marktest/sub'")
         );
         // Summary map has the mark.
-        assert_eq!(s.marks.get("tmpmark").map(String::as_str), Some("/tmp/marktest/sub"));
-        unsafe { std::env::remove_var("X_MARK_TEST_HOME"); }
+        assert_eq!(
+            s.marks.get("tmpmark").map(String::as_str),
+            Some("/tmp/marktest/sub")
+        );
+        unsafe {
+            std::env::remove_var("X_MARK_TEST_HOME");
+        }
     }
 
     #[test]
@@ -1480,7 +1565,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let inner = tmp.join("inner.lisp");
-        std::fs::write(&inner, r#"(defalias :name "aa" :value "aliased-via-source")"#).unwrap();
+        std::fs::write(
+            &inner,
+            r#"(defalias :name "aa" :value "aliased-via-source")"#,
+        )
+        .unwrap();
         let outer = tmp.join("outer.lisp");
         std::fs::write(
             &outer,
@@ -1488,11 +1577,18 @@ mod tests {
                 "(defsource :path \"{}\")\n(defalias :name \"bb\" :value \"outer-alias\")",
                 inner.display()
             ),
-        ).unwrap();
+        )
+        .unwrap();
         let s = load_rc(&outer, &mut env).unwrap();
         // Both aliases land in env.aliases; both count toward the summary.
-        assert_eq!(env.aliases.get("aa").map(String::as_str), Some("aliased-via-source"));
-        assert_eq!(env.aliases.get("bb").map(String::as_str), Some("outer-alias"));
+        assert_eq!(
+            env.aliases.get("aa").map(String::as_str),
+            Some("aliased-via-source")
+        );
+        assert_eq!(
+            env.aliases.get("bb").map(String::as_str),
+            Some("outer-alias")
+        );
         assert_eq!(s.aliases, 2);
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -1508,7 +1604,10 @@ mod tests {
         let outer = tmp.join("outer.lisp");
         std::fs::write(&outer, r#"(defsource :path "inner.lisp")"#).unwrap();
         load_rc(&outer, &mut env).unwrap();
-        assert_eq!(env.aliases.get("rel").map(String::as_str), Some("from-sibling"));
+        assert_eq!(
+            env.aliases.get("rel").map(String::as_str),
+            Some("from-sibling")
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 
@@ -1525,7 +1624,8 @@ mod tests {
         // Two files that source each other — the visited-set must
         // prevent infinite recursion.
         let mut env = ShellEnv::new();
-        let tmp = std::env::temp_dir().join(format!("frost-defsource-cycle-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("frost-defsource-cycle-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let a = tmp.join("a.lisp");
@@ -1536,14 +1636,16 @@ mod tests {
                 "(defsource :path \"{}\")\n(defalias :name \"a\" :value \"from-a\")",
                 b.display()
             ),
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             &b,
             format!(
                 "(defsource :path \"{}\")\n(defalias :name \"b\" :value \"from-b\")",
                 a.display()
             ),
-        ).unwrap();
+        )
+        .unwrap();
         load_rc(&a, &mut env).unwrap();
         // Both aliases register; the cycle is broken by the visited set.
         assert_eq!(env.aliases.get("a").map(String::as_str), Some("from-a"));
@@ -1560,13 +1662,22 @@ mod tests {
         // Recipe added two aliases — frost-native (no `__zoxide_*`
         // shell-function indirection since frost doesn't run zoxide's
         // bash/zsh init).
-        assert_eq!(env.aliases.get("z").map(String::as_str), Some("zoxide query"));
-        assert_eq!(env.aliases.get("zi").map(String::as_str), Some("zoxide query -i"));
+        assert_eq!(
+            env.aliases.get("z").map(String::as_str),
+            Some("zoxide query")
+        );
+        assert_eq!(
+            env.aliases.get("zi").map(String::as_str),
+            Some("zoxide query -i")
+        );
         // chpwd hook body must include the zoxide add call. The body
         // renders as a parsed AST (Word { parts: [Literal("zoxide")] }
         // + Word { parts: [Literal("add")] }), so assert on the tokens
         // rather than the reconstructed phrase.
-        let chpwd = env.functions.get("__frost_hook_chpwd").expect("chpwd registered");
+        let chpwd = env
+            .functions
+            .get("__frost_hook_chpwd")
+            .expect("chpwd registered");
         let rendered = format!("{:?}", chpwd.body);
         assert!(rendered.contains("zoxide"), "body: {rendered}");
         assert!(rendered.contains("add"), "body: {rendered}");
@@ -1581,7 +1692,10 @@ mod tests {
         assert_eq!(s.integrations, 1);
         // Starship recipe adds a prompt_command → synthesized precmd
         // that assigns `$(starship prompt …)` to PS1.
-        let precmd = env.functions.get("__frost_hook_precmd").expect("precmd registered");
+        let precmd = env
+            .functions
+            .get("__frost_hook_precmd")
+            .expect("precmd registered");
         let rendered = format!("{:?}", precmd.body);
         assert!(rendered.contains("starship"), "body: {rendered}");
         assert!(rendered.contains("prompt"), "body: {rendered}");

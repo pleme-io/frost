@@ -27,7 +27,9 @@ pub fn tokenize(input: &str) -> Vec<frost_lexer::Token> {
         let tok = lexer.next_token();
         let eof = tok.kind == frost_lexer::TokenKind::Eof;
         tokens.push(tok);
-        if eof { break; }
+        if eof {
+            break;
+        }
     }
     tokens
 }

@@ -67,11 +67,7 @@ impl CompletionTree {
     /// parse time for typed field mismatches, so anything reaching
     /// here is structurally valid; we're defensive about pathological
     /// path strings because they don't warrant a hard crash.
-    pub fn build(
-        subcmds: &[SubcmdSpec],
-        flags: &[FlagSpec],
-        positionals: &[PositSpec],
-    ) -> Self {
+    pub fn build(subcmds: &[SubcmdSpec], flags: &[FlagSpec], positionals: &[PositSpec]) -> Self {
         let mut tree = CompletionTree::default();
 
         // Subcommand forms: path is the PARENT, name is the new child.
@@ -109,7 +105,11 @@ impl CompletionTree {
             node.positionals.insert(
                 p.index,
                 PositNode {
-                    takes: p.takes.as_deref().map(ValueKind::parse).unwrap_or(ValueKind::String),
+                    takes: p
+                        .takes
+                        .as_deref()
+                        .map(ValueKind::parse)
+                        .unwrap_or(ValueKind::String),
                     description: p.description.clone(),
                 },
             );

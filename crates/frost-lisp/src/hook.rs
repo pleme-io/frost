@@ -33,9 +33,9 @@ pub struct HookSpec {
 /// `None` for unknown events so the applicator can error cleanly.
 pub fn hook_function_name(event: &str) -> Option<&'static str> {
     match event {
-        "precmd"   => Some("__frost_hook_precmd"),
-        "preexec"  => Some("__frost_hook_preexec"),
-        "chpwd"    => Some("__frost_hook_chpwd"),
-        _          => None,
+        "precmd" => Some("__frost_hook_precmd"),
+        "preexec" => Some("__frost_hook_preexec"),
+        "chpwd" => Some("__frost_hook_chpwd"),
+        _ => None,
     }
 }

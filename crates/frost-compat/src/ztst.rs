@@ -138,8 +138,7 @@ pub fn parse_ztst(path: &Path) -> Result<TestFile, String> {
                 // Blank lines separate test blocks.
                 if line.is_empty() {
                     if !current_block.is_empty() {
-                        test_blocks
-                            .push((current_block_start, std::mem::take(&mut current_block)));
+                        test_blocks.push((current_block_start, std::mem::take(&mut current_block)));
                     }
                 } else {
                     if current_block.is_empty() {
@@ -274,9 +273,7 @@ fn parse_test_block(start_line: usize, lines: &[String]) -> Result<TestCase, Str
 
     let code = code_lines.join("\n");
     if code.is_empty() {
-        return Err(format!(
-            "test block at line {start_line} has no shell code"
-        ));
+        return Err(format!("test block at line {start_line} has no shell code"));
     }
 
     let stdin = if stdin_lines.is_empty() {
@@ -500,9 +497,6 @@ mod tests {
         let f = write_temp_ztst(content);
         let tf = parse_ztst(f.path()).unwrap();
         assert_eq!(tf.tests.len(), 1);
-        assert_eq!(
-            tf.tests[0].stdin.as_deref(),
-            Some("hello from stdin")
-        );
+        assert_eq!(tf.tests[0].stdin.as_deref(), Some("hello from stdin"));
     }
 }

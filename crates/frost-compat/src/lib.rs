@@ -7,4 +7,4 @@ pub mod runner;
 pub mod ztst;
 
 pub use runner::{Summary, TestResult, TestStatus, run_test_file};
-pub use ztst::{TestFile, TestCase, parse_ztst};
+pub use ztst::{TestCase, TestFile, parse_ztst};

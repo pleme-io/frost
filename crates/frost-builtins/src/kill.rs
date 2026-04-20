@@ -49,7 +49,10 @@ const SIGNALS: &[(&str, i32)] = &[
 fn signal_name_to_num(name: &str) -> Option<i32> {
     let upper = name.to_ascii_uppercase();
     let stripped = upper.strip_prefix("SIG").unwrap_or(&upper);
-    SIGNALS.iter().find(|(n, _)| *n == stripped).map(|(_, v)| *v)
+    SIGNALS
+        .iter()
+        .find(|(n, _)| *n == stripped)
+        .map(|(_, v)| *v)
 }
 
 /// Resolve a signal number to its name.

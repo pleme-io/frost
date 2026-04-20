@@ -145,7 +145,8 @@ where
         'd' | '/' => out.push_str(&env.cwd),
         '~' => out.push_str(&cwd_with_tilde(&env.cwd, &env.home)),
         'c' | 'C' => {
-            let base = Path::new(&env.cwd).file_name()
+            let base = Path::new(&env.cwd)
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
             out.push_str(base);
@@ -163,14 +164,14 @@ where
         // mode would produce something worse than the raw codes.
         'F' => render_color(chars, out, /*background=*/ false),
         'K' => render_color(chars, out, /*background=*/ true),
-        'f' => out.push_str("\x1b[39m"),        // default foreground
-        'k' => out.push_str("\x1b[49m"),        // default background
-        'B' => out.push_str("\x1b[1m"),         // bold on
-        'b' => out.push_str("\x1b[22m"),        // bold off
-        'U' => out.push_str("\x1b[4m"),         // underline on
-        'u' => out.push_str("\x1b[24m"),        // underline off
-        'S' => out.push_str("\x1b[7m"),         // standout on (reverse)
-        's' => out.push_str("\x1b[27m"),        // standout off
+        'f' => out.push_str("\x1b[39m"), // default foreground
+        'k' => out.push_str("\x1b[49m"), // default background
+        'B' => out.push_str("\x1b[1m"),  // bold on
+        'b' => out.push_str("\x1b[22m"), // bold off
+        'U' => out.push_str("\x1b[4m"),  // underline on
+        'u' => out.push_str("\x1b[24m"), // underline off
+        'S' => out.push_str("\x1b[7m"),  // standout on (reverse)
+        's' => out.push_str("\x1b[27m"), // standout off
 
         other => {
             // Unknown escape — pass through literally so the user can see
@@ -198,7 +199,9 @@ where
     chars.next(); // consume '{'
     let mut spec = String::new();
     for c in chars.by_ref() {
-        if c == '}' { break; }
+        if c == '}' {
+            break;
+        }
         spec.push(c);
     }
     let code = match color_code(&spec, background) {
@@ -219,24 +222,24 @@ fn color_code(name: &str, background: bool) -> Option<String> {
     }
     // Standard named colors (30–37 fg, 40–47 bg; 90–97 / 100–107 bright)
     let (base_fg, base_bg) = match name.to_ascii_lowercase().as_str() {
-        "black"         => (30, 40),
-        "red"           => (31, 41),
-        "green"         => (32, 42),
-        "yellow"        => (33, 43),
-        "blue"          => (34, 44),
-        "magenta"       => (35, 45),
-        "cyan"          => (36, 46),
-        "white"         => (37, 47),
-        "default"       => (39, 49),
+        "black" => (30, 40),
+        "red" => (31, 41),
+        "green" => (32, 42),
+        "yellow" => (33, 43),
+        "blue" => (34, 44),
+        "magenta" => (35, 45),
+        "cyan" => (36, 46),
+        "white" => (37, 47),
+        "default" => (39, 49),
         // zsh accepts a leading `bright` for the 90-series bright variants.
-        "bright-black"  | "brightblack"   => (90, 100),
-        "bright-red"    | "brightred"     => (91, 101),
-        "bright-green"  | "brightgreen"   => (92, 102),
-        "bright-yellow" | "brightyellow"  => (93, 103),
-        "bright-blue"   | "brightblue"    => (94, 104),
-        "bright-magenta"| "brightmagenta" => (95, 105),
-        "bright-cyan"   | "brightcyan"    => (96, 106),
-        "bright-white"  | "brightwhite"   => (97, 107),
+        "bright-black" | "brightblack" => (90, 100),
+        "bright-red" | "brightred" => (91, 101),
+        "bright-green" | "brightgreen" => (92, 102),
+        "bright-yellow" | "brightyellow" => (93, 103),
+        "bright-blue" | "brightblue" => (94, 104),
+        "bright-magenta" | "brightmagenta" => (95, 105),
+        "bright-cyan" | "brightcyan" => (96, 106),
+        "bright-white" | "brightwhite" => (97, 107),
         _ => return None,
     };
     let code = if background { base_bg } else { base_fg };
@@ -260,7 +263,9 @@ where
     // ones (`%(5L.…)`) will.
     let mut num = String::new();
     while let Some(&c) = chars.peek() {
-        if !c.is_ascii_digit() { break; }
+        if !c.is_ascii_digit() {
+            break;
+        }
         num.push(c);
         chars.next();
     }
@@ -292,7 +297,11 @@ where
         }
         if c == ')' {
             depth -= 1;
-            if saw_delim { false_branch.push(c); } else { true_branch.push(c); }
+            if saw_delim {
+                false_branch.push(c);
+            } else {
+                true_branch.push(c);
+            }
             continue;
         }
         if c == delim && depth == 1 && !saw_delim {
@@ -329,7 +338,9 @@ where
         chars.next(); // consume '{'
         let mut name = String::new();
         for c in chars.by_ref() {
-            if c == '}' { break; }
+            if c == '}' {
+                break;
+            }
             name.push(c);
         }
         if !name.is_empty() {
@@ -373,7 +384,9 @@ fn read_hostname() -> String {
     // best-effort display, never a correctness-critical path.
     let mut buf = [0u8; 256];
     let ret = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) };
-    if ret != 0 { return String::new(); }
+    if ret != 0 {
+        return String::new();
+    }
     let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
     String::from_utf8_lossy(&buf[..end]).into_owned()
 }

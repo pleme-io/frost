@@ -110,7 +110,9 @@ pub struct PositSpec {
     pub description: Option<String>,
 }
 
-fn one() -> u32 { 1 }
+fn one() -> u32 {
+    1
+}
 
 /// Typed value kind parsed from a `takes:` string. Used by
 /// frost-complete to drive the right completer at each arg position.
@@ -146,12 +148,12 @@ impl ValueKind {
             return Self::Choice(choices);
         }
         match s {
-            "string"  => Self::String,
+            "string" => Self::String,
             "integer" => Self::Integer,
-            "file"    => Self::File,
-            "files"   => Self::Files,
-            "dir"     => Self::Dir,
-            "dirs"    => Self::Dirs,
+            "file" => Self::File,
+            "files" => Self::Files,
+            "dir" => Self::Dir,
+            "dirs" => Self::Dirs,
             _ => Self::String,
         }
     }
@@ -160,10 +162,7 @@ impl ValueKind {
     /// time. Used by frost-complete to decide whether to walk the
     /// filesystem or just list the finite choice set.
     pub fn completes_from_fs(&self) -> bool {
-        matches!(
-            self,
-            Self::File | Self::Files | Self::Dir | Self::Dirs
-        )
+        matches!(self, Self::File | Self::Files | Self::Dir | Self::Dirs)
     }
 
     /// True if this kind should only offer directories (not files).
@@ -178,18 +177,21 @@ mod tests {
 
     #[test]
     fn value_kind_parses_known_strings() {
-        assert_eq!(ValueKind::parse("string"),  ValueKind::String);
+        assert_eq!(ValueKind::parse("string"), ValueKind::String);
         assert_eq!(ValueKind::parse("integer"), ValueKind::Integer);
-        assert_eq!(ValueKind::parse("file"),    ValueKind::File);
-        assert_eq!(ValueKind::parse("files"),   ValueKind::Files);
-        assert_eq!(ValueKind::parse("dir"),     ValueKind::Dir);
-        assert_eq!(ValueKind::parse("dirs"),    ValueKind::Dirs);
+        assert_eq!(ValueKind::parse("file"), ValueKind::File);
+        assert_eq!(ValueKind::parse("files"), ValueKind::Files);
+        assert_eq!(ValueKind::parse("dir"), ValueKind::Dir);
+        assert_eq!(ValueKind::parse("dirs"), ValueKind::Dirs);
     }
 
     #[test]
     fn value_kind_parses_choice() {
         let k = ValueKind::parse("choice:json,yaml,text");
-        assert_eq!(k, ValueKind::Choice(vec!["json".into(), "yaml".into(), "text".into()]));
+        assert_eq!(
+            k,
+            ValueKind::Choice(vec!["json".into(), "yaml".into(), "text".into()])
+        );
     }
 
     #[test]

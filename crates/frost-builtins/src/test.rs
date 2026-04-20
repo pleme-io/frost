@@ -7,7 +7,9 @@ pub struct Test;
 pub struct Bracket;
 
 impl Builtin for Test {
-    fn name(&self) -> &str { "test" }
+    fn name(&self) -> &str {
+        "test"
+    }
 
     fn execute(&self, args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
         evaluate_test(args)
@@ -15,7 +17,9 @@ impl Builtin for Test {
 }
 
 impl Builtin for Bracket {
-    fn name(&self) -> &str { "[" }
+    fn name(&self) -> &str {
+        "["
+    }
 
     fn execute(&self, args: &[&str], _env: &mut dyn ShellEnvironment) -> i32 {
         // Strip trailing ]
@@ -44,23 +48,88 @@ fn evaluate_test(args: &[&str]) -> i32 {
         let op = args[0];
         let val = args[1];
         return match op {
-            "-n" => if val.is_empty() { 1 } else { 0 },
-            "-z" => if val.is_empty() { 0 } else { 1 },
-            "-e" | "-a" => if Path::new(val).exists() { 0 } else { 1 },
-            "-f" => if Path::new(val).is_file() { 0 } else { 1 },
-            "-d" => if Path::new(val).is_dir() { 0 } else { 1 },
-            "-r" => if Path::new(val).exists() { 0 } else { 1 }, // simplified
-            "-w" => if Path::new(val).exists() { 0 } else { 1 }, // simplified
-            "-x" => if Path::new(val).exists() { 0 } else { 1 }, // simplified
-            "-s" => {
-                Path::new(val).metadata()
-                    .map(|m| if m.len() > 0 { 0 } else { 1 })
-                    .unwrap_or(1)
+            "-n" => {
+                if val.is_empty() {
+                    1
+                } else {
+                    0
+                }
             }
-            "-L" | "-h" => if Path::new(val).is_symlink() { 0 } else { 1 },
+            "-z" => {
+                if val.is_empty() {
+                    0
+                } else {
+                    1
+                }
+            }
+            "-e" | "-a" => {
+                if Path::new(val).exists() {
+                    0
+                } else {
+                    1
+                }
+            }
+            "-f" => {
+                if Path::new(val).is_file() {
+                    0
+                } else {
+                    1
+                }
+            }
+            "-d" => {
+                if Path::new(val).is_dir() {
+                    0
+                } else {
+                    1
+                }
+            }
+            "-r" => {
+                if Path::new(val).exists() {
+                    0
+                } else {
+                    1
+                }
+            } // simplified
+            "-w" => {
+                if Path::new(val).exists() {
+                    0
+                } else {
+                    1
+                }
+            } // simplified
+            "-x" => {
+                if Path::new(val).exists() {
+                    0
+                } else {
+                    1
+                }
+            } // simplified
+            "-s" => Path::new(val)
+                .metadata()
+                .map(|m| if m.len() > 0 { 0 } else { 1 })
+                .unwrap_or(1),
+            "-L" | "-h" => {
+                if Path::new(val).is_symlink() {
+                    0
+                } else {
+                    1
+                }
+            }
             "-b" | "-c" | "-p" | "-S" | "-t" | "-u" | "-g" | "-k" | "-G" | "-O" => 1, // stub
-            "!" => if evaluate_test(&args[1..]) == 0 { 1 } else { 0 },
-            _ => if val.is_empty() { 1 } else { 0 }, // treat as -n
+            "!" => {
+                if evaluate_test(&args[1..]) == 0 {
+                    1
+                } else {
+                    0
+                }
+            }
+            _ => {
+                if val.is_empty() {
+                    1
+                } else {
+                    0
+                }
+            } // treat as -n
         };
     }
 
@@ -70,8 +139,20 @@ fn evaluate_test(args: &[&str]) -> i32 {
         let op = args[1];
         let right = args[2];
         return match op {
-            "=" | "==" => if left == right { 0 } else { 1 },
-            "!=" => if left != right { 0 } else { 1 },
+            "=" | "==" => {
+                if left == right {
+                    0
+                } else {
+                    1
+                }
+            }
+            "!=" => {
+                if left != right {
+                    0
+                } else {
+                    1
+                }
+            }
             "-eq" => cmp_int(left, right, |a, b| a == b),
             "-ne" => cmp_int(left, right, |a, b| a != b),
             "-lt" => cmp_int(left, right, |a, b| a < b),
@@ -115,7 +196,13 @@ fn newer_than(a: &str, b: &str) -> i32 {
     let ma = std::fs::metadata(a).and_then(|m| m.modified()).ok();
     let mb = std::fs::metadata(b).and_then(|m| m.modified()).ok();
     match (ma, mb) {
-        (Some(a), Some(b)) => if a > b { 0 } else { 1 },
+        (Some(a), Some(b)) => {
+            if a > b {
+                0
+            } else {
+                1
+            }
+        }
         _ => 1,
     }
 }
@@ -126,7 +213,11 @@ fn same_file(a: &str, b: &str) -> i32 {
     match (ma, mb) {
         (Some(a), Some(b)) => {
             use std::os::unix::fs::MetadataExt;
-            if a.dev() == b.dev() && a.ino() == b.ino() { 0 } else { 1 }
+            if a.dev() == b.dev() && a.ino() == b.ino() {
+                0
+            } else {
+                1
+            }
         }
         _ => 1,
     }
@@ -136,16 +227,52 @@ fn same_file(a: &str, b: &str) -> i32 {
 mod tests {
     use super::*;
 
-    #[test] fn empty_is_false() { assert_eq!(evaluate_test(&[]), 1); }
-    #[test] fn nonempty_string_is_true() { assert_eq!(evaluate_test(&["hello"]), 0); }
-    #[test] fn empty_string_is_false() { assert_eq!(evaluate_test(&[""]), 1); }
-    #[test] fn string_eq() { assert_eq!(evaluate_test(&["a", "=", "a"]), 0); }
-    #[test] fn string_ne() { assert_eq!(evaluate_test(&["a", "!=", "b"]), 0); }
-    #[test] fn int_eq() { assert_eq!(evaluate_test(&["42", "-eq", "42"]), 0); }
-    #[test] fn int_lt() { assert_eq!(evaluate_test(&["1", "-lt", "2"]), 0); }
-    #[test] fn negation() { assert_eq!(evaluate_test(&["!", "hello"]), 1); }
-    #[test] fn file_exists() { assert_eq!(evaluate_test(&["-f", "/dev/null"]), 1); } // /dev/null is not a regular file
-    #[test] fn dir_exists() { assert_eq!(evaluate_test(&["-d", "/tmp"]), 0); }
-    #[test] fn n_flag_nonempty() { assert_eq!(evaluate_test(&["-n", "x"]), 0); }
-    #[test] fn z_flag_empty() { assert_eq!(evaluate_test(&["-z", ""]), 0); }
+    #[test]
+    fn empty_is_false() {
+        assert_eq!(evaluate_test(&[]), 1);
+    }
+    #[test]
+    fn nonempty_string_is_true() {
+        assert_eq!(evaluate_test(&["hello"]), 0);
+    }
+    #[test]
+    fn empty_string_is_false() {
+        assert_eq!(evaluate_test(&[""]), 1);
+    }
+    #[test]
+    fn string_eq() {
+        assert_eq!(evaluate_test(&["a", "=", "a"]), 0);
+    }
+    #[test]
+    fn string_ne() {
+        assert_eq!(evaluate_test(&["a", "!=", "b"]), 0);
+    }
+    #[test]
+    fn int_eq() {
+        assert_eq!(evaluate_test(&["42", "-eq", "42"]), 0);
+    }
+    #[test]
+    fn int_lt() {
+        assert_eq!(evaluate_test(&["1", "-lt", "2"]), 0);
+    }
+    #[test]
+    fn negation() {
+        assert_eq!(evaluate_test(&["!", "hello"]), 1);
+    }
+    #[test]
+    fn file_exists() {
+        assert_eq!(evaluate_test(&["-f", "/dev/null"]), 1);
+    } // /dev/null is not a regular file
+    #[test]
+    fn dir_exists() {
+        assert_eq!(evaluate_test(&["-d", "/tmp"]), 0);
+    }
+    #[test]
+    fn n_flag_nonempty() {
+        assert_eq!(evaluate_test(&["-n", "x"]), 0);
+    }
+    #[test]
+    fn z_flag_empty() {
+        assert_eq!(evaluate_test(&["-z", ""]), 0);
+    }
 }

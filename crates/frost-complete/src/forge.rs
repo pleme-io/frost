@@ -58,17 +58,22 @@ impl ForgeOutput {
     /// attributed each to its guard-derived path), and also the
     /// repeat-within-file case where the same flag is listed twice.
     pub fn sort(&mut self) {
-        self.subcmds.sort_by(|a, b| (a.path.as_str(), a.name.as_str())
-            .cmp(&(b.path.as_str(), b.name.as_str())));
-        self.subcmds.dedup_by(|a, b| a.path == b.path && a.name == b.name);
+        self.subcmds.sort_by(|a, b| {
+            (a.path.as_str(), a.name.as_str()).cmp(&(b.path.as_str(), b.name.as_str()))
+        });
+        self.subcmds
+            .dedup_by(|a, b| a.path == b.path && a.name == b.name);
 
-        self.flags.sort_by(|a, b| (a.path.as_str(), a.name.as_str())
-            .cmp(&(b.path.as_str(), b.name.as_str())));
-        self.flags.dedup_by(|a, b| a.path == b.path && a.name == b.name);
+        self.flags.sort_by(|a, b| {
+            (a.path.as_str(), a.name.as_str()).cmp(&(b.path.as_str(), b.name.as_str()))
+        });
+        self.flags
+            .dedup_by(|a, b| a.path == b.path && a.name == b.name);
 
-        self.positionals.sort_by(|a, b| (a.path.as_str(), a.index)
-            .cmp(&(b.path.as_str(), b.index)));
-        self.positionals.dedup_by(|a, b| a.path == b.path && a.index == b.index);
+        self.positionals
+            .sort_by(|a, b| (a.path.as_str(), a.index).cmp(&(b.path.as_str(), b.index)));
+        self.positionals
+            .dedup_by(|a, b| a.path == b.path && a.index == b.index);
     }
 }
 
@@ -160,14 +165,15 @@ fn parse_fish_line(line: &str) -> Result<FishLine, String> {
     let mut i = 1;
     while i < tokens.len() {
         let t = &tokens[i];
-        let take = |out_field: &mut Option<String>, label: &str, i: &mut usize| -> Result<(), String> {
-            *i += 1;
-            if *i >= tokens.len() {
-                return Err(format!("{label} expects a value"));
-            }
-            *out_field = Some(tokens[*i].clone());
-            Ok(())
-        };
+        let take =
+            |out_field: &mut Option<String>, label: &str, i: &mut usize| -> Result<(), String> {
+                *i += 1;
+                if *i >= tokens.len() {
+                    return Err(format!("{label} expects a value"));
+                }
+                *out_field = Some(tokens[*i].clone());
+                Ok(())
+            };
         match t.as_str() {
             "-c" | "--command" | "-p" | "--path" => take(&mut out.cmd, "-c", &mut i)?,
             "-s" | "--short-option" => take(&mut out.short, "-s", &mut i)?,
@@ -187,7 +193,9 @@ fn parse_fish_line(line: &str) -> Result<FishLine, String> {
 }
 
 fn merge_fish(line: FishLine, out: &mut ForgeOutput) {
-    let Some(cmd) = line.cmd.as_deref() else { return; };
+    let Some(cmd) = line.cmd.as_deref() else {
+        return;
+    };
 
     // Determine the target path. If the line has a `__fish_seen_subcommand_from X`
     // guard, the path is `cmd.X`. Otherwise it's the raw command.
@@ -206,7 +214,11 @@ fn merge_fish(line: FishLine, out: &mut ForgeOutput) {
     // pairs short + long into one `complete` directive; we split into
     // separate specs so either is discoverable.
     let takes = if line.requires_arg {
-        Some(if line.force_files { "file".to_string() } else { "string".to_string() })
+        Some(if line.force_files {
+            "file".to_string()
+        } else {
+            "string".to_string()
+        })
     } else if line.force_files {
         Some("file".to_string())
     } else {
@@ -291,27 +303,39 @@ fn tokenize_shell(line: &str) -> Result<Vec<String>, String> {
         while i < bytes.len() && bytes[i].is_ascii_whitespace() {
             i += 1;
         }
-        if i >= bytes.len() { break; }
+        if i >= bytes.len() {
+            break;
+        }
         match bytes[i] {
             b'\'' => {
                 i += 1;
                 let start = i;
-                while i < bytes.len() && bytes[i] != b'\'' { i += 1; }
-                if i >= bytes.len() { return Err("unterminated single quote".into()); }
+                while i < bytes.len() && bytes[i] != b'\'' {
+                    i += 1;
+                }
+                if i >= bytes.len() {
+                    return Err("unterminated single quote".into());
+                }
                 out.push(String::from_utf8_lossy(&bytes[start..i]).to_string());
                 i += 1;
             }
             b'"' => {
                 i += 1;
                 let start = i;
-                while i < bytes.len() && bytes[i] != b'"' { i += 1; }
-                if i >= bytes.len() { return Err("unterminated double quote".into()); }
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += 1;
+                }
+                if i >= bytes.len() {
+                    return Err("unterminated double quote".into());
+                }
                 out.push(String::from_utf8_lossy(&bytes[start..i]).to_string());
                 i += 1;
             }
             _ => {
                 let start = i;
-                while i < bytes.len() && !bytes[i].is_ascii_whitespace() { i += 1; }
+                while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
                 out.push(String::from_utf8_lossy(&bytes[start..i]).to_string());
             }
         }
@@ -380,9 +404,9 @@ fn lisp_str(s: &str) -> String {
     out.push('"');
     for c in s.chars() {
         match c {
-            '"'  => out.push_str("\\\""),
+            '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
-            c    => out.push(c),
+            c => out.push(c),
         }
     }
     out.push('"');
@@ -514,7 +538,9 @@ fn extract_arguments_specs(src: &str) -> Vec<String> {
                         i += 2;
                         continue;
                     }
-                    if bytes[i] == b'"' { break; }
+                    if bytes[i] == b'"' {
+                        break;
+                    }
                     i += 1;
                 }
                 if start < i {
@@ -527,7 +553,9 @@ fn extract_arguments_specs(src: &str) -> Vec<String> {
             }
             // Fast-skip line comments (# outside a string).
             b'#' => {
-                while i < bytes.len() && bytes[i] != b'\n' { i += 1; }
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
             }
             _ => i += 1,
         }
@@ -547,18 +575,26 @@ fn looks_like_arg_spec(s: &str) -> bool {
     }
     // Leading `!` means "hidden" in _arguments. Ignore.
     rest = rest.trim_start_matches('!');
-    let Some(c) = rest.chars().next() else { return false };
+    let Some(c) = rest.chars().next() else {
+        return false;
+    };
     c == '-' || c == '*' || c.is_ascii_digit() || c == ':'
 }
 
 fn strip_group_prefix(s: &str) -> Option<&str> {
-    if !s.starts_with('(') { return None; }
+    if !s.starts_with('(') {
+        return None;
+    }
     // Scan forward to matching `)` — `_arguments` groups don't nest
     // parens, so a flat scan is sufficient.
     let bytes = s.as_bytes();
     let mut i = 1;
-    while i < bytes.len() && bytes[i] != b')' { i += 1; }
-    if i >= bytes.len() { return None; }
+    while i < bytes.len() && bytes[i] != b')' {
+        i += 1;
+    }
+    if i >= bytes.len() {
+        return None;
+    }
     // Trim any whitespace after the `)` and return the tail.
     let tail = &s[i + 1..];
     Some(tail.trim_start())
@@ -597,7 +633,10 @@ fn parse_arguments_spec(raw: &str) -> Option<ParsedArg> {
     if s.starts_with('-') {
         return parse_flag_spec(s);
     }
-    if s.starts_with('*') || s.starts_with(':') || s.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+    if s.starts_with('*')
+        || s.starts_with(':')
+        || s.chars().next().is_some_and(|c| c.is_ascii_digit())
+    {
         return parse_positional_spec(s);
     }
     Some(ParsedArg::Other)
@@ -609,7 +648,10 @@ fn parse_flag_spec(s: &str) -> Option<ParsedArg> {
     // `-f+` / `-f=` means "takes an arg"; we'll pick up the value
     // type from the `:label:action` later.
     let (name_part, rest) = split_flag_name(s);
-    let name = name_part.trim_end_matches('+').trim_end_matches('=').to_string();
+    let name = name_part
+        .trim_end_matches('+')
+        .trim_end_matches('=')
+        .to_string();
     if name.is_empty() || name == "-" {
         return Some(ParsedArg::Other);
     }
@@ -628,7 +670,11 @@ fn parse_flag_spec(s: &str) -> Option<ParsedArg> {
     // First colon-group's action names the value type.
     let takes = parse_value_action(after_desc);
 
-    Some(ParsedArg::Flag { name, takes, description })
+    Some(ParsedArg::Flag {
+        name,
+        takes,
+        description,
+    })
 }
 
 /// Split `-f+foo` into ("-f+", "foo"). Split `--help[desc]` into
@@ -674,16 +720,18 @@ fn parse_positional_spec(s: &str) -> Option<ParsedArg> {
         None => (after_index, ""),
     };
     let trimmed_label = label_or_desc.trim();
-    let description = if !trimmed_label.is_empty()
-        && trimmed_label != "arg"
-        && !trimmed_label.starts_with('_')
-    {
-        Some(trimmed_label.to_string())
-    } else {
-        None
-    };
+    let description =
+        if !trimmed_label.is_empty() && trimmed_label != "arg" && !trimmed_label.starts_with('_') {
+            Some(trimmed_label.to_string())
+        } else {
+            None
+        };
     let takes = parse_value_action(after_label);
-    Some(ParsedArg::Positional { index, takes, description })
+    Some(ParsedArg::Positional {
+        index,
+        takes,
+        description,
+    })
 }
 
 /// `_files` → `file`, `_directories` → `dir`, `_path_files -/` → `dir`,
@@ -696,14 +744,18 @@ fn parse_positional_spec(s: &str) -> Option<ParsedArg> {
 /// colon), then parse what remains as the action.
 fn parse_value_action(s: &str) -> Option<ValueKind> {
     let s = s.trim().trim_start_matches(':');
-    if s.is_empty() { return None; }
+    if s.is_empty() {
+        return None;
+    }
     // Spec is `label:action` — split once. If no colon, the whole
     // string is already the action.
     let action = match s.find(':') {
         Some(idx) => s[idx + 1..].trim(),
         None => s,
     };
-    if action.is_empty() { return None; }
+    if action.is_empty() {
+        return None;
+    }
     // Strip leading `->state` — state dispatchers are subcommand
     // hand-off we don't follow here.
     if action.starts_with("->") {
@@ -745,7 +797,11 @@ fn parse_value_action(s: &str) -> Option<ValueKind> {
 /// Fold one ParsedArg into the output under `command`.
 fn emit_parsed_for_command(command: &str, arg: &ParsedArg, out: &mut ForgeOutput) {
     match arg {
-        ParsedArg::Flag { name, takes, description } => {
+        ParsedArg::Flag {
+            name,
+            takes,
+            description,
+        } => {
             out.flags.push(FlagSpec {
                 path: command.to_string(),
                 name: name.clone(),
@@ -753,7 +809,11 @@ fn emit_parsed_for_command(command: &str, arg: &ParsedArg, out: &mut ForgeOutput
                 description: description.clone(),
             });
         }
-        ParsedArg::Positional { index, takes, description } => {
+        ParsedArg::Positional {
+            index,
+            takes,
+            description,
+        } => {
             // Clamp `*` (u32::MAX) to a large but sentinel-ish slot
             // so BTreeMap<u32> ordering in the tree stays sane.
             let idx = if *index == u32::MAX { 999 } else { *index };
@@ -772,12 +832,12 @@ fn emit_parsed_for_command(command: &str, arg: &ParsedArg, out: &mut ForgeOutput
 /// its output round-trips through the Lisp reader.
 fn value_kind_to_str(k: &ValueKind) -> String {
     match k {
-        ValueKind::String   => "string".into(),
-        ValueKind::Integer  => "integer".into(),
-        ValueKind::File     => "file".into(),
-        ValueKind::Files    => "files".into(),
-        ValueKind::Dir      => "dir".into(),
-        ValueKind::Dirs     => "dirs".into(),
+        ValueKind::String => "string".into(),
+        ValueKind::Integer => "integer".into(),
+        ValueKind::File => "file".into(),
+        ValueKind::Files => "files".into(),
+        ValueKind::Dir => "dir".into(),
+        ValueKind::Dirs => "dirs".into(),
         ValueKind::Choice(choices) => {
             let joined = choices.join(",");
             format!("choice:{joined}")
@@ -842,11 +902,7 @@ pub fn parse_skim_yaml(src: &str) -> ForgeResult<ForgeOutput> {
     Ok(out)
 }
 
-fn emit_sub_tree(
-    parent_path: &str,
-    subs: &BTreeMap<String, SkimSub>,
-    out: &mut ForgeOutput,
-) {
+fn emit_sub_tree(parent_path: &str, subs: &BTreeMap<String, SkimSub>, out: &mut ForgeOutput) {
     for (name, sub) in subs {
         out.subcmds.push(SubcmdSpec {
             path: parent_path.to_string(),
@@ -866,15 +922,25 @@ mod tests {
 
     #[test]
     fn tokenize_respects_quotes() {
-        let toks = tokenize_shell(r#"complete -c git -d 'version control' -a "status log""#).unwrap();
-        assert_eq!(toks, vec!["complete", "-c", "git", "-d", "version control", "-a", "status log"]);
+        let toks =
+            tokenize_shell(r#"complete -c git -d 'version control' -a "status log""#).unwrap();
+        assert_eq!(
+            toks,
+            vec![
+                "complete",
+                "-c",
+                "git",
+                "-d",
+                "version control",
+                "-a",
+                "status log"
+            ]
+        );
     }
 
     #[test]
     fn parse_simple_flag() {
-        let out = parse_fish(
-            r#"complete -c git -s v -l verbose -d "be loud""#,
-        ).unwrap();
+        let out = parse_fish(r#"complete -c git -s v -l verbose -d "be loud""#).unwrap();
         assert_eq!(out.flags.len(), 2);
         let names: Vec<&str> = out.flags.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&"-v"));
@@ -889,7 +955,8 @@ mod tests {
             complete -c git -a 'status log commit' -d 'subcommands'
             complete -c git -n '__fish_seen_subcommand_from commit' -s m -d 'commit message' -r
             "#,
-        ).unwrap();
+        )
+        .unwrap();
         // 3 subcommands from the first line (all at path "git").
         assert_eq!(out.subcmds.len(), 3);
         assert!(out.subcmds.iter().all(|s| s.path == "git"));
@@ -921,9 +988,15 @@ mod tests {
         });
         out.sort();
         let emitted = emit_lisp(&out);
-        assert!(emitted.contains(r#"(defsubcmd :path "git" :name "commit" :description "record changes")"#));
+        assert!(
+            emitted.contains(
+                r#"(defsubcmd :path "git" :name "commit" :description "record changes")"#
+            )
+        );
         assert!(emitted.contains(r#"(defflag :path "git.commit" :name "-m" :takes "string" :description "commit message")"#));
-        assert!(emitted.contains(r#"(defposit :path "git.commit" :index 1 :takes "files" :description "paths")"#));
+        assert!(emitted.contains(
+            r#"(defposit :path "git.commit" :index 1 :takes "files" :description "paths")"#
+        ));
     }
 
     #[test]
@@ -934,10 +1007,14 @@ mod tests {
 
     #[test]
     fn seen_subcommand_extracts_name() {
-        assert_eq!(seen_subcommand("__fish_seen_subcommand_from commit"),
-                   Some("commit".into()));
-        assert_eq!(seen_subcommand("__fish_git_using_command push"),
-                   Some("push".into()));
+        assert_eq!(
+            seen_subcommand("__fish_seen_subcommand_from commit"),
+            Some("commit".into())
+        );
+        assert_eq!(
+            seen_subcommand("__fish_git_using_command push"),
+            Some("push".into())
+        );
         assert_eq!(seen_subcommand("__fish_use_subcommand"), None);
     }
 
@@ -996,7 +1073,10 @@ _git() {
     fn parse_zsh_extracts_multiple_compdef_names() {
         let z = "#compdef git gitk, gh\n_git() {}";
         let names = find_compdef_commands(z).unwrap();
-        assert_eq!(names, vec!["git".to_string(), "gitk".to_string(), "gh".to_string()]);
+        assert_eq!(
+            names,
+            vec!["git".to_string(), "gitk".to_string(), "gh".to_string()]
+        );
     }
 
     #[test]
@@ -1014,7 +1094,10 @@ _mytool() {
         let out = parse_zsh_compdef(z).unwrap();
         let c_flag = out.flags.iter().find(|f| f.name == "-C").unwrap();
         assert_eq!(c_flag.takes.as_deref(), Some("dir")); // `-/` → directory only
-        assert_eq!(c_flag.description.as_deref(), Some("change working directory"));
+        assert_eq!(
+            c_flag.description.as_deref(),
+            Some("change working directory")
+        );
         let v = out.flags.iter().find(|f| f.name == "--version").unwrap();
         assert_eq!(v.description.as_deref(), Some("show version"));
         assert_eq!(v.takes, None); // bool flag
