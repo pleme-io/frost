@@ -120,6 +120,71 @@ enum PickerOutcome {
     Splice { text: String, submit: bool },
 }
 
+/// Read one additional keystroke after a `__frost_chord_prefix_*__`
+/// sentinel fires and format it as a chord string matching the rc's
+/// `(defbind :key "C-x e" …)` second-chord spelling. Briefly
+/// re-enables raw mode (reedline dropped it on its way out) so
+/// `crossterm::event::read()` returns immediately on the next key.
+///
+/// Non-key events (resize, paste, focus) are swallowed and we loop
+/// for another event; unparseable modifier combos return `None` so
+/// the caller can silently fall through.
+fn read_one_chord() -> Option<String> {
+    use crossterm::event::{self, Event, KeyEvent};
+    use crossterm::terminal;
+
+    let _ = terminal::enable_raw_mode();
+    let result = loop {
+        match event::read() {
+            Ok(Event::Key(KeyEvent { code, modifiers, .. })) => break format_chord(code, modifiers),
+            Ok(_) => continue, // resize / paste / focus — wait for a real key
+            Err(_) => break None,
+        }
+    };
+    let _ = terminal::disable_raw_mode();
+    result
+}
+
+/// Convert a `(KeyCode, KeyModifiers)` back into the chord string
+/// syntax our rc uses (`"C-x"`, `"M-?"`, `"e"`). Matches the
+/// reverse of `frost_zle::parse_chord`. Returns `None` if the code
+/// is something we don't have a canonical spelling for (function
+/// keys, media keys, etc.).
+fn format_chord(code: crossterm::event::KeyCode, modifiers: crossterm::event::KeyModifiers) -> Option<String> {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let key_name = match code {
+        KeyCode::Char(' ') => "space".into(),
+        KeyCode::Char(c)   => c.to_string(),
+        KeyCode::Tab       => "tab".into(),
+        KeyCode::Enter     => "enter".into(),
+        KeyCode::Esc       => "esc".into(),
+        KeyCode::Up        => "up".into(),
+        KeyCode::Down      => "down".into(),
+        KeyCode::Left      => "left".into(),
+        KeyCode::Right     => "right".into(),
+        KeyCode::Home      => "home".into(),
+        KeyCode::End       => "end".into(),
+        KeyCode::PageUp    => "pageup".into(),
+        KeyCode::PageDown  => "pagedown".into(),
+        KeyCode::Backspace => "backspace".into(),
+        KeyCode::Delete    => "delete".into(),
+        _ => return None,
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    if modifiers.contains(KeyModifiers::CONTROL) { parts.push("C"); }
+    if modifiers.contains(KeyModifiers::ALT)     { parts.push("M"); }
+    if modifiers.contains(KeyModifiers::SHIFT) && key_name.chars().count() > 1 {
+        // Shift on bare letters is encoded via case of the char;
+        // only explicit-name keys (tab, up, …) need the "S-" prefix.
+        parts.push("S");
+    }
+    if parts.is_empty() {
+        Some(key_name)
+    } else {
+        Some(format!("{}-{}", parts.join("-"), key_name))
+    }
+}
+
 /// Spawn a pleme-io/skim-tab picker binary and return its stdout trimmed
 /// of trailing whitespace. Returns `None` when:
 ///
@@ -499,6 +564,7 @@ fn interactive(
     rc_positionals: Vec<frost_lisp::PositSpec>,
     rc_abbreviations: std::collections::HashMap<String, String>,
     rc_theme: frost_lisp::ThemeSpec,
+    rc_multi_key: Vec<(String, String, String)>,
 ) {
     // Ignore SIGINT in the shell process itself; reedline handles Ctrl-C
     // by aborting the current line buffer, not killing frost.
@@ -631,6 +697,34 @@ fn interactive(
             Ok(ReadLineOutcome::Input(line)) => {
                 let trimmed = line.trim();
                 if trimmed.is_empty() { continue; }
+
+                // Multi-key chord prefix sentinel (`__frost_chord_prefix_C-x__`)
+                // — reedline fired the first chord; we read one more
+                // keystroke via crossterm, format it as a chord string,
+                // look up (first, second) in rc_multi_key, and invoke
+                // the stored continuation function via the normal run
+                // path. No-match or non-key event falls through silently.
+                if let Some(first_chord) = trimmed
+                    .strip_prefix("__frost_chord_prefix_")
+                    .and_then(|s| s.strip_suffix("__"))
+                {
+                    if let Some(second_chord) = read_one_chord() {
+                        let found = rc_multi_key.iter().find(|(p, r, _)| {
+                            p == first_chord && *r == second_chord
+                        });
+                        if let Some((_, _, fn_name)) = found {
+                            let fn_name = fn_name.clone();
+                            match run(&fn_name, env) {
+                                RunOutcome::Completed(_) => {}
+                                RunOutcome::Exit(code) => {
+                                    run_exit_trap(env);
+                                    std::process::exit(code);
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
 
                 // Picker sentinels — rc-authored `defbind`s return a
                 // `__frost_picker_*__` string via `ExecuteHostCommand`.
@@ -775,6 +869,7 @@ fn main() {
         rc_positionals,
         rc_abbreviations,
         rc_theme,
+        rc_multi_key,
     ) = match frost_lisp::load_rc(&rc_path, &mut env) {
         Ok(summary) => {
             if summary != frost_lisp::ApplySummary::default() {
@@ -794,6 +889,7 @@ fn main() {
                 summary.positionals,
                 summary.abbreviations,
                 summary.theme,
+                summary.multi_key_bindings,
             )
         }
         Err(e) => {
@@ -808,6 +904,7 @@ fn main() {
                 Vec::new(),
                 std::collections::HashMap::new(),
                 frost_lisp::nord_default(),
+                Vec::new(),
             )
         }
     };
@@ -845,6 +942,7 @@ fn main() {
             rc_positionals,
             rc_abbreviations,
             rc_theme,
+            rc_multi_key,
         );
         0
     } else {
@@ -897,7 +995,69 @@ fn run_exit_trap(env: &mut frost_exec::ShellEnv) {
 
 #[cfg(test)]
 mod tests {
-    use super::{did_you_mean, is_complete, levenshtein};
+    use super::{did_you_mean, format_chord, is_complete, levenshtein};
+
+    #[test]
+    fn format_chord_bare_letter() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        assert_eq!(
+            format_chord(KeyCode::Char('e'), KeyModifiers::NONE),
+            Some("e".to_string())
+        );
+    }
+
+    #[test]
+    fn format_chord_ctrl_letter() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        assert_eq!(
+            format_chord(KeyCode::Char('x'), KeyModifiers::CONTROL),
+            Some("C-x".to_string())
+        );
+    }
+
+    #[test]
+    fn format_chord_alt_letter() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        assert_eq!(
+            format_chord(KeyCode::Char('?'), KeyModifiers::ALT),
+            Some("M-?".to_string())
+        );
+    }
+
+    #[test]
+    fn format_chord_named_key() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        assert_eq!(
+            format_chord(KeyCode::Tab, KeyModifiers::CONTROL),
+            Some("C-tab".to_string())
+        );
+        assert_eq!(
+            format_chord(KeyCode::Up, KeyModifiers::ALT),
+            Some("M-up".to_string())
+        );
+        assert_eq!(
+            format_chord(KeyCode::Enter, KeyModifiers::NONE),
+            Some("enter".to_string())
+        );
+    }
+
+    #[test]
+    fn format_chord_ctrl_and_alt_and_named() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        let m = KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT;
+        // SHIFT on named keys gets its own modifier token; combined with C+M.
+        assert_eq!(
+            format_chord(KeyCode::Home, m),
+            Some("C-M-S-home".to_string())
+        );
+    }
+
+    #[test]
+    fn format_chord_rejects_unknown_keys() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        // Function keys aren't spelled in our chord syntax; return None.
+        assert_eq!(format_chord(KeyCode::F(5), KeyModifiers::NONE), None);
+    }
 
     #[test]
     fn levenshtein_known_cases() {
