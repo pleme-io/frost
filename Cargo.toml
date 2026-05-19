@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/frost",
+  "crates/frost-config",
   "crates/frost-lexer",
   "crates/frost-parser",
   "crates/frost-expand",
@@ -41,6 +42,7 @@ frost-zle = { path = "crates/frost-zle" }
 frost-complete = { path = "crates/frost-complete" }
 frost-builtins = { path = "crates/frost-builtins" }
 frost-options = { path = "crates/frost-options" }
+frost-config = { path = "crates/frost-config" }
 
 # Error handling
 thiserror = "2"
