@@ -132,9 +132,31 @@ pub struct LockedPkgSpec {
     /// for the tameshi chain — independent of any Nix presence.
     pub blake3: String,
     /// Filesystem path where the package's contents currently live.
-    /// Typically `/nix/store/<hash>-<name>-<ver>/`. Read at
-    /// `defload`-apply time.
+    /// Typically `$XDG_CACHE_HOME/estante/store/<name>-<rev>/` (cache
+    /// placement) or `/nix/store/<hash>-<name>-<rev>/` (nix
+    /// placement). Read at `defload`-apply time.
     pub materialized_path: String,
+    /// Placement substrate — `"cache"`, `"nix"`, or `"both"`. Empty
+    /// string defaults to `"cache"` for backward compatibility with
+    /// pre-placement lockfiles.
+    ///
+    /// * `cache` — the package lives in estante's user-local cache
+    ///   under `$XDG_CACHE_HOME/estante/store/…`. Fast, ad-hoc,
+    ///   mutable. Default for `estante install` and `estante run`.
+    /// * `nix`   — the package lives in `/nix/store/…`. Immutable,
+    ///   content-addressed, fleet-reproducible. Required for
+    ///   home-manager / NixOS / substrate fleet deploys. Created
+    ///   via `nix store add-path` at `estante install` time.
+    /// * `both`  — the package is present in BOTH stores. Useful
+    ///   during a `place` migration so consumers don't lose the
+    ///   in-flight reference.
+    ///
+    /// frost-lisp's `defload` itself is placement-agnostic — it just
+    /// reads `materialized_path`. The field exists for the resolver,
+    /// substrate's mk-shell-env, and tooling to reason about where
+    /// the bytes physically live.
+    #[serde(default)]
+    pub placement: String,
 }
 
 /// Recognized `source:` scheme prefixes. Order is significant —
