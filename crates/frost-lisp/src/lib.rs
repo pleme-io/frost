@@ -43,6 +43,7 @@ mod notify;
 mod option;
 mod path;
 mod picker;
+mod pkg;
 mod prompt;
 mod source;
 mod theme;
@@ -63,6 +64,7 @@ pub use notify::NotifySpec;
 pub use option::OptionSetSpec;
 pub use path::{PathSpec, apply_path, expand_vars};
 pub use picker::{PickerSpec, VALID_ACTIONS, is_valid_action, picker_sentinel};
+pub use pkg::{LoadSpec, LockedPkgSpec, PkgSpec, split_source_scheme};
 pub use prompt::PromptSpec;
 pub use source::SourceSpec;
 pub use theme::{
@@ -99,6 +101,16 @@ pub enum LispError {
     SourceNotFound { path: String, rc: String },
     #[error("defsource path unreadable: {path}: {source}")]
     SourceIo {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("defload references unknown package {0} (no matching deflockedpkg in apply tree)")]
+    UnknownPkg(String),
+    #[error("defload {pkg}: entrypoint missing at {path}")]
+    PkgPathMissing { pkg: String, path: String },
+    #[error("defload {pkg}: io error reading {path}: {source}")]
+    PkgIo {
+        pkg: String,
         path: String,
         source: std::io::Error,
     },
@@ -192,6 +204,22 @@ pub struct ApplySummary {
     /// Preserved in the summary for introspection (future widgets
     /// like a mark picker, a `marks` builtin).
     pub marks: std::collections::HashMap<String, String>,
+
+    /// Number of `(defshellpkg …)` manifest forms seen. Estante reads
+    /// these for dep-graph walking; frost itself doesn't apply them.
+    pub packages: usize,
+
+    /// The actual `defshellpkg` declarations. Exposed so estante and
+    /// frost CLIs (`frost --print-packages`) can introspect a
+    /// distribution's package surface without re-parsing.
+    pub declared_packages: Vec<PkgSpec>,
+
+    /// Number of `(defload …)` resolutions that successfully
+    /// recursed into a package's entrypoint. Mirrors how `defsource`
+    /// is invisible in the summary — both forms fold their inner
+    /// counts into the outer; this dedicated counter just records
+    /// "N defload forms were honored."
+    pub loads: usize,
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -200,23 +228,47 @@ pub struct ApplySummary {
 /// `compile_typed` filters by keyword, so mixing `defalias`/`defopts`/
 /// `defenv` in the same file is expected).
 pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
-    apply_source_with_context(src, env, None, &mut std::collections::HashSet::new())
+    apply_source_with_context(
+        src,
+        env,
+        None,
+        &mut std::collections::HashSet::new(),
+        &mut std::collections::HashMap::new(),
+    )
 }
 
 /// Full-fat apply entry. `rc_dir` is the directory of the file the
 /// source came from (used for `(defsource :path "relative.lisp")`
 /// resolution). `visited` carries the canonical paths already sourced
 /// in this apply-tree so recursive sourcing terminates.
+/// `locked_pkgs` is the package map built up by `deflockedpkg`
+/// entries across the whole apply tree — `defload` looks up here.
+/// The map is pre-scanned BEFORE recursion descends so an inner
+/// file's `defload` can resolve against an outer-scope lock that
+/// hasn't been processed yet in source order.
 fn apply_source_with_context(
     src: &str,
     env: &mut ShellEnv,
     rc_dir: Option<&std::path::Path>,
     visited: &mut std::collections::HashSet<std::path::PathBuf>,
+    locked_pkgs: &mut std::collections::HashMap<String, LockedPkgSpec>,
 ) -> LispResult<ApplySummary> {
     let mut summary = ApplySummary {
         theme: nord_default(),
         ..Default::default()
     };
+
+    // ─── PASS 0: Pre-scan this file's `deflockedpkg` entries. ──────────
+    // Done BEFORE source/load recursion so inner files can resolve
+    // `defload` against outer-scope locks that lexically follow them.
+    // Inner recursion will extend the same map with its own locks,
+    // so by the time we reach this file's `defload` pass below, every
+    // lock reachable in the apply tree is visible.
+    let pre_locks: Vec<LockedPkgSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for l in pre_locks {
+        locked_pkgs.insert(l.name.clone(), l);
+    }
 
     // ─── Sourced files (first — their forms fold into the outer pass) ─
     // Sourcing happens ahead of every primitive pass so that later
@@ -253,9 +305,70 @@ fn apply_source_with_context(
         })?;
         let inner_dir = canonical.parent().map(|p| p.to_path_buf());
         let inner_summary =
-            apply_source_with_context(&inner_src, env, inner_dir.as_deref(), visited)?;
+            apply_source_with_context(&inner_src, env, inner_dir.as_deref(), visited, locked_pkgs)?;
         merge_summary(&mut summary, inner_summary);
     }
+
+    // ─── Loaded packages — dispatch through the same recursion as ─────
+    // `defsource` so a loaded package's primitives fold into the
+    // outer summary identically. Lookup hits the shared `locked_pkgs`
+    // map populated above; missing entries surface as `UnknownPkg`
+    // so a typo in a `defload` is loud rather than silent.
+    let loads: Vec<LoadSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    for ld in loads {
+        let lock = locked_pkgs
+            .get(&ld.pkg)
+            .cloned()
+            .ok_or_else(|| LispError::UnknownPkg(ld.pkg.clone()))?;
+        let entrypoint = ld.entrypoint.as_deref().unwrap_or("rc.lisp");
+        let pkg_rc = std::path::Path::new(&lock.materialized_path).join(entrypoint);
+        let canonical = std::fs::canonicalize(&pkg_rc).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                LispError::PkgPathMissing {
+                    pkg: ld.pkg.clone(),
+                    path: pkg_rc.display().to_string(),
+                }
+            } else {
+                LispError::PkgIo {
+                    pkg: ld.pkg.clone(),
+                    path: pkg_rc.display().to_string(),
+                    source: e,
+                }
+            }
+        })?;
+        if !visited.insert(canonical.clone()) {
+            // Already loaded somewhere in this apply tree — skip to
+            // avoid the cycle. Same semantics as defsource.
+            continue;
+        }
+        let inner_src = std::fs::read_to_string(&canonical).map_err(|e| LispError::PkgIo {
+            pkg: ld.pkg.clone(),
+            path: canonical.display().to_string(),
+            source: e,
+        })?;
+        let inner_dir = canonical.parent().map(std::path::Path::to_path_buf);
+        let inner_summary = apply_source_with_context(
+            &inner_src,
+            env,
+            inner_dir.as_deref(),
+            visited,
+            locked_pkgs,
+        )?;
+        merge_summary(&mut summary, inner_summary);
+        summary.loads += 1;
+    }
+
+    // ─── Package manifests — count + retain for introspection. ────────
+    // `defshellpkg` doesn't apply state changes; it's an author-side
+    // manifest read by `estante` for dep-graph walking. frost-lisp
+    // counts the forms and retains the typed records so consumers
+    // (CLIs, debugging widgets, `frost --print-packages`) can ask the
+    // shell what packages declared themselves.
+    let manifests: Vec<PkgSpec> =
+        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    summary.packages = manifests.len();
+    summary.declared_packages = manifests;
 
     // ─── Integrations (first — they contribute primitives) ──────────
     // `(defintegration :tool "zoxide")` expands into the canonical
@@ -858,6 +971,9 @@ fn merge_summary(dst: &mut ApplySummary, src: ApplySummary) {
     dst.theme = theme::merge_theme(std::mem::take(&mut dst.theme), src.theme);
     dst.multi_key_bindings.extend(src.multi_key_bindings);
     dst.marks.extend(src.marks);
+    dst.packages += src.packages;
+    dst.declared_packages.extend(src.declared_packages);
+    dst.loads += src.loads;
 }
 
 /// Resolve a `(defsource :path …)` string against the sourcing file's
@@ -983,7 +1099,8 @@ pub fn load_rc(path: impl AsRef<Path>, env: &mut ShellEnv) -> LispResult<ApplySu
     if let Ok(canonical) = std::fs::canonicalize(path) {
         visited.insert(canonical);
     }
-    apply_source_with_context(&src, env, rc_dir, &mut visited)
+    let mut locked_pkgs = std::collections::HashMap::new();
+    apply_source_with_context(&src, env, rc_dir, &mut visited, &mut locked_pkgs)
 }
 
 /// Resolve the default rc file path — `$FROSTRC` if set, else
@@ -1747,5 +1864,442 @@ mod tests {
         let s = apply_source(src, &mut env).unwrap();
         assert_eq!(s.functions, 1);
         assert!(env.functions.contains_key("greet"));
+    }
+
+    // ─── pkg / load / lockedpkg ──────────────────────────────────────
+
+    #[test]
+    fn apply_defshellpkg_collects_into_summary() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defshellpkg :name "you-should-use"
+                         :version "1.7.4"
+                         :source "github:org/repo"
+                         :exports ("alias" "hook"))
+            (defshellpkg :name "other"
+                         :version "0.1.0"
+                         :source "github:other/repo")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.packages, 2);
+        assert_eq!(s.declared_packages.len(), 2);
+        let ysu = s
+            .declared_packages
+            .iter()
+            .find(|p| p.name == "you-should-use")
+            .unwrap();
+        assert_eq!(ysu.exports, vec!["alias", "hook"]);
+    }
+
+    #[test]
+    fn apply_defload_unknown_pkg_errors() {
+        let mut env = ShellEnv::new();
+        let src = r#"(defload :pkg "nope")"#;
+        let err = apply_source(src, &mut env).unwrap_err();
+        assert!(matches!(err, LispError::UnknownPkg(name) if name == "nope"));
+    }
+
+    #[test]
+    fn apply_defload_resolves_via_locked_pkg() {
+        // End-to-end proof: write a fake package on disk; declare a
+        // `deflockedpkg` pointing at it; reference via `defload`; the
+        // package's contents fold into the outer summary.
+        let mut env = ShellEnv::new();
+        let tmp = std::env::temp_dir().join(format!("frost-defload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let pkg_dir = tmp.join("you-should-use");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("rc.lisp"),
+            r#"(defalias :name "ysu" :value "echo you should use")"#,
+        )
+        .unwrap();
+
+        let outer = tmp.join("frostrc.lisp");
+        std::fs::write(
+            &outer,
+            format!(
+                r#"
+                (deflockedpkg
+                  :name "you-should-use"
+                  :source "github:org/repo"
+                  :rev "abc123"
+                  :nar-hash "sha256-x"
+                  :blake3 "blake3-y"
+                  :materialized-path "{materialized}")
+                (defload :pkg "you-should-use")
+                "#,
+                materialized = pkg_dir.display(),
+            ),
+        )
+        .unwrap();
+
+        let s = load_rc(&outer, &mut env).unwrap();
+        assert_eq!(s.loads, 1);
+        // The alias from the loaded package landed in env.aliases.
+        assert_eq!(
+            env.aliases.get("ysu").map(String::as_str),
+            Some("echo you should use")
+        );
+        // And the alias counted toward the outer summary because the
+        // inner pass's count merges in.
+        assert_eq!(s.aliases, 1);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_defload_alternate_entrypoint_honored() {
+        let mut env = ShellEnv::new();
+        let tmp = std::env::temp_dir().join(format!("frost-defload-alt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let pkg_dir = tmp.join("pkg-alt");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("custom.lisp"),
+            r#"(defalias :name "alt" :value "alt-value")"#,
+        )
+        .unwrap();
+        let outer = tmp.join("frostrc.lisp");
+        std::fs::write(
+            &outer,
+            format!(
+                r#"
+                (deflockedpkg :name "alt-pkg"
+                              :source "local:./pkg-alt"
+                              :rev "0"
+                              :nar-hash "sha256-x"
+                              :blake3 "blake3-y"
+                              :materialized-path "{}")
+                (defload :pkg "alt-pkg" :entrypoint "custom.lisp")
+                "#,
+                pkg_dir.display(),
+            ),
+        )
+        .unwrap();
+        load_rc(&outer, &mut env).unwrap();
+        assert_eq!(env.aliases.get("alt").map(String::as_str), Some("alt-value"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_defload_cycle_is_skipped() {
+        // A package that loads itself terminates via the same visited
+        // set defsource uses — no infinite recursion.
+        let mut env = ShellEnv::new();
+        let tmp =
+            std::env::temp_dir().join(format!("frost-defload-cycle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let pkg_dir = tmp.join("self-pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        // The package's rc.lisp re-loads itself.
+        std::fs::write(
+            pkg_dir.join("rc.lisp"),
+            r#"
+            (defload :pkg "self-pkg")
+            (defalias :name "cycle" :value "ok")
+            "#,
+        )
+        .unwrap();
+        let outer = tmp.join("frostrc.lisp");
+        std::fs::write(
+            &outer,
+            format!(
+                r#"
+                (deflockedpkg :name "self-pkg"
+                              :source "local:./self-pkg"
+                              :rev "0"
+                              :nar-hash "sha256-x"
+                              :blake3 "blake3-y"
+                              :materialized-path "{}")
+                (defload :pkg "self-pkg")
+                "#,
+                pkg_dir.display(),
+            ),
+        )
+        .unwrap();
+        let s = load_rc(&outer, &mut env).unwrap();
+        // First load succeeds; the recursive self-load hits the visited
+        // set and is skipped silently.
+        assert_eq!(s.loads, 1);
+        assert_eq!(env.aliases.get("cycle").map(String::as_str), Some("ok"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_defload_outer_lock_visible_to_inner_load_via_defsource() {
+        // Mixed pattern: the outer rc.lisp declares the lock; an inner
+        // file (defsource'd) issues the defload. The pre-scan pass of
+        // the outer-file locks must populate the locked_pkgs map BEFORE
+        // recursion descends into the inner file, so the inner defload
+        // resolves cleanly.
+        let mut env = ShellEnv::new();
+        let tmp =
+            std::env::temp_dir().join(format!("frost-defload-outer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let pkg_dir = tmp.join("outerpkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("rc.lisp"),
+            r#"(defalias :name "outerpkg" :value "outer-pkg-alias")"#,
+        )
+        .unwrap();
+        let inner = tmp.join("inner.lisp");
+        std::fs::write(&inner, r#"(defload :pkg "outerpkg")"#).unwrap();
+        let outer = tmp.join("frostrc.lisp");
+        std::fs::write(
+            &outer,
+            format!(
+                r#"
+                (deflockedpkg :name "outerpkg"
+                              :source "local:./outerpkg"
+                              :rev "0"
+                              :nar-hash "sha256-x"
+                              :blake3 "blake3-y"
+                              :materialized-path "{materialized}")
+                (defsource :path "{inner}")
+                "#,
+                materialized = pkg_dir.display(),
+                inner = inner.display(),
+            ),
+        )
+        .unwrap();
+        load_rc(&outer, &mut env).unwrap();
+        assert_eq!(
+            env.aliases.get("outerpkg").map(String::as_str),
+            Some("outer-pkg-alias")
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_multiple_defload_into_separate_packages() {
+        // Two different packages, each with its own alias. Both loads
+        // succeed; both aliases land in env; summary loads = 2.
+        let mut env = ShellEnv::new();
+        let tmp =
+            std::env::temp_dir().join(format!("frost-defload-multi-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let pkg_a = tmp.join("pkg-a");
+        let pkg_b = tmp.join("pkg-b");
+        std::fs::create_dir_all(&pkg_a).unwrap();
+        std::fs::create_dir_all(&pkg_b).unwrap();
+        std::fs::write(
+            pkg_a.join("rc.lisp"),
+            r#"(defalias :name "alpha" :value "alpha-val")"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pkg_b.join("rc.lisp"),
+            r#"(defalias :name "beta" :value "beta-val")"#,
+        )
+        .unwrap();
+        let outer = tmp.join("rc.lisp");
+        std::fs::write(
+            &outer,
+            format!(
+                r#"
+                (deflockedpkg :name "a" :source "local:./pkg-a"
+                              :rev "0" :nar-hash "" :blake3 ""
+                              :materialized-path "{a}")
+                (deflockedpkg :name "b" :source "local:./pkg-b"
+                              :rev "0" :nar-hash "" :blake3 ""
+                              :materialized-path "{b}")
+                (defload :pkg "a")
+                (defload :pkg "b")
+                "#,
+                a = pkg_a.display(),
+                b = pkg_b.display(),
+            ),
+        )
+        .unwrap();
+        let s = load_rc(&outer, &mut env).unwrap();
+        assert_eq!(s.loads, 2);
+        assert_eq!(env.aliases.get("alpha").map(String::as_str), Some("alpha-val"));
+        assert_eq!(env.aliases.get("beta").map(String::as_str), Some("beta-val"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_duplicate_defload_short_circuits_via_visited_set() {
+        // Two defload forms in the same file pointing at the same
+        // package. The visited set should kick in on the second.
+        // Result: alias still lands once, loads counter increments once
+        // (second is silently skipped, mirroring defsource semantics).
+        let mut env = ShellEnv::new();
+        let tmp =
+            std::env::temp_dir().join(format!("frost-defload-dup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let pkg = tmp.join("pkg");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("rc.lisp"),
+            r#"(defalias :name "dup" :value "dup-val")"#,
+        )
+        .unwrap();
+        let outer = tmp.join("rc.lisp");
+        std::fs::write(
+            &outer,
+            format!(
+                r#"
+                (deflockedpkg :name "p" :source "local:./pkg" :rev "0"
+                              :nar-hash "" :blake3 "" :materialized-path "{}")
+                (defload :pkg "p")
+                (defload :pkg "p")
+                "#,
+                pkg.display(),
+            ),
+        )
+        .unwrap();
+        let s = load_rc(&outer, &mut env).unwrap();
+        // First defload succeeds. Second hits visited → silent skip,
+        // does NOT increment loads counter. Alias still present (once).
+        assert_eq!(s.loads, 1);
+        assert_eq!(env.aliases.get("dup").map(String::as_str), Some("dup-val"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_chained_defload_a_loads_b() {
+        // Package A's rc.lisp does (defload :pkg "b"). Both lockedpkg
+        // entries are visible in the outer rc. Loading A transitively
+        // loads B.
+        let mut env = ShellEnv::new();
+        let tmp =
+            std::env::temp_dir().join(format!("frost-defload-chain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let pkg_a = tmp.join("a");
+        let pkg_b = tmp.join("b");
+        std::fs::create_dir_all(&pkg_a).unwrap();
+        std::fs::create_dir_all(&pkg_b).unwrap();
+        std::fs::write(
+            pkg_b.join("rc.lisp"),
+            r#"(defalias :name "leaf" :value "from-b")"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pkg_a.join("rc.lisp"),
+            r#"
+            (defload :pkg "b")
+            (defalias :name "trunk" :value "from-a")
+            "#,
+        )
+        .unwrap();
+        let outer = tmp.join("rc.lisp");
+        std::fs::write(
+            &outer,
+            format!(
+                r#"
+                (deflockedpkg :name "a" :source "local:./a" :rev "0"
+                              :nar-hash "" :blake3 "" :materialized-path "{a}")
+                (deflockedpkg :name "b" :source "local:./b" :rev "0"
+                              :nar-hash "" :blake3 "" :materialized-path "{b}")
+                (defload :pkg "a")
+                "#,
+                a = pkg_a.display(),
+                b = pkg_b.display(),
+            ),
+        )
+        .unwrap();
+        let s = load_rc(&outer, &mut env).unwrap();
+        // Outer load of "a" fires + inner load of "b" fires = 2 loads.
+        assert_eq!(s.loads, 2);
+        assert_eq!(env.aliases.get("trunk").map(String::as_str), Some("from-a"));
+        assert_eq!(env.aliases.get("leaf").map(String::as_str), Some("from-b"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_defshellpkg_with_lazy_flag_records_in_summary() {
+        // PkgSpec.lazy bool flows through to summary.declared_packages.
+        // Future lazy-loading logic reads this to decide deferral.
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defshellpkg :name "lazy-one" :version "1.0" :source "github:o/r" :lazy #t)
+            (defshellpkg :name "eager"    :version "1.0" :source "github:o/e")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        let lazy = s.declared_packages.iter().find(|p| p.name == "lazy-one").unwrap();
+        let eager = s.declared_packages.iter().find(|p| p.name == "eager").unwrap();
+        assert!(lazy.lazy);
+        assert!(!eager.lazy);
+    }
+
+    #[test]
+    fn apply_duplicate_lockedpkg_last_writer_wins() {
+        // Two deflockedpkg entries in the same file with the same name.
+        // The map's HashMap::insert semantic means second writes win.
+        // Test by pointing two locks at different package dirs and
+        // asserting we get the SECOND one's content.
+        let mut env = ShellEnv::new();
+        let tmp =
+            std::env::temp_dir().join(format!("frost-defload-dup-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let pkg_first = tmp.join("first");
+        let pkg_second = tmp.join("second");
+        std::fs::create_dir_all(&pkg_first).unwrap();
+        std::fs::create_dir_all(&pkg_second).unwrap();
+        std::fs::write(
+            pkg_first.join("rc.lisp"),
+            r#"(defalias :name "tag" :value "first-wins")"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pkg_second.join("rc.lisp"),
+            r#"(defalias :name "tag" :value "second-wins")"#,
+        )
+        .unwrap();
+        let outer = tmp.join("rc.lisp");
+        std::fs::write(
+            &outer,
+            format!(
+                r#"
+                (deflockedpkg :name "p" :source "local:./first" :rev "0"
+                              :nar-hash "" :blake3 "" :materialized-path "{first}")
+                (deflockedpkg :name "p" :source "local:./second" :rev "0"
+                              :nar-hash "" :blake3 "" :materialized-path "{second}")
+                (defload :pkg "p")
+                "#,
+                first = pkg_first.display(),
+                second = pkg_second.display(),
+            ),
+        )
+        .unwrap();
+        load_rc(&outer, &mut env).unwrap();
+        assert_eq!(
+            env.aliases.get("tag").map(String::as_str),
+            Some("second-wins"),
+            "second deflockedpkg should override the first"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_defload_missing_entrypoint_errors() {
+        let mut env = ShellEnv::new();
+        let tmp = std::env::temp_dir().join(format!("frost-defload-miss-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let pkg_dir = tmp.join("emptypkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        // Note: rc.lisp deliberately NOT created in pkg_dir.
+        let outer = tmp.join("frostrc.lisp");
+        std::fs::write(
+            &outer,
+            format!(
+                r#"
+                (deflockedpkg :name "emptypkg"
+                              :source "local:./emptypkg"
+                              :rev "0"
+                              :nar-hash "sha256-x"
+                              :blake3 "blake3-y"
+                              :materialized-path "{}")
+                (defload :pkg "emptypkg")
+                "#,
+                pkg_dir.display(),
+            ),
+        )
+        .unwrap();
+        let err = load_rc(&outer, &mut env).unwrap_err();
+        assert!(matches!(err, LispError::PkgPathMissing { .. }));
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
