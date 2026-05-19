@@ -47,6 +47,21 @@
         # runtime have the binary in their closure (frostmourne uses it).
         packages.crate2nix = crate2nixPkg;
       });
+
+      # ── HM / NixOS / Darwin module trio ────────────────────────
+      # Aligns frost with mado + tear + frostmourne: every
+      # pleme-io operator UX surface ships a typed Nix module
+      # so the config can be authored in Nix (and rendered to
+      # the same shikumi YAML the runtime loads). See
+      # module/home-manager/default.nix for the full options
+      # surface — mirrors crates/frost-config/src/lib.rs.
+      moduleOutputs = {
+        homeManagerModules.default = import ./module/home-manager;
+        nixosModules.default = import ./module/nixos;
+        darwinModules.default = import ./module/darwin;
+      };
     in
-      nixpkgs.lib.recursiveUpdate base forgeOverlay;
+      nixpkgs.lib.recursiveUpdate
+        (nixpkgs.lib.recursiveUpdate base forgeOverlay)
+        moduleOutputs;
 }
