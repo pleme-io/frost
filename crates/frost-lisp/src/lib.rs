@@ -38,6 +38,7 @@ mod function;
 mod history;
 mod hook;
 mod integration;
+mod intent;
 mod mark;
 mod notify;
 mod option;
@@ -59,6 +60,7 @@ pub use function::FunctionSpec;
 pub use history::HistorySpec;
 pub use hook::{HookSpec, hook_function_name};
 pub use integration::{IntegrationSpec, KNOWN_INTEGRATIONS, lookup_integration};
+pub use intent::{IntentResolution, KeybindIntent, resolve_intent};
 pub use mark::{MarkSpec, expand_mark_path, shell_quote_path};
 pub use notify::NotifySpec;
 pub use option::OptionSetSpec;
@@ -95,6 +97,8 @@ pub enum LispError {
     UnknownSignal(String),
     #[error("unknown picker action: {0} (valid: replace, append, cd-submit, submit)")]
     UnknownPickerAction(String),
+    #[error("unknown keybind intent: {unknown} (valid: history-picker, files-picker, dir-picker, content-picker, clear-buffer, kill-line, edit-in-editor, help, clipboard-copy, clipboard-paste, toggle-sudo, insert-last-arg, multiplexer-prefix)")]
+    UnknownKeybindIntent { unknown: String },
     #[error("unknown integration: {0} (known: zoxide, direnv, starship, atuin)")]
     UnknownIntegration(String),
     #[error("defsource path not found: {path} (from rc at {rc})")]
@@ -220,6 +224,16 @@ pub struct ApplySummary {
     /// counts into the outer; this dedicated counter just records
     /// "N defload forms were honored."
     pub loads: usize,
+}
+
+/// Trim + treat empty as absent. Used to coerce the `Option`-less
+/// `intent`/`key` string fields on `BindSpec`/`PickerSpec` into the
+/// `Option<&str>` shape the `resolve_intent` helper expects. Keeps
+/// the typed spec serializable with serde defaults (which yield `""`
+/// not `Option::None`) without bloating the apply path.
+fn non_empty(s: &str) -> Option<&str> {
+    let t = s.trim();
+    if t.is_empty() { None } else { Some(t) }
 }
 
 /// Parse a Lisp source string and apply every recognized form to `env`.
@@ -709,11 +723,25 @@ fn apply_source_with_context(
     // a synthetic prefix sentinel + record the second-chord continuation
     // in `multi_key_bindings` so the REPL can crossterm-read the second
     // key and dispatch. 3+ key sequences remain dropped — rare + complex.
+    //
+    // Atlas-intent resolution: if a defbind supplies `:intent`, the chord
+    // is sourced from ishou_tokens::FleetKeybinds. Atlas wins over any
+    // hand-supplied `:key` on the same form (the typed source beats the
+    // literal). Unknown intent → typed error so rc.lisp typos surface
+    // loudly instead of silently dropping the binding.
+    let fleet_keybinds = ishou_tokens::FleetKeybinds::prescribed();
     let binds: Vec<BindSpec> =
         tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
     let mut chord_prefixes_emitted: std::collections::HashSet<String> =
         std::collections::HashSet::new();
-    for b in binds {
+    for mut b in binds {
+        match resolve_intent(non_empty(&b.intent), &fleet_keybinds) {
+            IntentResolution::Chord(chord) => b.key = chord.to_string(),
+            IntentResolution::Unknown { unknown } => {
+                return Err(LispError::UnknownKeybindIntent { unknown });
+            }
+            IntentResolution::NoIntent => {}
+        }
         match frost_chord_kind(&b.key) {
             ChordKind::Single => {
                 if is_widget_action(&b.action) {
@@ -812,9 +840,20 @@ fn apply_source_with_context(
     // function — the REPL must see the sentinel verbatim as the
     // ExecuteHostCommand payload so its dispatcher can intercept
     // before `!`-expansion and exec.
+    //
+    // Atlas-intent resolution: same as defbind — if `:intent` is set,
+    // the chord comes from FleetKeybinds; unknown intent is a typed
+    // error.
     let pickers: Vec<PickerSpec> =
         tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
-    for p in pickers {
+    for mut p in pickers {
+        match resolve_intent(non_empty(&p.intent), &fleet_keybinds) {
+            IntentResolution::Chord(chord) => p.key = chord.to_string(),
+            IntentResolution::Unknown { unknown } => {
+                return Err(LispError::UnknownKeybindIntent { unknown });
+            }
+            IntentResolution::NoIntent => {}
+        }
         if !is_valid_action(&p.action) {
             return Err(LispError::UnknownPickerAction(p.action));
         }
@@ -1527,6 +1566,171 @@ mod tests {
             apply_source(src, &mut env),
             Err(LispError::UnknownPickerAction(_))
         ));
+    }
+
+    // ── Atlas-intent resolution (M3) ────────────────────────────
+    //
+    // These tests pin the contract for `:intent :foo` resolution
+    // through `ishou_tokens::FleetKeybinds`. Closing the loop on the
+    // 2026-05-21 Ctrl-R double-bind incident at the type level.
+
+    #[test]
+    fn apply_picker_with_intent_resolves_chord_from_atlas() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defpicker :name "history" :intent ":history-picker"
+                       :binary "skim-history" :action "replace")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        // Atlas's history_picker = "C-r"; the apply path must have
+        // resolved it and bound C-r → sentinel.
+        let history_bind = s
+            .bind_map
+            .iter()
+            .find(|(_, sentinel)| sentinel == "__frost_picker_history__")
+            .expect("history picker not bound");
+        assert_eq!(history_bind.0, "C-r");
+        assert_eq!(s.pickers.len(), 1);
+        assert_eq!(s.pickers[0].key, "C-r");
+        assert_eq!(s.pickers[0].intent, ":history-picker");
+    }
+
+    #[test]
+    fn apply_bind_with_intent_resolves_chord_from_atlas() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defbind :intent ":clear-buffer" :action "__frost_widget_clear__")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        // Atlas's clear_buffer = "C-l"; widget action routes direct.
+        let clear_bind = s
+            .bind_map
+            .iter()
+            .find(|(_, fn_name)| fn_name == "__frost_widget_clear__")
+            .expect("clear binding not registered");
+        assert_eq!(clear_bind.0, "C-l");
+    }
+
+    #[test]
+    fn apply_picker_intent_wins_over_key_when_both_supplied() {
+        // When an rc author supplies both `:intent` and `:key`, the
+        // typed source (atlas) wins. The literal is silently ignored
+        // — drift means the atlas changed and the literal is stale,
+        // not the other way around.
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defpicker :name "history" :intent ":history-picker" :key "C-z"
+                       :binary "skim-history" :action "replace")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        // Atlas wins — chord is C-r, NOT the C-z literal.
+        assert_eq!(s.pickers[0].key, "C-r");
+    }
+
+    #[test]
+    fn apply_bind_without_intent_uses_key_directly() {
+        // The legacy `:key`-only form must keep working byte-identical
+        // — atlas migration is opt-in per form.
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defbind :key "C-x e" :action "__frost_widget_edit_line__")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        // Multi-key chord → registers prefix sentinel + records two-key.
+        assert_eq!(s.multi_key_bindings.len(), 1);
+        assert_eq!(s.multi_key_bindings[0].0, "C-x");
+        assert_eq!(s.multi_key_bindings[0].1, "e");
+    }
+
+    #[test]
+    fn apply_picker_unknown_intent_returns_typed_error() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defpicker :name "x" :intent ":bogus-intent"
+                       :binary "skim-x" :action "replace")
+        "#;
+        let err = apply_source(src, &mut env).unwrap_err();
+        match err {
+            LispError::UnknownKeybindIntent { unknown } => {
+                assert_eq!(unknown, "bogus-intent");
+            }
+            other => panic!("expected UnknownKeybindIntent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_bind_unknown_intent_returns_typed_error_with_valid_list() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defbind :intent ":not-a-real-intent" :action "__frost_widget_clear__")
+        "#;
+        let err = apply_source(src, &mut env).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not-a-real-intent"), "msg: {msg}");
+        assert!(msg.contains("history-picker"), "valid list missing: {msg}");
+        assert!(msg.contains("multiplexer-prefix"), "valid list missing: {msg}");
+    }
+
+    #[test]
+    fn apply_picker_with_intent_keyword_form_without_colon_also_works() {
+        // tatara-lisp may strip the leading colon or pass it through;
+        // resolve_intent handles both for rc author ergonomics.
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defpicker :name "files" :intent "files-picker"
+                       :binary "skim-files" :action "append")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.pickers[0].key, "C-t");
+    }
+
+    #[test]
+    fn apply_picker_rejects_unquoted_lisp_keyword_intent_today() {
+        // tatara-lisp's derive expects String values to be quoted —
+        // bare `:history-picker` keywords fail compile with a clear
+        // "expected string" error. rc.lisp authors use the quoted
+        // form `":history-picker"` (resolve_intent strips the leading
+        // colon for ergonomics). Future tatara-lisp work could lift
+        // keyword↔string coercion into the derive; this test pins
+        // the current contract so a regression / lift surfaces here.
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defpicker :name "history" :intent :history-picker
+                       :binary "skim-history" :action "replace")
+        "#;
+        let err = apply_source(src, &mut env).unwrap_err();
+        match err {
+            LispError::Parse(msg) => assert!(
+                msg.contains("expected string"),
+                "expected tatara-lisp 'expected string' error, got: {msg}",
+            ),
+            other => panic!("expected Parse error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_full_frostmourne_picker_set_uses_atlas_intents() {
+        // Integration: pin the exact 4-picker rc.lisp form
+        // frostmourne ships against atlas chords. Drift in either
+        // breaks here loudly rather than at operator-press time.
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defpicker :name "history" :intent ":history-picker" :binary "skim-history" :action "replace")
+            (defpicker :name "files"   :intent ":files-picker"   :binary "skim-files"   :action "append")
+            (defpicker :name "cd"      :intent ":dir-picker"     :binary "skim-cd"      :action "cd-submit")
+            (defpicker :name "content" :intent ":content-picker" :binary "skim-content" :action "submit")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(s.pickers.len(), 4);
+        let bound: std::collections::HashMap<_, _> = s
+            .pickers
+            .iter()
+            .map(|p| (p.name.as_str(), p.key.as_str()))
+            .collect();
+        assert_eq!(bound["history"], "C-r");
+        assert_eq!(bound["files"], "C-t");
+        assert_eq!(bound["cd"], "M-c");
+        assert_eq!(bound["content"], "C-f");
     }
 
     #[test]
