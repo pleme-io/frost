@@ -18,5 +18,8 @@
 mod server;
 mod state;
 
-pub use server::{serve_uds, FrostMcp};
-pub use state::{default_socket_path, FrostState, PickerInfo, SharedState};
+pub use server::{serve_stdio, serve_uds, FrostMcp};
+pub use state::{
+    default_socket_path, default_state_dir, discover_latest_snapshot, load_snapshot,
+    FrostState, PickerInfo, SharedState,
+};

@@ -1410,7 +1410,9 @@ fn interactive(
 
 /// Find the most-recently-modified frost MCP socket under
 /// `~/.local/state/frost/mcp-*.sock`. Returns `(pid, socket_path)`
-/// or `None` if no socket exists.
+/// or `None` if no socket exists. Kept for the M3 live-mutation path
+/// — the M1 bridge reads JSON snapshots instead.
+#[allow(dead_code)]
 fn discover_latest_frost_socket() -> Option<(u32, std::path::PathBuf)> {
     let dir = std::env::var_os("HOME").map(|h| {
         let mut p = std::path::PathBuf::from(h);
@@ -1434,9 +1436,10 @@ fn discover_latest_frost_socket() -> Option<(u32, std::path::PathBuf)> {
     best.map(|(_, pid, path)| (pid, path))
 }
 
-/// MCP bridge worker — connect stdin/stdout to the running frost UDS
-/// socket. Returns the exit code (0 = clean disconnect, 1 = no socket
-/// or connection failure, 2 = pid-specific socket not found).
+/// MCP bridge worker — kept for the M3 live-mutation path. The M1
+/// bridge (`frost --mcp`) uses `frost_mcp::serve_stdio` directly,
+/// which reads snapshot files instead of forwarding to a UDS socket.
+#[allow(dead_code)]
 async fn run_mcp_bridge(target_pid: Option<u32>) -> i32 {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -1545,7 +1548,14 @@ fn main() {
             .enable_all()
             .build()
             .expect("frost-mcp bridge tokio runtime");
-        let code = rt.block_on(async { run_mcp_bridge(cli.mcp_pid).await });
+        let code = rt.block_on(async {
+            if let Err(e) = frost_mcp::serve_stdio().await {
+                eprintln!("frost --mcp: stdio MCP server error: {e}");
+                1
+            } else {
+                0
+            }
+        });
         process::exit(code);
     }
 
@@ -1662,11 +1672,25 @@ fn main() {
             }
         }
     } else if std::io::stdin().is_terminal() {
-        // ── frost-mcp UDS server ─────────────────────────────────────
-        // Long-lived interactive session — expose live introspection
-        // over `~/.local/state/frost/mcp-${pid}.sock`. Failure to bind
-        // is non-fatal: frost runs without MCP if the socket can't be
-        // created (e.g. read-only home, hostile container env).
+        // ── frost-mcp snapshot write ─────────────────────────────────
+        // Write a JSON snapshot of the live shell state so the bridge
+        // subcommand (`frost --mcp`) can surface it to Claude Code
+        // without needing the shell to be open over a live socket.
+        // Best-effort: failure to write is non-fatal (read-only home,
+        // hostile container) — frost interactive session still runs.
+        if let Some(dir) = frost_mcp::default_state_dir() {
+            if let Err(e) = mcp_state.write_snapshot(&dir) {
+                tracing::debug!(error = %e, "frost-mcp snapshot write failed");
+            }
+        }
+
+        // ── frost-mcp UDS server (M3 live-mutation channel) ──────────
+        // Long-lived interactive session — also expose live state over
+        // `~/.local/state/frost/mcp-${pid}.sock` for the future
+        // live-mutation path (M3). The M1 introspection bridge reads
+        // the JSON snapshot above; the UDS is for direct-connect
+        // tools that want to push state changes back into the shell.
+        // Failure to bind is non-fatal.
         let _mcp_runtime = match frost_mcp::default_socket_path(std::process::id()) {
             Some(socket_path) => match tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
