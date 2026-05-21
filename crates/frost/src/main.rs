@@ -82,6 +82,20 @@ struct Cli {
     #[arg(long)]
     doctor: bool,
 
+    /// MCP bridge mode — connect to the most-recently-started running
+    /// frost shell's UDS socket at
+    /// `~/.local/state/frost/mcp-<pid>.sock` and forward stdio↔UDS
+    /// so an MCP client (Claude Code, kaname, etc.) can speak to
+    /// the live shell over its normal subprocess+stdio transport.
+    /// Picks the latest PID by default; pair with `--mcp-pid` to
+    /// target a specific shell. Exits when either side closes.
+    #[arg(long)]
+    mcp: bool,
+
+    /// Specific frost PID to bridge to (used with `--mcp`).
+    #[arg(long, requires = "mcp")]
+    mcp_pid: Option<u32>,
+
     /// Script file to execute
     file: Option<String>,
 }
@@ -1394,12 +1408,146 @@ fn interactive(
     run_exit_trap(env);
 }
 
+/// Find the most-recently-modified frost MCP socket under
+/// `~/.local/state/frost/mcp-*.sock`. Returns `(pid, socket_path)`
+/// or `None` if no socket exists.
+fn discover_latest_frost_socket() -> Option<(u32, std::path::PathBuf)> {
+    let dir = std::env::var_os("HOME").map(|h| {
+        let mut p = std::path::PathBuf::from(h);
+        p.push(".local/state/frost");
+        p
+    })?;
+    let entries = std::fs::read_dir(&dir).ok()?;
+    let mut best: Option<(std::time::SystemTime, u32, std::path::PathBuf)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name()?.to_str()?.to_string();
+        let pid_str = name.strip_prefix("mcp-")?.strip_suffix(".sock")?;
+        let pid: u32 = pid_str.parse().ok()?;
+        let mtime = entry.metadata().ok()?.modified().ok()?;
+        match &best {
+            None => best = Some((mtime, pid, path)),
+            Some((t, _, _)) if mtime > *t => best = Some((mtime, pid, path)),
+            _ => {}
+        }
+    }
+    best.map(|(_, pid, path)| (pid, path))
+}
+
+/// MCP bridge worker — connect stdin/stdout to the running frost UDS
+/// socket. Returns the exit code (0 = clean disconnect, 1 = no socket
+/// or connection failure, 2 = pid-specific socket not found).
+async fn run_mcp_bridge(target_pid: Option<u32>) -> i32 {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let socket_path: std::path::PathBuf = match target_pid {
+        Some(pid) => match frost_mcp::default_socket_path(pid) {
+            Some(p) => {
+                if !p.exists() {
+                    eprintln!(
+                        "frost --mcp: no socket for pid {pid} at {} (is that frost running?)",
+                        p.display()
+                    );
+                    return 2;
+                }
+                p
+            }
+            None => {
+                eprintln!("frost --mcp: $HOME not set; cannot resolve socket path");
+                return 1;
+            }
+        },
+        None => match discover_latest_frost_socket() {
+            Some((pid, p)) => {
+                eprintln!(
+                    "frost --mcp: bridging to latest frost pid {pid} ({})",
+                    p.display()
+                );
+                p
+            }
+            None => {
+                eprintln!(
+                    "frost --mcp: no running frost shells found under ~/.local/state/frost/"
+                );
+                return 1;
+            }
+        },
+    };
+
+    let stream = match tokio::net::UnixStream::connect(&socket_path).await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "frost --mcp: failed to connect to {}: {e}",
+                socket_path.display()
+            );
+            return 1;
+        }
+    };
+    let (mut sock_rd, mut sock_wr) = stream.into_split();
+    let mut stdin = tokio::io::stdin();
+    let mut stdout = tokio::io::stdout();
+
+    let stdin_to_sock = async move {
+        let mut buf = vec![0u8; 8192];
+        loop {
+            match stdin.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if sock_wr.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = sock_wr.shutdown().await;
+    };
+    let sock_to_stdout = async move {
+        let mut buf = vec![0u8; 8192];
+        loop {
+            match sock_rd.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if stdout.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                    let _ = stdout.flush().await;
+                }
+                Err(_) => break,
+            }
+        }
+    };
+    tokio::select! {
+        _ = stdin_to_sock => {},
+        _ = sock_to_stdout => {},
+    }
+    0
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
     let cli = Cli::parse();
+
+    // ── MCP bridge subcommand ────────────────────────────────────────
+    // `frost --mcp` is a special mode: don't boot a shell, don't
+    // load the rc, don't open a UDS server. Instead, find a running
+    // frost (latest by mtime, or the --mcp-pid the caller specified),
+    // connect to its UDS socket, and pump bytes between stdio and
+    // the socket. Lets Claude Code's subprocess+stdio MCP transport
+    // talk to the live shell's introspection server.
+    if cli.mcp {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("frost-mcp bridge tokio runtime");
+        let code = rt.block_on(async { run_mcp_bridge(cli.mcp_pid).await });
+        process::exit(code);
+    }
 
     let mut env = frost_exec::ShellEnv::new();
 
