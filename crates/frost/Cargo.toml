@@ -23,6 +23,8 @@ frost-complete = { workspace = true }
 frost-prompt = { workspace = true }
 frost-history = { workspace = true }
 frost-lisp = { workspace = true }
+frost-mcp = { workspace = true }
+tokio = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
