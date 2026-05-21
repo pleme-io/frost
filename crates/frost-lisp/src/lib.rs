@@ -585,7 +585,15 @@ fn apply_source_with_context(
         if let Some(cmd) = &p.command {
             // Compose with any existing synthetic precmd from a prior
             // defprompt — last writer still wins at PS1 assignment time.
-            let piece = format!("PS1=\"$({cmd})\"");
+            //
+            // NOTE: unquoted `$(cmd)` — frost's parser doesn't expand
+            // command substitution inside quoted variable-assignment
+            // RHS (`PS1="$(cmd)"` lands as literal `$(cmd)`). Unquoted
+            // form parses correctly and preserves multi-word output
+            // verbatim because variable assignment doesn't word-split.
+            // Real incident: 2026-05-21 frostmourne / seki integration,
+            // prompt collapsed to bare `frost> ` despite hook firing.
+            let piece = format!("PS1=$({cmd})");
             match &mut synthetic_precmd {
                 Some(existing) => {
                     existing.push('\n');
@@ -597,7 +605,8 @@ fn apply_source_with_context(
     }
     // Merge in prompt commands contributed by `(defintegration :tool "starship")`.
     for cmd in integration_prompt_commands {
-        let piece = format!("PS1=\"$({cmd})\"");
+        // Same unquoted-substitution rule as the defprompt path above.
+        let piece = format!("PS1=$({cmd})");
         match &mut synthetic_precmd {
             Some(existing) => {
                 existing.push('\n');
@@ -1064,11 +1073,18 @@ fn install_body_as_function(env: &mut ShellEnv, fn_name: &str, body: &str) {
         toks
     };
     let program = frost_parser::Parser::new(&tokens).parse();
+    // BraceGroup, not Subshell. Hooks (precmd/preexec/chpwd) MUST run
+    // in-process so their env mutations propagate to the caller —
+    // Subshell forks a child whose assignments die when it exits, so
+    // `(defprompt :command "X")` synthesizing `PS1=$(X)` would set
+    // PS1 in a child that exits before the prompt loop reads it.
+    // (Real incident: 2026-05-21, seki defprompt → empty PS1 → bare
+    // `frost> ` prompt despite the hook firing.)
     env.functions.insert(
         fn_name.to_string(),
         frost_parser::ast::FunctionDef {
             name: compact_str::CompactString::from(fn_name),
-            body: frost_parser::ast::Command::Subshell(frost_parser::ast::Subshell {
+            body: frost_parser::ast::Command::BraceGroup(frost_parser::ast::BraceGroup {
                 body: program.commands,
                 redirects: vec![],
             }),

@@ -937,7 +937,25 @@ impl<'env> Executor<'env> {
         // Check for functions first
         if let Some(fdef) = self.env.functions.get(name).cloned() {
             let saved_params = self.env.positional_params.clone();
-            self.env.push_scope();
+            // Hook functions (precmd, preexec, chpwd, prompt-loop hooks)
+            // intentionally mutate the caller's env — that's the whole
+            // point of `precmd` setting PS1, `chpwd` exporting OLDPWD,
+            // etc. Running them in a local scope silently swallows those
+            // assignments. Matches zsh: hook functions do NOT push a
+            // new scope. (Real incident: 2026-05-21, seki defprompt →
+            // synthetic precmd body `PS1=$(seki prompt …)` ran but
+            // PS1 stayed empty → prompt fell back to `frost> `.)
+            // Hook functions (precmd, preexec, chpwd, prompt loop)
+            // intentionally mutate the caller's env — that's how
+            // PS1, FROST_CMD_DURATION, OLDPWD etc. propagate.
+            // Skip the function-local scope push so those assignments
+            // land in the caller's scope (matches zsh hook semantics).
+            // (Paired with frost-lisp wrapping hook bodies as
+            // BraceGroup not Subshell, so they don't fork either.)
+            let is_hook = name.starts_with("__frost_hook_");
+            if !is_hook {
+                self.env.push_scope();
+            }
             self.env.positional_params = argv[1..].to_vec();
             let result = match self.execute_command(&fdef.body) {
                 Ok(s) => Ok(s),
@@ -947,7 +965,9 @@ impl<'env> Executor<'env> {
                 }
                 Err(e) => Err(e),
             };
-            self.env.pop_scope();
+            if !is_hook {
+                self.env.pop_scope();
+            }
             self.env.positional_params = saved_params;
             return result;
         }
