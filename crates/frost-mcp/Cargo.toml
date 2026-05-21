@@ -1,0 +1,19 @@
+[package]
+name = "frost-mcp"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Live MCP introspection + control surface for a running frost shell"
+
+[dependencies]
+frost-lisp = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = "1"
+schemars = "0.8"
+rmcp = { version = "0.15", features = ["server", "transport-io"] }

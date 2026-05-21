@@ -1408,6 +1408,10 @@ fn main() {
     // functions. Missing file is not an error; parse/apply errors print
     // a warning so frost still starts even if the rc has a bug.
     let rc_path = frost_lisp::default_rc_path();
+    // Seed live MCP state with the boot snapshot — the rc-load arm
+    // below populates the rest. We thread it through so the
+    // interactive path can hand it to the MCP server thread.
+    let mut mcp_state = frost_mcp::FrostState::boot(std::process::id());
     let (
         rc_completions,
         rc_binds,
@@ -1428,6 +1432,25 @@ fn main() {
                     "loaded frost-lisp rc file"
                 );
             }
+            mcp_state.rc_path = Some(rc_path.clone());
+            mcp_state.rc_loaded = true;
+            mcp_state.bindings = summary.bind_map.clone();
+            mcp_state.pickers = summary
+                .pickers
+                .iter()
+                .map(|p| frost_mcp::PickerInfo {
+                    name: p.name.clone(),
+                    key: p.key.clone(),
+                    binary: p.binary.clone(),
+                    action: p.action.clone(),
+                })
+                .collect();
+            mcp_state.history_file = env.get_var("HISTFILE").map(std::path::PathBuf::from);
+            mcp_state.alias_count = summary.aliases;
+            mcp_state.subcmd_count = summary.subcmds.len();
+            mcp_state.flag_count = summary.flags.len();
+            mcp_state.positional_count = summary.positionals.len();
+            mcp_state.abbreviation_count = summary.abbreviations.len();
             (
                 summary.completion_map,
                 summary.bind_map,
@@ -1443,6 +1466,9 @@ fn main() {
         }
         Err(e) => {
             eprintln!("frost: warning: failed to load {}: {e}", rc_path.display());
+            mcp_state.rc_path = Some(rc_path.clone());
+            mcp_state.rc_loaded = false;
+            mcp_state.rc_error = Some(e.to_string());
             (
                 std::collections::HashMap::new(),
                 Vec::new(),
@@ -1488,6 +1514,42 @@ fn main() {
             }
         }
     } else if std::io::stdin().is_terminal() {
+        // ── frost-mcp UDS server ─────────────────────────────────────
+        // Long-lived interactive session — expose live introspection
+        // over `~/.local/state/frost/mcp-${pid}.sock`. Failure to bind
+        // is non-fatal: frost runs without MCP if the socket can't be
+        // created (e.g. read-only home, hostile container env).
+        let _mcp_runtime = match frost_mcp::default_socket_path(std::process::id()) {
+            Some(socket_path) => match tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .thread_name("frost-mcp")
+                .build()
+            {
+                Ok(rt) => {
+                    let state: frost_mcp::SharedState =
+                        std::sync::Arc::new(tokio::sync::RwLock::new(mcp_state));
+                    let s = std::sync::Arc::clone(&state);
+                    let path_for_task = socket_path.clone();
+                    rt.spawn(async move {
+                        if let Err(e) = frost_mcp::serve_uds(path_for_task, s).await {
+                            tracing::warn!(error = %e, "frost-mcp UDS server exited");
+                        }
+                    });
+                    // Keep the runtime alive for the duration of the
+                    // interactive session. Dropped on process exit;
+                    // the socket file lives under XDG_STATE_HOME and
+                    // gets blown away by the runtime drop.
+                    Some(rt)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "frost-mcp runtime build failed");
+                    None
+                }
+            },
+            None => None,
+        };
+
         interactive(
             &mut env,
             rc_completions,
