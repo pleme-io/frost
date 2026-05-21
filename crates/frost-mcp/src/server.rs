@@ -1,10 +1,17 @@
-//! UDS-transported MCP server. Accepts on
-//! `~/.local/state/frost/mcp-${pid}.sock`; spawns one rmcp server per
-//! client connection.
+//! Two MCP server shapes:
 //!
-//! rmcp 0.15's `transport-io` consumes any `AsyncRead + AsyncWrite`
-//! pair, so a `tokio::net::UnixStream` is dropped in directly — no
-//! custom transport needed.
+//! 1. [`serve_uds`] — the per-shell UDS server. One instance lives
+//!    inside each frostmourne process, bound to
+//!    `~/.local/state/frost/mcp-${pid}.sock`. Holds live `SharedState`
+//!    for direct connections (future M3 live-mutation path).
+//!
+//! 2. [`serve_stdio`] — the **bridge MCP server**. Spawned by Claude
+//!    Code (or any other rmcp client) as `frost --mcp`. Reads the
+//!    latest `state-*.json` snapshot file written by a running
+//!    frostmourne and surfaces it via the same typed tools. Critically,
+//!    `serve_stdio` ALWAYS starts cleanly — when no snapshot exists,
+//!    tools return `{"running_shells": 0}` instead of crashing the MCP
+//!    server.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -19,34 +26,66 @@ use rmcp::{
 };
 use tokio::net::UnixListener;
 
-use crate::state::SharedState;
+use crate::state::{
+    SharedState, default_state_dir, discover_latest_snapshot, load_snapshot,
+};
 
-/// The frost MCP server. One instance per UDS connection — every tool
-/// reads through the shared `state`.
+/// The frost MCP server. One instance per connection; serves the same
+/// four introspection tools regardless of source (UDS or stdio bridge).
+///
+/// `state` is `Some` for the per-shell UDS server (reads from live
+/// `Arc<RwLock<>>`). For the stdio bridge it's `None` — tools fall back
+/// to reading the latest `state-*.json` snapshot on each call.
 #[derive(Debug, Clone)]
 pub struct FrostMcp {
     tool_router: ToolRouter<Self>,
-    state: SharedState,
+    state: Option<SharedState>,
 }
 
 #[tool_router]
 impl FrostMcp {
-    /// Construct with an externally-owned shared-state handle. Every
-    /// connection clones the `Arc<RwLock<_>>` so reads see the
-    /// latest writes done by the REPL loop.
+    /// Per-shell UDS server constructor — `state` is the live
+    /// `Arc<RwLock<>>` populated by frost main.
     #[must_use]
-    pub fn new(state: SharedState) -> Self {
+    pub fn with_live_state(state: SharedState) -> Self {
         Self {
             tool_router: Self::tool_router(),
-            state,
+            state: Some(state),
         }
     }
 
+    /// Stdio bridge constructor — no live state; tools read from
+    /// snapshot files at call time.
+    #[must_use]
+    pub fn new_bridge() -> Self {
+        Self {
+            tool_router: Self::tool_router(),
+            state: None,
+        }
+    }
+
+    /// Resolve the current snapshot. Live state wins if present; else
+    /// reads the latest JSON snapshot from disk.
+    async fn resolve_state(&self) -> Option<crate::state::FrostState> {
+        if let Some(live) = &self.state {
+            return Some(live.read().await.clone());
+        }
+        let dir = default_state_dir()?;
+        let (_pid, path) = discover_latest_snapshot(&dir)?;
+        load_snapshot(&path).ok()
+    }
+
     #[tool(
-        description = "Get frost shell status — pid, uptime in seconds, rc path, whether rc loaded successfully. Equivalent to a live `frost --doctor` header. Returns JSON."
+        description = "Get frost shell status — pid, uptime in seconds, rc path, whether rc loaded successfully. Equivalent to a live `frost --doctor` header. Returns JSON. If no frostmourne is running, returns {\"running_shells\": 0}."
     )]
     async fn frost_status(&self) -> String {
-        let st = self.state.read().await;
+        let Some(st) = self.resolve_state().await else {
+            return serde_json::json!({
+                "running_shells": 0,
+                "note": "No running frostmourne — open a window in mado/terminal to populate this surface.",
+            })
+            .to_string();
+        };
         let uptime_secs = st
             .started_at
             .and_then(|t| SystemTime::now().duration_since(t).ok())
@@ -75,10 +114,12 @@ impl FrostMcp {
     }
 
     #[tool(
-        description = "List every reedline keybinding installed in the running frost shell. Each entry is {chord, action} where action is either a shell function name (`__frost_bind_*`), a widget sentinel (`__frost_widget_*`), or a picker sentinel (`__frost_picker_*`). Use to verify that an rc-authored `(defbind ...)` or `(defpicker ...)` actually reached reedline."
+        description = "List every reedline keybinding installed in the running frost shell. Each entry is {chord, action} where action is either a shell function name (`__frost_bind_*`), a widget sentinel (`__frost_widget_*`), or a picker sentinel (`__frost_picker_*`). Use to verify that an rc-authored `(defbind ...)` or `(defpicker ...)` actually reached reedline. Returns {\"running_shells\": 0} when no frostmourne is open."
     )]
     async fn frost_bindings(&self) -> String {
-        let st = self.state.read().await;
+        let Some(st) = self.resolve_state().await else {
+            return serde_json::json!({"running_shells": 0}).to_string();
+        };
         let bindings: Vec<_> = st
             .bindings
             .iter()
@@ -91,10 +132,12 @@ impl FrostMcp {
     }
 
     #[tool(
-        description = "List every (defpicker …) form registered. Each entry has {name, key, binary, action}. Pickers are skim-tab integrations bound to a key chord — pressing the chord spawns the binary in the freed terminal. Use to verify picker registration + diagnose Ctrl-R / Ctrl-T / M-c / Ctrl-F behavior."
+        description = "List every (defpicker …) form registered. Each entry has {name, key, binary, action}. Pickers are skim-tab integrations bound to a key chord — pressing the chord spawns the binary in the freed terminal. Use to verify picker registration + diagnose Ctrl-R / Ctrl-T / M-c / Ctrl-F behavior. Returns {\"running_shells\": 0} when no frostmourne is open."
     )]
     async fn frost_pickers(&self) -> String {
-        let st = self.state.read().await;
+        let Some(st) = self.resolve_state().await else {
+            return serde_json::json!({"running_shells": 0}).to_string();
+        };
         let pickers: Vec<_> = st
             .pickers
             .iter()
@@ -112,14 +155,15 @@ impl FrostMcp {
     }
 
     #[tool(
-        description = "Get the current HISTFILE path, its size in bytes, and whether it exists. Skim-history reads this file directly, so divergence between rc-configured path and this live path is a common Ctrl-R failure mode. Returns JSON."
+        description = "Get the current HISTFILE path, its size in bytes, and whether it exists. Skim-history reads this file directly, so divergence between rc-configured path and this live path is a common Ctrl-R failure mode. Returns JSON; falls back to env-var-derived path when no frostmourne is open."
     )]
     async fn frost_history_path(&self) -> String {
-        let st = self.state.read().await;
-        let path: Option<&Path> = st.history_file.as_deref();
+        let st = self.resolve_state().await;
         let env_path = std::env::var("HISTFILE").ok();
-        let resolved: Option<PathBuf> =
-            path.map(Path::to_path_buf).or_else(|| env_path.clone().map(PathBuf::from));
+        let rc_path = st.as_ref().and_then(|s| s.history_file.clone());
+        let resolved: Option<PathBuf> = rc_path
+            .clone()
+            .or_else(|| env_path.clone().map(PathBuf::from));
         let (size_bytes, exists) = resolved
             .as_ref()
             .map(|p| {
@@ -132,7 +176,8 @@ impl FrostMcp {
             .unwrap_or((0, false));
         serde_json::json!({
             "ok": true,
-            "rc_history_file": st.history_file,
+            "running_shells": if st.is_some() { 1 } else { 0 },
+            "rc_history_file": rc_path,
             "env_HISTFILE": env_path,
             "resolved": resolved,
             "exists": exists,
@@ -147,7 +192,7 @@ impl ServerHandler for FrostMcp {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "frost — live shell introspection. Tools surface the running shell's rc-load state, keybindings, pickers, and history-file resolution. Read-only in M1; mutation lands in M3."
+                "frost — live shell introspection. Tools surface the running shell's rc-load state, keybindings, pickers, and history-file resolution. If no frostmourne is open, tools return {\"running_shells\": 0} instead of failing — open a window in mado/terminal to populate the snapshot."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
@@ -158,26 +203,21 @@ impl ServerHandler for FrostMcp {
 
 /// Bind a `UnixListener` at `socket_path`, accept connections forever,
 /// and serve one `FrostMcp` per connection. The socket is removed
-/// on startup (in case a prior crash left it behind) and on graceful
-/// shutdown via [`cleanup_socket`].
+/// on startup (in case a prior crash left it behind).
 ///
 /// # Errors
 ///
-/// Returns the underlying io::Error if the socket can't be bound
-/// (e.g. directory doesn't exist + can't be created, permission
-/// denied). Returning Err means MCP is disabled for this frost
-/// process; frost itself keeps running.
+/// Returns the underlying io::Error if the socket can't be bound.
+/// Returning Err means MCP is disabled for this frost process;
+/// frost itself keeps running.
 pub async fn serve_uds(socket_path: PathBuf, state: SharedState) -> std::io::Result<()> {
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    // A leftover socket from a prior crash makes bind() fail with
-    // EADDRINUSE. Best-effort remove; if it's a live socket someone
-    // else owns, the bind itself will fail with a clearer error.
     let _ = std::fs::remove_file(&socket_path);
 
     let listener = UnixListener::bind(&socket_path)?;
-    tracing::info!(socket = %socket_path.display(), "frost-mcp listening");
+    tracing::info!(socket = %socket_path.display(), "frost-mcp UDS listening");
 
     loop {
         let (stream, _) = match listener.accept().await {
@@ -187,28 +227,40 @@ pub async fn serve_uds(socket_path: PathBuf, state: SharedState) -> std::io::Res
                 continue;
             }
         };
-        let mcp = FrostMcp::new(Arc::clone(&state));
+        let mcp = FrostMcp::with_live_state(Arc::clone(&state));
         tokio::spawn(async move {
-            // Split UnixStream into read/write halves; rmcp 0.15's
-            // transport-io accepts the (R, W) tuple.
             let (reader, writer) = stream.into_split();
             match mcp.serve((reader, writer)).await {
                 Ok(server) => {
                     if let Err(e) = server.waiting().await {
-                        tracing::debug!(error = %e, "frost-mcp client session ended");
+                        tracing::debug!(error = %e, "frost-mcp UDS client session ended");
                     }
                 }
-                Err(e) => tracing::warn!(error = %e, "frost-mcp serve failed"),
+                Err(e) => tracing::warn!(error = %e, "frost-mcp UDS serve failed"),
             }
         });
     }
 }
 
+/// Run the **bridge MCP server** over stdio. Called by `frost --mcp`.
+/// Always starts cleanly; tools fall back to `{"running_shells": 0}`
+/// when no `state-*.json` snapshot exists.
+///
+/// # Errors
+///
+/// Returns an io::Error wrapping any rmcp transport failure.
+pub async fn serve_stdio() -> std::io::Result<()> {
+    let mcp = FrostMcp::new_bridge();
+    let server = mcp
+        .serve(rmcp::transport::stdio())
+        .await
+        .map_err(std::io::Error::other)?;
+    server.waiting().await.map_err(std::io::Error::other)?;
+    Ok(())
+}
+
 /// Remove the socket file at shutdown so a re-launched frost gets a
 /// clean bind() on the same path. Idempotent; missing file is fine.
-/// Public so frost main can call it from a trap handler when the
-/// REPL exits — without this a clean exit would leave a stale
-/// socket that the next frost on the same PID can't bind over.
 #[allow(dead_code)]
 pub fn cleanup_socket(socket_path: &Path) {
     let _ = std::fs::remove_file(socket_path);
