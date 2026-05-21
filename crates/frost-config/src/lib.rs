@@ -339,7 +339,8 @@ mod tests {
         cfg.history.file = "/tmp/frost.hist".into();
         cfg.history.size = 50_000;
         cfg.history.ignore_space = true;
-        cfg.keybindings.insert("^A".into(), "beginning-of-line".into());
+        cfg.keybindings
+            .insert("^A".into(), "beginning-of-line".into());
         cfg.completion.menu = true;
         cfg.frostmourne_preset = true;
 
@@ -409,7 +410,10 @@ mod tests {
         // resolves the prefix.
         let p = default_config_path();
         let s = p.to_string_lossy();
-        assert!(s.ends_with("frost.yaml") || s.ends_with("frost/frost.yaml"), "{s}");
+        assert!(
+            s.ends_with("frost.yaml") || s.ends_with("frost/frost.yaml"),
+            "{s}"
+        );
     }
 
     // ── load + load_and_watch round-trip ──────────────────────────
