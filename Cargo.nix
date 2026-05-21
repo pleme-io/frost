@@ -2590,6 +2590,10 @@ rec {
             packageId = "frost-parser";
           }
           {
+            name = "ishou-tokens";
+            packageId = "ishou-tokens";
+          }
+          {
             name = "serde";
             packageId = "serde";
             features = [ "derive" ];
@@ -3636,6 +3640,20 @@ rec {
         };
         resolvedDefaultFeatures = [ "colors" "console" "default" "serde" "yaml" ];
       };
+      "irodori" = rec {
+        crateName = "irodori";
+        version = "0.1.0";
+        edition = "2024";
+        sha256 = "07nbryqvivbpg0gw9sbb8c8lbhvmrp1pcmlr6w7nq68jry44ph8d";
+        dependencies = [
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+        ];
+
+      };
       "is_ci" = rec {
         crateName = "is_ci";
         version = "1.2.0";
@@ -3653,6 +3671,37 @@ rec {
         edition = "2021";
         sha256 = "15anlc47sbz0jfs9q8fhwf0h3vs2w4imc030shdnq54sny5i7jx6";
         features = {
+        };
+        resolvedDefaultFeatures = [ "default" ];
+      };
+      "ishou-tokens" = rec {
+        crateName = "ishou-tokens";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/pleme-io/ishou";
+          rev = "563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085";
+          sha256 = "17mxwzyhs06i64kpzbz897zl7vmx0pf8cp4g21qmk8svicfy2k7s";
+        };
+        libName = "ishou_tokens";
+        dependencies = [
+          {
+            name = "irodori";
+            packageId = "irodori";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+        ];
+        features = {
+          "wgpu" = [ "dep:wgpu-types" ];
         };
         resolvedDefaultFeatures = [ "default" ];
       };

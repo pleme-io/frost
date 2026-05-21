@@ -36,7 +36,7 @@
 use serde::{Deserialize, Serialize};
 use tatara_lisp::DeriveTataraDomain;
 
-#[derive(DeriveTataraDomain, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(DeriveTataraDomain, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 #[tatara(keyword = "defpicker")]
 pub struct PickerSpec {
@@ -45,10 +45,19 @@ pub struct PickerSpec {
     /// whitespace / metachars) so the round-trip through reedline's
     /// ExecuteHostCommand is clean.
     pub name: String,
-    /// Key chord (`"C-r"`, `"M-c"`, `"ctrl+t"`). Parsed by
-    /// `frost-zle::parse_chord`; unrecognized chords are dropped with a
-    /// warning at bind time, not a hard error.
+    /// Hard-coded chord (`"C-r"`, `"M-c"`, `"ctrl+t"`). Either this
+    /// or [`Self::intent`] must be set. Parsed by
+    /// `frost-zle::parse_chord`; unrecognized chords are dropped with
+    /// a warning at bind time, not a hard error.
+    #[serde(default)]
     pub key: String,
+    /// Operator-intent keyword sourced from `ishou_tokens::FleetKeybinds`
+    /// (e.g. `":history-picker"`). When set, the chord is resolved
+    /// through the atlas at apply time and stored back into `key`.
+    /// Preferred over `key` for fleet-canonical pickers — atlas drift
+    /// becomes a build error rather than a runtime mystery.
+    #[serde(default)]
+    pub intent: String,
     /// Binary to spawn (`"skim-history"`). Must resolve via `$PATH`.
     /// Missing binary at run-time = no-op (picker returns `Nothing`).
     pub binary: String,
