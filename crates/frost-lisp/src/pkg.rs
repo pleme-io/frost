@@ -171,7 +171,10 @@ const RECOGNIZED_SCHEMES: &[&str] = &["git+https", "git+ssh", "github", "gist", 
 #[must_use]
 pub fn split_source_scheme(source: &str) -> Option<(&'static str, &str)> {
     for scheme in RECOGNIZED_SCHEMES {
-        if let Some(rest) = source.strip_prefix(scheme).and_then(|s| s.strip_prefix(':')) {
+        if let Some(rest) = source
+            .strip_prefix(scheme)
+            .and_then(|s| s.strip_prefix(':'))
+        {
             return Some((scheme, rest));
         }
     }

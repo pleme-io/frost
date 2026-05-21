@@ -348,13 +348,8 @@ fn apply_source_with_context(
             source: e,
         })?;
         let inner_dir = canonical.parent().map(std::path::Path::to_path_buf);
-        let inner_summary = apply_source_with_context(
-            &inner_src,
-            env,
-            inner_dir.as_deref(),
-            visited,
-            locked_pkgs,
-        )?;
+        let inner_summary =
+            apply_source_with_context(&inner_src, env, inner_dir.as_deref(), visited, locked_pkgs)?;
         merge_summary(&mut summary, inner_summary);
         summary.loads += 1;
     }
@@ -1977,7 +1972,10 @@ mod tests {
         )
         .unwrap();
         load_rc(&outer, &mut env).unwrap();
-        assert_eq!(env.aliases.get("alt").map(String::as_str), Some("alt-value"));
+        assert_eq!(
+            env.aliases.get("alt").map(String::as_str),
+            Some("alt-value")
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 
@@ -1986,8 +1984,7 @@ mod tests {
         // A package that loads itself terminates via the same visited
         // set defsource uses — no infinite recursion.
         let mut env = ShellEnv::new();
-        let tmp =
-            std::env::temp_dir().join(format!("frost-defload-cycle-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("frost-defload-cycle-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let pkg_dir = tmp.join("self-pkg");
         std::fs::create_dir_all(&pkg_dir).unwrap();
@@ -2033,8 +2030,7 @@ mod tests {
         // recursion descends into the inner file, so the inner defload
         // resolves cleanly.
         let mut env = ShellEnv::new();
-        let tmp =
-            std::env::temp_dir().join(format!("frost-defload-outer-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("frost-defload-outer-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let pkg_dir = tmp.join("outerpkg");
         std::fs::create_dir_all(&pkg_dir).unwrap();
@@ -2076,8 +2072,7 @@ mod tests {
         // Two different packages, each with its own alias. Both loads
         // succeed; both aliases land in env; summary loads = 2.
         let mut env = ShellEnv::new();
-        let tmp =
-            std::env::temp_dir().join(format!("frost-defload-multi-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("frost-defload-multi-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let pkg_a = tmp.join("pkg-a");
         let pkg_b = tmp.join("pkg-b");
@@ -2114,8 +2109,14 @@ mod tests {
         .unwrap();
         let s = load_rc(&outer, &mut env).unwrap();
         assert_eq!(s.loads, 2);
-        assert_eq!(env.aliases.get("alpha").map(String::as_str), Some("alpha-val"));
-        assert_eq!(env.aliases.get("beta").map(String::as_str), Some("beta-val"));
+        assert_eq!(
+            env.aliases.get("alpha").map(String::as_str),
+            Some("alpha-val")
+        );
+        assert_eq!(
+            env.aliases.get("beta").map(String::as_str),
+            Some("beta-val")
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 
@@ -2126,8 +2127,7 @@ mod tests {
         // Result: alias still lands once, loads counter increments once
         // (second is silently skipped, mirroring defsource semantics).
         let mut env = ShellEnv::new();
-        let tmp =
-            std::env::temp_dir().join(format!("frost-defload-dup-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("frost-defload-dup-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let pkg = tmp.join("pkg");
         std::fs::create_dir_all(&pkg).unwrap();
@@ -2164,8 +2164,7 @@ mod tests {
         // entries are visible in the outer rc. Loading A transitively
         // loads B.
         let mut env = ShellEnv::new();
-        let tmp =
-            std::env::temp_dir().join(format!("frost-defload-chain-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("frost-defload-chain-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let pkg_a = tmp.join("a");
         let pkg_b = tmp.join("b");
@@ -2218,8 +2217,16 @@ mod tests {
             (defshellpkg :name "eager"    :version "1.0" :source "github:o/e")
         "#;
         let s = apply_source(src, &mut env).unwrap();
-        let lazy = s.declared_packages.iter().find(|p| p.name == "lazy-one").unwrap();
-        let eager = s.declared_packages.iter().find(|p| p.name == "eager").unwrap();
+        let lazy = s
+            .declared_packages
+            .iter()
+            .find(|p| p.name == "lazy-one")
+            .unwrap();
+        let eager = s
+            .declared_packages
+            .iter()
+            .find(|p| p.name == "eager")
+            .unwrap();
         assert!(lazy.lazy);
         assert!(!eager.lazy);
     }
