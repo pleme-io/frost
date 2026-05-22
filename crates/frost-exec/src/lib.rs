@@ -13,6 +13,7 @@ pub mod job;
 pub mod redirect;
 pub mod sys;
 pub mod trap;
+pub mod tty_takeover;
 
 pub use env::ShellEnv;
 pub use execute::{ControlFlow, ExecError, Executor};
