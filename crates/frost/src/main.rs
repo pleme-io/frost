@@ -699,53 +699,23 @@ fn run_skim_tab_picker(
     query: Option<&str>,
     extra_env: &[(&str, String)],
 ) -> Option<String> {
-    use std::io::Read;
-    use std::process::{Command, Stdio};
-
-    // The skim-tab binaries are full-screen TUIs that drive the
-    // terminal directly — they need a live tty for keystroke input
-    // and screen-draw cursor positioning. `Command::output()` (the
-    // old implementation) explicitly NULLs stdin to avoid deadlock,
-    // which gives skim no keyboard channel — operator presses C-r,
-    // skim spawns blind, can't read keys, frost blocks waiting for
-    // a selection that never comes (incident 2026-05-21: "spam C-r,
-    // nothing happens").
-    //
-    // Fix: inherit stdin + stderr so skim has the tty, capture only
-    // stdout (where the selection lands). `spawn` + manual stdout
-    // read lets us mix inherited + piped fds — `.output()` /
-    // `.status()` don't compose that way.
-    let mut cmd = Command::new(bin);
+    // Typed TTY-takeover spawn via `frost_exec::tty_takeover` — the
+    // module that exists specifically to make the 2026-05-21
+    // "Command::output() NULLs stdin → skim can't read keys" bug
+    // class impossible to recreate. Stdio combo (stdin+stderr
+    // inherited, stdout piped) is baked into the type; consumers
+    // can't reconfigure it from the outside.
+    let mut takeover = frost_exec::tty_takeover::TtyTakeover::new(bin);
     if let Some(q) = query {
         let q = q.trim();
         if !q.is_empty() {
-            cmd.arg("--query").arg(q);
+            takeover = takeover.arg("--query").arg(q);
         }
     }
     for (k, v) in extra_env {
-        cmd.env(k, v);
+        takeover = takeover.env(k, v);
     }
-    cmd.stdin(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .stdout(Stdio::piped());
-    let mut child = cmd.spawn().ok()?;
-    let mut selection = String::new();
-    if let Some(mut out) = child.stdout.take() {
-        // Read the selection on the spawning thread — we want to
-        // block here until skim exits anyway, and the selection is
-        // small (a single line).
-        let _ = out.read_to_string(&mut selection);
-    }
-    let status = child.wait().ok()?;
-    if !status.success() {
-        return None;
-    }
-    let trimmed = selection.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
+    takeover.spawn_and_capture().ok().flatten()
 }
 
 impl PickerAction {
