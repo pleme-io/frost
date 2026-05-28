@@ -37,8 +37,11 @@
       forgeOverlay = flake-utils.lib.eachDefaultSystem (system: let
         pkgs = import nixpkgs { inherit system; };
         crate2nixPkg = crate2nix.packages.${system}.default;
-        project = pkgs.callPackage ./Cargo.nix {
-          defaultCrateOverrides = pkgs.defaultCrateOverrides;
+        lockfileBuilder = import "${substrate}/lib/build/rust/lockfile-builder.nix" { inherit pkgs; };
+        plemeCrateOverrides = import "${substrate}/lib/build/rust/pleme-crate-overrides.nix";
+        project = lockfileBuilder.mkProject {
+          src = self;
+          defaultCrateOverrides = pkgs.defaultCrateOverrides // plemeCrateOverrides;
         };
         forgePkg = project.workspaceMembers."frost-complete".build;
       in {
