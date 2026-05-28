@@ -48,6 +48,13 @@ pub struct IntegrationRecipe {
     pub chpwd_body: Option<&'static str>,
     pub env: &'static [(&'static str, &'static str, bool /* export */)],
     pub prompt_command: Option<&'static str>,
+    /// Named shell functions the integration injects. Each entry is
+    /// `(name, body)`; the body is shell source compiled into a real
+    /// function (NOT an alias) so it can wrap builtins, take
+    /// arguments, and return typed exit codes. Used by zoxide to
+    /// override `cd` with a smart fallback that consults the zoxide
+    /// database when the literal path doesn't exist.
+    pub functions: &'static [(&'static str, &'static str)],
 }
 
 /// Lookup table. Keep recipes minimal — the canonical "what does each
@@ -69,6 +76,29 @@ pub fn lookup_integration(tool: &str) -> Option<IntegrationRecipe> {
             chpwd_body: Some(r#"command -v zoxide >/dev/null 2>&1 && zoxide add -- "$PWD""#),
             env: &[],
             prompt_command: None,
+            // Smart-cd override. `cd <arg>` tries the builtin first
+            // (no args = $HOME, literal path = use it); falls back to
+            // `zoxide query` so frequently-visited matches like
+            // `cd nix` resolve to e.g. ~/code/github/pleme-io/nix.
+            // The `command cd` invocation bypasses any aliases on cd
+            // (cycle-safe). Zero args, single-arg dash, and absolute
+            // paths short-circuit through the builtin without
+            // consulting zoxide — preserves $OLDPWD semantics.
+            functions: &[(
+                "cd",
+                r#"if [ $# -eq 0 ]; then
+  builtin cd
+elif [ "$1" = "-" ]; then
+  builtin cd -
+elif builtin cd "$@" 2>/dev/null; then
+  :
+elif command -v zoxide >/dev/null 2>&1; then
+  local __frost_z_target
+  __frost_z_target=$(zoxide query -- "$@" 2>/dev/null) && builtin cd -- "$__frost_z_target"
+else
+  builtin cd "$@"
+fi"#,
+            )],
         }),
 
         "direnv" => Some(IntegrationRecipe {
@@ -80,6 +110,7 @@ pub fn lookup_integration(tool: &str) -> Option<IntegrationRecipe> {
             chpwd_body: Some(r#"eval "$(direnv export bash 2>/dev/null)""#),
             env: &[],
             prompt_command: None,
+            functions: &[],
         }),
 
         "starship" => Some(IntegrationRecipe {
@@ -92,6 +123,7 @@ pub fn lookup_integration(tool: &str) -> Option<IntegrationRecipe> {
             // prompt`. frost-lisp's defprompt :command synthesizes a
             // precmd hook so the output lands in PS1 each prompt.
             prompt_command: Some(r#"starship prompt --status="$?""#),
+            functions: &[],
         }),
 
         "atuin" => Some(IntegrationRecipe {
@@ -110,6 +142,7 @@ pub fn lookup_integration(tool: &str) -> Option<IntegrationRecipe> {
             // binds C-r to the skim-history picker instead.
             env: &[("ATUIN_NOBIND", "true", true)],
             prompt_command: None,
+            functions: &[],
         }),
 
         _ => None,

@@ -409,6 +409,15 @@ fn apply_source_with_context(
                 summary.env_exports += 1;
             }
         }
+        // Named functions — installed as real shell functions (NOT
+        // aliases) so they can wrap builtins, take arguments, and
+        // return typed exit codes. zoxide uses this to override `cd`
+        // with a smart-fallback that consults the zoxide database
+        // when the literal path doesn't exist.
+        for (name, body) in recipe.functions {
+            install_body_as_function(env, name, body);
+            summary.functions += 1;
+        }
         // Hook bodies — staged into a side map; the hook pass below
         // merges them with user-declared hooks into one composed body
         // per event.
