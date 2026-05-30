@@ -47,3 +47,21 @@ crossterm = "0.29"
 [dev-dependencies]
 frost-compat = { path = "../frost-compat" }
 reedline = "0.42"
+# ─── boot_harness integration test (★★ Shigoto rule) ───────────────────
+# The frostmourne boot path (parse rc.lisp → apply each rc form) is a
+# typed work graph: ≥3 sequential steps with per-step timeout concerns.
+# `tests/boot_harness.rs` wraps each .lisp file as a BootStepJob +
+# RecordingJob and runs them through the canonical
+# `InProcessScheduler` so hangs surface as typed Job failures
+# (Deadlettered / never-Succeeded) instead of "user sees empty
+# screen." Mirrors the pattern proven in tend/src/jobs/*.
+frost-lisp = { workspace = true }
+frost-exec = { workspace = true }
+shigoto-types = { git = "https://github.com/pleme-io/shigoto" }
+shigoto-scheduler = { git = "https://github.com/pleme-io/shigoto" }
+shigoto-dag = { git = "https://github.com/pleme-io/shigoto" }
+shigoto-emit = { git = "https://github.com/pleme-io/shigoto" }
+shigoto-budget = { git = "https://github.com/pleme-io/shigoto" }
+shigoto-retry = { git = "https://github.com/pleme-io/shigoto" }
+async-trait = "0.1"
+thiserror = { workspace = true }
