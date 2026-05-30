@@ -201,6 +201,18 @@ impl<'src> Lexer<'src> {
                 }
                 TokenKind::DollarSingleQuoted
             }
+            // Single-char POSIX special parameters that would otherwise be
+            // mis-lexed: `$#` (argv count) used to emit a bare `Dollar`
+            // followed by `#`, which `lex_comment` would then consume to
+            // newline — turning `if [ $# -eq 0 ]; then` into
+            // `Dollar Comment` and trapping `parse_compound_body` in an
+            // infinite loop on the unhandled `Comment` token. Real
+            // incident: 2026-05-30, frostmourne empty-screen hang.
+            // `$-`, `$_` would mis-lex similarly; absorb them here too.
+            Some(b'#' | b'-' | b'_') => {
+                self.cursor.advance();
+                TokenKind::Dollar
+            }
             _ => TokenKind::Dollar,
         }
     }

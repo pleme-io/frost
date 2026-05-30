@@ -1335,6 +1335,19 @@ impl<'a> Parser<'a> {
                 if self.at_eof() || self.at_any(stop) {
                     break;
                 }
+                // Defence-in-depth: any token we don't recognise as a
+                // command-start AND can't eat as a separator would
+                // otherwise trap this loop in an infinite spin without
+                // advancing self.pos. The 2026-05-30 frostmourne hang
+                // was a `Comment` token landing here after lexer
+                // mis-classification of `$#`. Consume one token to
+                // make progress; the resulting parse may be wrong but
+                // the shell stays alive instead of locking up.
+                let pos_before = self.pos;
+                self.advance();
+                if self.pos == pos_before {
+                    break;
+                }
             }
         }
         commands
