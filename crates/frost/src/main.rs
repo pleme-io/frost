@@ -1552,6 +1552,25 @@ fn main() {
         process::exit(code);
     }
 
+    // ── Boot posture ────────────────────────────────────────────────
+    // Detect how frost was launched (Nix shell? direnv? SSH? login?
+    // interactive?) BEFORE rc-load so future rc forms + downstream
+    // consumers (kanshou, frost-mcp) can branch on a typed value
+    // instead of re-probing the environment ad hoc. Memoized — runs
+    // once per process. Substrate-level gap: the canonical
+    // implementation belongs in kindling::posture::detect() but
+    // kindling ships no lib.rs today. See boot_posture.rs for the
+    // gap closure plan.
+    let boot_posture = frost::boot_posture::detect();
+    tracing::info!(
+        in_nix_shell = boot_posture.in_nix_shell,
+        direnv_active = boot_posture.direnv_active,
+        via_ssh = boot_posture.via_ssh,
+        interactive = boot_posture.interactive,
+        login = boot_posture.login,
+        "frost boot posture detected",
+    );
+
     let mut env = frost_exec::ShellEnv::new();
 
     // ── Kanshou introspection server ─────────────────────────────────
