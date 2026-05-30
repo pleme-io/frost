@@ -24,6 +24,14 @@ frost-prompt = { workspace = true }
 frost-history = { workspace = true }
 frost-lisp = { workspace = true }
 frost-mcp = { workspace = true }
+# Kanshou — live process introspection. Frost opens a kanshou socket
+# exposing the live shell state (rc-load posture, prompt-render
+# state, pending VT response queries, current command, history file)
+# so operator tools and external MCP servers query the actual shell
+# state. Closes the 'frost hangs and we can't see why' class.
+kanshou = { git = "https://github.com/pleme-io/kanshou" }
+parking_lot = "0.12"
+serde_json = "1"
 tokio = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
