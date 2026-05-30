@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use clap::Parser as ClapParser;
 
+mod kanshou_state;
+
 use frost_zle::{EditModeKind, InputStatus, ReadLineOutcome, ZleEngine};
 
 /// Bitmask of signals that fired since the last check. Set by the
@@ -1552,11 +1554,53 @@ fn main() {
 
     let mut env = frost_exec::ShellEnv::new();
 
+    // ── Kanshou introspection server ─────────────────────────────────
+    // Opens a Unix socket exposing this frost shell's live state
+    // (rc-load posture, current command, pending VT response queries,
+    // prompt-render timing) so operator tools and external MCP
+    // servers can introspect a running shell without log archaeology.
+    // Spawned on a dedicated tokio thread so the synchronous REPL
+    // below is untouched. Best-effort — bind failure logs and
+    // continues, the shell runs without introspection.
+    let kanshou_shell_state = std::sync::Arc::new(kanshou_state::FrostShellState::new());
+    {
+        let state_for_kanshou = std::sync::Arc::clone(&kanshou_shell_state);
+        std::thread::Builder::new()
+            .name("frost-kanshou".into())
+            .spawn(move || {
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .thread_name("frost-kanshou-tokio")
+                    .build()
+                {
+                    Ok(rt) => rt.block_on(async {
+                        match kanshou_state::spawn_server("frost", state_for_kanshou) {
+                            Ok(path) => {
+                                tracing::info!(
+                                    socket = %path.display(),
+                                    "kanshou introspection live"
+                                );
+                                std::future::pending::<()>().await;
+                            }
+                            Err(e) => {
+                                tracing::warn!(err = %e, "kanshou bind failed; introspection disabled");
+                            }
+                        }
+                    }),
+                    Err(e) => {
+                        tracing::warn!(err = %e, "could not create kanshou tokio runtime");
+                    }
+                }
+            })
+            .ok();  // .ok() — thread-spawn failure is non-fatal.
+    }
+
     // Tatara-Lisp rc file — declarative authoring surface for aliases,
     // options, env vars, prompt, hooks, traps, binds, completions,
     // functions. Missing file is not an error; parse/apply errors print
     // a warning so frost still starts even if the rc has a bug.
     let rc_path = frost_lisp::default_rc_path();
+    kanshou_shell_state.rc_path.write().replace(rc_path.display().to_string());
     // Seed live MCP state with the boot snapshot — the rc-load arm
     // below populates the rest. We thread it through so the
     // interactive path can hand it to the MCP server thread.
@@ -1583,6 +1627,15 @@ fn main() {
             }
             mcp_state.rc_path = Some(rc_path.clone());
             mcp_state.rc_loaded = true;
+            // Live kanshou state — operator/external tools see the rc
+            // load posture without parsing log lines.
+            kanshou_shell_state.rc_loaded.store(true, Ordering::SeqCst);
+            if let Some(hist) = env.get_var("HISTFILE") {
+                kanshou_shell_state
+                    .history_path
+                    .write()
+                    .replace(hist.to_string());
+            }
             mcp_state.bindings = summary.bind_map.clone();
             mcp_state.pickers = summary
                 .pickers
