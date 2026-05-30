@@ -10,6 +10,7 @@ pub mod arith;
 pub mod env;
 pub mod execute;
 pub mod job;
+pub mod modal;
 pub mod redirect;
 pub mod sys;
 pub mod trap;
@@ -18,6 +19,7 @@ pub mod tty_takeover;
 pub use env::ShellEnv;
 pub use execute::{ControlFlow, ExecError, Executor};
 pub use job::{Job, JobTable};
+pub use modal::{FrostMode, KeyDecision, ModalState};
 pub use trap::{TrapAction, TrapTable};
 
 /// Tokenize a string into a token stream.

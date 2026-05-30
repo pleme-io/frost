@@ -201,6 +201,15 @@ pub struct ShellEnv {
     start_time: Instant,
     /// Simple PRNG state for `$RANDOM` (matches zsh: rand() & 0x7fff).
     random_state: u32,
+    /// Modal hotkey state — three-mode state machine (Normal /
+    /// Command / Search) backed by [`awase::BindingMap`]. The
+    /// interactive surface (frost-zle / reedline) consults this to
+    /// decide whether a key passes through to the PTY, is consumed
+    /// by a mode-switch, or routes to a mode-specific buffer.
+    ///
+    /// Starts in [`crate::modal::FrostMode::Normal`] so existing
+    /// callers that don't yet consult it see no behavior change.
+    pub modal: crate::modal::ModalState,
 }
 
 impl ShellEnv {
@@ -227,6 +236,7 @@ impl ShellEnv {
             positional_params: Vec::new(),
             start_time: Instant::now(),
             random_state: pid,
+            modal: crate::modal::ModalState::new(),
         }
     }
 

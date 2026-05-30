@@ -22,6 +22,12 @@ nix = { workspace = true }
 libc = { workspace = true }
 tracing = { workspace = true }
 fancy-regex = { workspace = true }
+# awase — modal hotkey / keymode state machine. Frost-exec keeps a typed
+# `ModalState` next to the shell environment so the interactive surface
+# can route keystrokes through Normal (passthrough), Command (`:` prefix),
+# and Search (`/` `?` scrollback) modes. Re-uses the same primitive that
+# mado / ayatsuri / namimado consume — no duplicate state machine.
+awase = { git = "https://github.com/pleme-io/awase" }
 
 [dev-dependencies]
 frost-lexer = { workspace = true }
