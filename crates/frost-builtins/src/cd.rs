@@ -55,18 +55,13 @@ impl Builtin for Cd {
             },
         };
 
-        // Save current directory as OLDPWD before changing.
-        if let Some(pwd) = env.get_var("PWD") {
-            let pwd = pwd.to_owned();
-            env.set_var("OLDPWD", &pwd);
-        }
-
-        // `chdir` is the single canonicalizing surface: it resolves the
-        // path, performs the OS chdir, and updates `PWD` to the canonical
-        // absolute path. We do NOT set `PWD` here — doing so would clobber
-        // the canonical value with the raw (possibly relative / symlinked)
-        // `target`. AUTO_CD routes through the same `chdir`, so both paths
-        // keep cwd and `$PWD` in lock-step.
+        // `chdir` is the single surface that owns the full cd contract:
+        // it resolves the path to its absolute LOGICAL form (no symlink
+        // chasing — zsh default), performs the OS chdir, saves the prior
+        // `$PWD` as `OLDPWD`, then updates `$PWD`. We do NOT touch `PWD` /
+        // `OLDPWD` here — that would clobber the logical value or duplicate
+        // the save. AUTO_CD routes through the same `chdir`, so both paths
+        // keep cwd / `$PWD` / `OLDPWD` in lock-step.
         match env.chdir(&target) {
             Ok(()) => 0,
             Err(e) => {
