@@ -22,9 +22,9 @@ use std::path::{Path, PathBuf};
 
 use reedline::{
     Completer, DefaultHinter, EditCommand, EditMode, Emacs, FileBackedHistory, Highlighter, Hinter,
-    KeyCode, KeyModifiers, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
-    Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi, default_emacs_keybindings,
-    default_vi_insert_keybindings, default_vi_normal_keybindings,
+    KeyCode, KeyModifiers, MenuBuilder, Prompt, PromptEditMode, PromptHistorySearch,
+    PromptHistorySearchStatus, Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
+    default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
 };
 
 use nu_ansi_term::{Color, Style};
@@ -185,7 +185,12 @@ impl ZleEngine {
     /// `Completer` trait and is consulted on every Tab press. Pair this with
     /// a completion menu so suggestions are rendered below the prompt.
     pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
-        let menu = ReedlineMenu::EngineCompleter(Box::new(reedline::ColumnarMenu::default()));
+        // Name the menu "completion_menu" so the Tab binding
+        // (add_completion_tab_binding) resolves to it; ColumnarMenu's
+        // default name is "columnar_menu", which no binding references.
+        let menu = ReedlineMenu::EngineCompleter(Box::new(
+            reedline::ColumnarMenu::default().with_name("completion_menu"),
+        ));
         self.inner = std::mem::replace(&mut self.inner, Reedline::create())
             .with_completer(completer)
             .with_menu(menu);
@@ -264,6 +269,7 @@ impl ZleEngine {
             EditModeKind::Emacs => {
                 let mut kb = default_emacs_keybindings();
                 apply_custom_bindings_to(&mut kb, &self.custom_bindings);
+                add_completion_tab_binding(&mut kb);
                 Box::new(Emacs::new(kb))
             }
             EditModeKind::Vi => {
@@ -272,6 +278,7 @@ impl ZleEngine {
                 // mode keeps its default keymap.
                 let mut insert_kb = default_vi_insert_keybindings();
                 apply_custom_bindings_to(&mut insert_kb, &self.custom_bindings);
+                add_completion_tab_binding(&mut insert_kb);
                 Box::new(Vi::new(insert_kb, default_vi_normal_keybindings()))
             }
         };
@@ -531,10 +538,10 @@ impl ZleEngine {
         self.custom_bindings = collected.clone();
 
         let mut kb = default_emacs_keybindings();
-        let applied = apply_custom_bindings_to(&mut kb, &collected);
-        if applied == 0 {
-            return self;
-        }
+        apply_custom_bindings_to(&mut kb, &collected);
+        // Always wire Tab → completion menu, even with zero custom binds,
+        // so completion works regardless of rc content.
+        add_completion_tab_binding(&mut kb);
         let taken = std::mem::replace(&mut self.inner, Reedline::create());
         self.inner = taken.with_edit_mode(Box::new(Emacs::new(kb)));
         self.current_mode = Some(EditModeKind::Emacs);
@@ -557,11 +564,50 @@ pub fn default_history_path() -> PathBuf {
     std::env::temp_dir().join("frost_history")
 }
 
+/// Bind Tab → completion menu (Shift-BackTab → previous) in a keymap.
+/// reedline's default keymaps bind NO Tab, so a populated completer + a
+/// named "completion_menu" do nothing until Tab is wired here. Called from
+/// every keymap-build path (both edit modes + `with_bindings`) so the
+/// binding survives the per-mode keymap rebuild in `set_edit_mode`.
+fn add_completion_tab_binding(kb: &mut reedline::Keybindings) {
+    kb.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Tab,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu("completion_menu".to_string()),
+            ReedlineEvent::MenuNext,
+        ]),
+    );
+    kb.add_binding(
+        KeyModifiers::SHIFT,
+        KeyCode::BackTab,
+        ReedlineEvent::MenuPrevious,
+    );
+}
+
 // ─── tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: Tab must resolve to the completion menu in the built
+    /// keymap (reedline binds no Tab by default; the completer + menu were
+    /// installed but never reachable). Mirrors the convergence-guard style.
+    #[test]
+    fn tab_is_bound_to_completion_menu() {
+        let mut kb = default_emacs_keybindings();
+        add_completion_tab_binding(&mut kb);
+        match kb.find_binding(KeyModifiers::NONE, KeyCode::Tab) {
+            Some(ReedlineEvent::UntilFound(events)) => assert!(
+                events
+                    .iter()
+                    .any(|e| matches!(e, ReedlineEvent::Menu(n) if n == "completion_menu")),
+                "Tab must trigger the completion_menu, got {events:?}"
+            ),
+            other => panic!("Tab not bound to completion menu: {other:?}"),
+        }
+    }
 
     #[test]
     fn prompt_defaults_to_frost_gt_and_gt() {
