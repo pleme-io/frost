@@ -243,7 +243,14 @@ mod b01_cd {
     }
     #[test]
     fn cd_updates_pwd() {
-        assert_eq!(stdout("cd /tmp; echo $PWD"), "/tmp\n");
+        // `cd` canonicalizes the target before setting `$PWD`, so the
+        // value is the resolved absolute path (e.g. on macOS `/tmp` is a
+        // symlink to `/private/tmp`). Assert against the canonical form
+        // so the test is platform-correct and pins the canonicalization
+        // contract.
+        let canonical = std::fs::canonicalize("/tmp").unwrap();
+        let expected = format!("{}\n", canonical.display());
+        assert_eq!(stdout("cd /tmp; echo $PWD"), expected);
     }
 }
 
