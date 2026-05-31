@@ -628,16 +628,38 @@ impl ShellEnvironment for ShellEnv {
     }
 
     fn chdir(&mut self, path: &str) -> Result<(), String> {
-        // Single canonicalizing chdir — the one place that mutates the
-        // process cwd + the `PWD` env var. Both the `cd` builtin and the
-        // AUTO_CD dispatch path route through here, so the working-directory
-        // state can never diverge from what's reported in `$PWD` / the
-        // prompt. `canonicalize` resolves `.`, `..`, and symlinks AND
-        // validates existence — a non-existent path returns the OS error
-        // (a clean failure) rather than silently chdir-ing nowhere.
-        let canonical = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
-        std::env::set_current_dir(&canonical).map_err(|e| e.to_string())?;
-        self.set_var("PWD", &canonical.to_string_lossy());
+        // The single surface that owns the full `cd` contract — used by
+        // BOTH the `cd` builtin and the AUTO_CD dispatch path, so cwd,
+        // `$PWD`, and `OLDPWD` can never diverge.
+        //
+        // zsh keeps the LOGICAL path by default: symlinks are NOT chased
+        // unless CHASE_LINKS is set, so `cd /tmp` reports `$PWD=/tmp`, not
+        // `/private/tmp`. We therefore resolve `.`/`..` LEXICALLY against
+        // the current logical `$PWD` (see `logical_absolutize`) and never
+        // rewrite the path to its symlink-resolved form. `canonicalize`
+        // (the previous implementation) was the wrong primitive — it chased
+        // symlinks and broke zsh parity. Existence is validated against the
+        // target (following symlinks for the *check* only) so a missing /
+        // non-directory path is a clean error, never a silent no-op.
+        let base = self
+            .get_var("PWD")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| std::path::PathBuf::from("/"));
+        let logical = logical_absolutize(&base, std::path::Path::new(path));
+        match std::fs::metadata(&logical) {
+            Err(e) => return Err(e.to_string()),
+            Ok(m) if !m.is_dir() => return Err("not a directory".to_owned()),
+            Ok(_) => {}
+        }
+        std::env::set_current_dir(&logical).map_err(|e| e.to_string())?;
+        // Record the directory we're leaving as OLDPWD before updating PWD.
+        // Living here (not in the `cd` builtin) means AUTO_CD gets OLDPWD
+        // too, so `cd -` works after an autocd.
+        if let Some(old) = self.get_var("PWD").map(str::to_owned) {
+            self.set_var("OLDPWD", &old);
+        }
+        self.set_var("PWD", &logical.to_string_lossy());
         Ok(())
     }
 
@@ -646,10 +668,53 @@ impl ShellEnvironment for ShellEnv {
     }
 }
 
+/// Resolve `arg` to an absolute LOGICAL path against `base`, collapsing
+/// `.` and `..` LEXICALLY without touching the filesystem — so symlinks
+/// are never chased (zsh's default `cd`: `$PWD` keeps the path the user
+/// navigated, not its resolved target). An absolute `arg` ignores `base`;
+/// `..` past the root is a no-op (stays `/`), matching `PathBuf::pop`.
+fn logical_absolutize(base: &std::path::Path, arg: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut acc = if arg.is_absolute() {
+        std::path::PathBuf::from("/")
+    } else {
+        base.to_path_buf()
+    };
+    for comp in arg.components() {
+        match comp {
+            Component::RootDir | Component::Prefix(_) | Component::CurDir => {}
+            Component::ParentDir => {
+                acc.pop();
+            }
+            Component::Normal(c) => acc.push(c),
+        }
+    }
+    if acc.as_os_str().is_empty() {
+        acc.push("/");
+    }
+    acc
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn logical_absolutize_is_lexical_and_symlink_free() {
+        // Absolute arg ignores base; `.` + trailing components collapse.
+        // Crucially LEXICAL: `/tmp/.` stays `/tmp` (NOT canonicalized to
+        // `/private/tmp` on macOS) — this is the zsh-parity property.
+        assert_eq!(logical_absolutize(Path::new("/"), Path::new("/tmp/.")), PathBuf::from("/tmp"));
+        // Relative `..` resolves against base lexically.
+        assert_eq!(logical_absolutize(Path::new("/a/b"), Path::new("../c")), PathBuf::from("/a/c"));
+        assert_eq!(logical_absolutize(Path::new("/a/b"), Path::new("c/d")), PathBuf::from("/a/b/c/d"));
+        // `..` past root is a no-op (stays `/`).
+        assert_eq!(logical_absolutize(Path::new("/"), Path::new("../..")), PathBuf::from("/"));
+        // Absolute arg with internal `..`.
+        assert_eq!(logical_absolutize(Path::new("/x"), Path::new("/a/b/../c")), PathBuf::from("/a/c"));
+    }
 
     #[test]
     fn set_and_get_var() {

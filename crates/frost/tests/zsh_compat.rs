@@ -243,14 +243,12 @@ mod b01_cd {
     }
     #[test]
     fn cd_updates_pwd() {
-        // `cd` canonicalizes the target before setting `$PWD`, so the
-        // value is the resolved absolute path (e.g. on macOS `/tmp` is a
-        // symlink to `/private/tmp`). Assert against the canonical form
-        // so the test is platform-correct and pins the canonicalization
-        // contract.
-        let canonical = std::fs::canonicalize("/tmp").unwrap();
-        let expected = format!("{}\n", canonical.display());
-        assert_eq!(stdout("cd /tmp; echo $PWD"), expected);
+        // zsh keeps the LOGICAL path in `$PWD` — it does NOT chase symlinks
+        // unless CHASE_LINKS is set. On macOS `/tmp` is a symlink to
+        // `/private/tmp`, yet `zsh -f -c 'cd /tmp; echo $PWD'` prints `/tmp`.
+        // Pin that parity (the prior assertion against the canonicalized
+        // form was a regression that resolved the symlink).
+        assert_eq!(stdout("cd /tmp; echo $PWD"), "/tmp\n");
     }
 }
 

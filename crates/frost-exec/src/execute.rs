@@ -1898,15 +1898,18 @@ mod tests {
         std::fs::canonicalize(std::env::temp_dir()).expect("canonicalize temp_dir")
     }
 
-    /// (a) `cd <dir>` updates the process cwd AND `$PWD` to the canonical
-    /// absolute path — not the raw, possibly-relative/symlinked argument.
+    /// (a) `cd <dir>` updates the process cwd AND `$PWD` to the absolute
+    /// LOGICAL path — `.`/`..` collapsed lexically, the raw `/.`-suffixed
+    /// spelling normalized away. (`dir` is pre-canonicalized here so logical
+    /// == its value; symlink-NON-chasing parity is pinned separately by the
+    /// zsh_compat `cd_updates_pwd` test.)
     #[test]
-    fn cd_updates_cwd_and_pwd_to_canonical_path() {
+    fn cd_updates_cwd_and_pwd_to_logical_path() {
         let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_current_dir(stable_dir()).unwrap();
         let dir = unique_existing_dir("cd");
         // A non-canonical spelling of the same directory: append a
-        // redundant `.` component that canonicalization must resolve away.
+        // redundant `.` component that lexical resolution must collapse away.
         let noncanonical = dir.join(".");
 
         let mut env = ShellEnv::new();
@@ -1915,9 +1918,9 @@ mod tests {
         let status = exec.execute_program(&program).unwrap();
         assert_eq!(status, 0);
 
-        // Process cwd is the canonical path.
+        // Process cwd is the resolved directory.
         assert_eq!(std::env::current_dir().unwrap(), dir);
-        // $PWD mirrors it exactly — canonical, not the `/.`-suffixed input.
+        // $PWD mirrors it — the `/.`-suffixed input lexically normalized away.
         assert_eq!(env.get_var("PWD"), Some(dir.to_str().unwrap()));
 
         // Restore before releasing the lock + removing the temp dir.
@@ -1947,6 +1950,37 @@ mod tests {
 
         std::env::set_current_dir(stable_dir()).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// AUTO_CD goes through the same `chdir` surface as the `cd` builtin,
+    /// so it saves `OLDPWD` — `cd -` after an autocd returns to the prior
+    /// directory (zsh AUTO_CD behaves identically to `cd`). Regression
+    /// guard: the autocd path previously skipped the OLDPWD save.
+    #[test]
+    fn autocd_saves_oldpwd_so_cd_dash_returns() {
+        let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let origin = unique_existing_dir("autocd-oldpwd-origin");
+        let dest = unique_existing_dir("autocd-oldpwd-dest");
+        std::env::set_current_dir(&origin).unwrap();
+
+        let mut env = ShellEnv::new();
+        env.set_var("PWD", origin.to_str().unwrap());
+        env.set_option(frost_options::ShellOption::AutoCd);
+        let mut exec = Executor::new(&mut env);
+
+        // Autocd into dest (bare directory path).
+        let status = exec
+            .execute_program(&simple_program(vec![dest.to_str().unwrap()]))
+            .unwrap();
+        assert_eq!(status, 0);
+        assert_eq!(env.get_var("PWD"), Some(dest.to_str().unwrap()));
+        // OLDPWD was recorded by the shared chdir — proving the autocd path
+        // no longer skips it.
+        assert_eq!(env.get_var("OLDPWD"), Some(origin.to_str().unwrap()));
+
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let _ = std::fs::remove_dir_all(&origin);
+        let _ = std::fs::remove_dir_all(&dest);
     }
 
     /// AUTO_CD is gated on the option: without it set, a bare directory
