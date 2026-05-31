@@ -1129,6 +1129,36 @@ impl<'env> Executor<'env> {
             return Ok(status);
         }
 
+        // AUTO_CD — a bare single word that names an existing directory
+        // is treated as `cd <word>`. This runs only after the function
+        // and builtin checks above have failed, so a real command never
+        // gets shadowed by a same-named directory. Routes through the
+        // same canonicalizing `chdir` that the `cd` builtin uses, so cwd
+        // and `$PWD` stay in lock-step, and fires the `chpwd` hook just
+        // like an explicit `cd` does.
+        if argv.len() == 1 && self.env.is_option_set(frost_options::ShellOption::AutoCd) {
+            let candidate = &argv[0];
+            if std::path::Path::new(candidate).is_dir() {
+                use frost_builtins::ShellEnvironment;
+                match self.env.chdir(candidate) {
+                    Ok(()) => {
+                        if self.env.functions.contains_key("__frost_hook_chpwd") {
+                            let body = self.env.functions["__frost_hook_chpwd"].body.clone();
+                            // A broken hook must not break the directory change.
+                            let _ = self.execute_command(&body);
+                        }
+                        self.env.exit_status = 0;
+                        return Ok(0);
+                    }
+                    Err(e) => {
+                        eprintln!("cd: {candidate}: {e}");
+                        self.env.exit_status = 1;
+                        return Ok(1);
+                    }
+                }
+            }
+        }
+
         // External command: fork + exec. Pre-check PATH resolution
         // so we can surface "command not found" as a structured
         // error (the REPL then prints a "did you mean: …" hint)
@@ -1835,6 +1865,149 @@ mod tests {
         assert_eq!(invert(0), 1);
         assert_eq!(invert(1), 0);
         assert_eq!(invert(42), 0);
+    }
+
+    // ── cd / AUTO_CD directory-change tests ──────────────────────────
+    //
+    // These tests mutate the process-global cwd, so they serialize on a
+    // shared mutex to stay deterministic when the test harness runs them
+    // on parallel threads. Each test restores the cwd to a stable
+    // directory BEFORE releasing the lock + removing its temp dir, so a
+    // sibling test never observes a cwd pointing at a deleted directory.
+    use std::sync::Mutex;
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Create a unique existing directory under the system temp dir and
+    /// return its canonical absolute path. Caller cleans up.
+    fn unique_existing_dir(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "frost-cd-test-{tag}-{}-{n}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        std::fs::canonicalize(&dir).expect("canonicalize temp dir")
+    }
+
+    /// A stable directory that exists for the whole test process and is
+    /// never removed — tests restore the cwd here before releasing the
+    /// CWD_LOCK so siblings never see a dangling cwd.
+    fn stable_dir() -> std::path::PathBuf {
+        std::fs::canonicalize(std::env::temp_dir()).expect("canonicalize temp_dir")
+    }
+
+    /// (a) `cd <dir>` updates the process cwd AND `$PWD` to the canonical
+    /// absolute path — not the raw, possibly-relative/symlinked argument.
+    #[test]
+    fn cd_updates_cwd_and_pwd_to_canonical_path() {
+        let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let dir = unique_existing_dir("cd");
+        // A non-canonical spelling of the same directory: append a
+        // redundant `.` component that canonicalization must resolve away.
+        let noncanonical = dir.join(".");
+
+        let mut env = ShellEnv::new();
+        let mut exec = Executor::new(&mut env);
+        let program = simple_program(vec!["cd", noncanonical.to_str().unwrap()]);
+        let status = exec.execute_program(&program).unwrap();
+        assert_eq!(status, 0);
+
+        // Process cwd is the canonical path.
+        assert_eq!(std::env::current_dir().unwrap(), dir);
+        // $PWD mirrors it exactly — canonical, not the `/.`-suffixed input.
+        assert_eq!(env.get_var("PWD"), Some(dir.to_str().unwrap()));
+
+        // Restore before releasing the lock + removing the temp dir.
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (b) Entering a bare directory path with AUTO_CD enabled changes
+    /// directory (no `cd` keyword, no executable of that name).
+    #[test]
+    fn autocd_bare_directory_changes_dir() {
+        let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let dir = unique_existing_dir("autocd");
+
+        let mut env = ShellEnv::new();
+        env.set_option(frost_options::ShellOption::AutoCd);
+        let mut exec = Executor::new(&mut env);
+        // Bare directory path as the sole word — would be "command not
+        // found" without AUTO_CD.
+        let program = simple_program(vec![dir.to_str().unwrap()]);
+        let status = exec.execute_program(&program).unwrap();
+        assert_eq!(status, 0);
+
+        assert_eq!(std::env::current_dir().unwrap(), dir);
+        assert_eq!(env.get_var("PWD"), Some(dir.to_str().unwrap()));
+
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// AUTO_CD is gated on the option: without it set, a bare directory
+    /// path is NOT a directory change (it falls through to command
+    /// resolution and reports "command not found").
+    #[test]
+    fn autocd_disabled_does_not_change_dir() {
+        let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let start = std::env::current_dir().unwrap();
+        let dir = unique_existing_dir("autocd-off");
+
+        let mut env = ShellEnv::new();
+        // AutoCd intentionally NOT set.
+        let mut exec = Executor::new(&mut env);
+        let program = simple_program(vec![dir.to_str().unwrap()]);
+        // Without AUTO_CD a bare directory path falls through to command
+        // resolution (an absolute path → fork+exec, which fails because a
+        // directory isn't executable). The load-bearing invariant is that
+        // it does NOT silently chdir — the cwd is unchanged.
+        let _ = exec.execute_program(&program);
+        assert_eq!(std::env::current_dir().unwrap(), start);
+
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (c) A non-existent path is a clean error (status 1), not a silent
+    /// no-op — for both the `cd` builtin and AUTO_CD.
+    #[test]
+    fn cd_nonexistent_path_is_clean_error() {
+        let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let start = std::env::current_dir().unwrap();
+        let missing = stable_dir().join(format!(
+            "frost-cd-test-missing-{}-no-such-dir",
+            std::process::id()
+        ));
+        // Make sure it really doesn't exist.
+        let _ = std::fs::remove_dir_all(&missing);
+        let missing_str = missing.to_str().unwrap();
+
+        // `cd <missing>` → status 1, cwd unchanged.
+        let mut env = ShellEnv::new();
+        let mut exec = Executor::new(&mut env);
+        let program = simple_program(vec!["cd", missing_str]);
+        let status = exec.execute_program(&program).unwrap();
+        assert_eq!(status, 1);
+        assert_eq!(std::env::current_dir().unwrap(), start);
+
+        // AUTO_CD on a non-existent path → not a directory, so AUTO_CD
+        // does NOT fire and does NOT chdir; it falls through to command
+        // resolution. The invariant: no silent cwd mutation.
+        let mut env2 = ShellEnv::new();
+        env2.set_option(frost_options::ShellOption::AutoCd);
+        let mut exec2 = Executor::new(&mut env2);
+        let program2 = simple_program(vec![missing_str]);
+        let _ = exec2.execute_program(&program2);
+        assert_eq!(std::env::current_dir().unwrap(), start);
+
+        std::env::set_current_dir(stable_dir()).unwrap();
     }
 
     #[test]

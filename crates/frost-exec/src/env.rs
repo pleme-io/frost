@@ -628,8 +628,16 @@ impl ShellEnvironment for ShellEnv {
     }
 
     fn chdir(&mut self, path: &str) -> Result<(), String> {
-        std::env::set_current_dir(path).map_err(|e| e.to_string())?;
-        self.set_var("PWD", path);
+        // Single canonicalizing chdir — the one place that mutates the
+        // process cwd + the `PWD` env var. Both the `cd` builtin and the
+        // AUTO_CD dispatch path route through here, so the working-directory
+        // state can never diverge from what's reported in `$PWD` / the
+        // prompt. `canonicalize` resolves `.`, `..`, and symlinks AND
+        // validates existence — a non-existent path returns the OS error
+        // (a clean failure) rather than silently chdir-ing nowhere.
+        let canonical = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+        std::env::set_current_dir(&canonical).map_err(|e| e.to_string())?;
+        self.set_var("PWD", &canonical.to_string_lossy());
         Ok(())
     }
 

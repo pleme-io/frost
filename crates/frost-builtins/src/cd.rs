@@ -61,12 +61,14 @@ impl Builtin for Cd {
             env.set_var("OLDPWD", &pwd);
         }
 
+        // `chdir` is the single canonicalizing surface: it resolves the
+        // path, performs the OS chdir, and updates `PWD` to the canonical
+        // absolute path. We do NOT set `PWD` here — doing so would clobber
+        // the canonical value with the raw (possibly relative / symlinked)
+        // `target`. AUTO_CD routes through the same `chdir`, so both paths
+        // keep cwd and `$PWD` in lock-step.
         match env.chdir(&target) {
-            Ok(()) => {
-                // Update PWD to the new directory.
-                env.set_var("PWD", &target);
-                0
-            }
+            Ok(()) => 0,
             Err(e) => {
                 eprintln!("cd: {target}: {e}");
                 1
