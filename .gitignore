@@ -80,3 +80,4 @@ crates/frost/rod*
 crates/frost/emufunctest
 crates/frost/zdotdir/
 result
+Cargo.build-spec.json
