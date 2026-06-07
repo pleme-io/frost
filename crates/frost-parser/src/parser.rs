@@ -153,6 +153,7 @@ impl<'a> Parser<'a> {
                 | TokenKind::DoubleQuoted
                 | TokenKind::DollarSingleQuoted
                 | TokenKind::Dollar
+                | TokenKind::DollarParam
                 | TokenKind::DollarBrace
                 | TokenKind::DollarParen
                 | TokenKind::DollarDoubleParen
@@ -200,6 +201,7 @@ impl<'a> Parser<'a> {
                 | TokenKind::DoubleQuoted
                 | TokenKind::DollarSingleQuoted
                 | TokenKind::Dollar
+                | TokenKind::DollarParam
                 | TokenKind::DollarBrace
                 | TokenKind::DollarParen
                 | TokenKind::DollarDoubleParen
@@ -640,6 +642,12 @@ impl<'a> Parser<'a> {
                 let inner = strip_quotes(&tok.text, '"');
                 parts.push(WordPart::DoubleQuoted(parse_double_quoted_parts(&inner)));
             }
+            TokenKind::DollarParam => {
+                // A complete special-parameter token (e.g. `$#`). Its
+                // text is `$<char>`; strip the `$` to recover the name.
+                let name = tok.text.strip_prefix('$').unwrap_or(&tok.text);
+                parts.push(WordPart::DollarVar(CompactString::from(name)));
+            }
             TokenKind::Dollar => {
                 // $VAR — the next token should be the variable name
                 if self.kind() == TokenKind::Word || self.kind() == TokenKind::Number {
@@ -825,6 +833,14 @@ impl<'a> Parser<'a> {
                 }
                 TokenKind::Equals => {
                     parts.push(WordPart::Literal(CompactString::from("=")));
+                }
+                TokenKind::DollarParam => {
+                    // A complete special-parameter token (e.g. `$#`) in a
+                    // compound word like `n=$#`. Strip the leading `$`.
+                    // (Use `next`, the merged token — not `tok`, the word's
+                    // first token.)
+                    let name = next.text.strip_prefix('$').unwrap_or(&next.text);
+                    parts.push(WordPart::DollarVar(CompactString::from(name)));
                 }
                 TokenKind::Dollar => {
                     let adjacent =
@@ -1960,6 +1976,36 @@ mod tests {
             WordPart::DollarVar(name) => assert_eq!(name.as_str(), "HOME"),
             other => panic!("expected DollarVar, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_dollar_hash_special_param() {
+        // Unquoted `$#` (argv count) must parse to `DollarVar("#")`, not
+        // a literal `$`. Regression: the lexer used to swallow the `#`
+        // and emit a bare `Dollar`, so `[ $# -eq 0 ]` saw `[ $ -eq 0 ]`
+        // and always matched — which made the zoxide `cd` override take
+        // its no-arg branch and jump HOME on every `cd`.
+        let p = parse("echo $#");
+        let cmd = first_simple(&p);
+        assert_eq!(cmd.words.len(), 2);
+        match &cmd.words[1].parts[0] {
+            WordPart::DollarVar(name) => assert_eq!(name.as_str(), "#"),
+            other => panic!("expected DollarVar(\"#\"), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dollar_hash_in_compound_word() {
+        // `n=$#` — the special param resolves inside a compound word too.
+        let p = parse("echo n=$#");
+        let cmd = first_simple(&p);
+        let parts = &cmd.words[1].parts;
+        assert!(
+            parts
+                .iter()
+                .any(|p| matches!(p, WordPart::DollarVar(n) if n.as_str() == "#")),
+            "compound word should carry DollarVar(\"#\"), got {parts:?}",
+        );
     }
 
     #[test]

@@ -930,12 +930,57 @@ impl<'env> Executor<'env> {
         // to itself, e.g. `alias ls='ls --color'`). Trailing space in an
         // alias value allows the next word to also be alias-expanded, but
         // for the first pass we implement the common case only.
-        let argv = expand_aliases(argv, &self.env.aliases);
+        let mut argv = expand_aliases(argv, &self.env.aliases);
+
+        // Precommand modifiers: `builtin` and `command`. zsh resolves
+        // these in the executor, not as leaf builtins — a standalone
+        // `builtin`/`command` builtin cannot see the registry or the
+        // function table, so on its own it no-ops. That silently broke
+        // `builtin cd`, which is the spine of the zoxide cd-integration
+        // override (`elif builtin cd "$@" …; then :`): the no-op falsely
+        // reported success, so the override took the early branch, never
+        // changed directory, and never fell through to the zoxide
+        // teleport — `cd` was a complete no-op in frostmourne (both a
+        // plain `cd /path` and a `cd <keyword>` jump; diagnosed
+        // 2026-06-06). Strip the modifier(s) here; both bypass function
+        // lookup for the target word. `builtin NAME` additionally
+        // requires NAME to be a registered builtin.
+        let mut bypass_functions = false;
+        let mut builtin_only = false;
+        loop {
+            match argv.first().map(String::as_str) {
+                Some("builtin") => {
+                    argv.remove(0);
+                    bypass_functions = true;
+                    builtin_only = true;
+                }
+                Some("command") => {
+                    argv.remove(0);
+                    bypass_functions = true;
+                    // `command -v NAME` / `command -V NAME` — a resolution
+                    // query, not execution. Handled here because it needs
+                    // the registry + function table + PATH.
+                    if matches!(argv.first().map(String::as_str), Some("-v" | "-V")) {
+                        let verbose = argv[0] == "-V";
+                        let target = argv.get(1).cloned();
+                        return Ok(self.command_resolve_query(target.as_deref(), verbose));
+                    }
+                }
+                _ => break,
+            }
+        }
+        if argv.is_empty() {
+            return Ok(0);
+        }
 
         let name = &argv[0];
 
-        // Check for functions first
-        if let Some(fdef) = self.env.functions.get(name).cloned() {
+        // Check for functions first (bypassed when a `builtin`/`command`
+        // precommand modifier was present — those skip the function table).
+        if let Some(fdef) = (!bypass_functions)
+            .then(|| self.env.functions.get(name).cloned())
+            .flatten()
+        {
             let saved_params = self.env.positional_params.clone();
             // Hook functions (precmd, preexec, chpwd, prompt-loop hooks)
             // intentionally mutate the caller's env — that's the whole
@@ -972,11 +1017,28 @@ impl<'env> Executor<'env> {
             return result;
         }
 
-        // Check builtins — if redirects are present, fork to apply them
+        // Check builtins. Builtins run IN-PROCESS even when redirects are
+        // present: their effects are shell state (cd, export, setopt,
+        // read, …) that must persist in the parent, and the
+        // BuiltinAction handling below must still run. We save the
+        // affected fds, apply the redirects, run the builtin, then
+        // restore. (The old path forked to apply redirects, so
+        // `cd x 2>/dev/null` ran in a child and was a no-op in the parent
+        // — the load-bearing failure behind the broken zoxide `cd`
+        // override, which finalizes jumps with `builtin cd … 2>/dev/null`.)
         if self.builtins.contains(name) {
-            if !cmd.redirects.is_empty() {
-                return self.fork_exec_builtin(&argv, &cmd.redirects);
-            }
+            let saved_fds = if cmd.redirects.is_empty() {
+                Vec::new()
+            } else {
+                match save_and_apply_redirects(&cmd.redirects) {
+                    Ok(saved) => saved,
+                    Err(e) => {
+                        eprintln!("frost: {e}");
+                        self.env.exit_status = 1;
+                        return Ok(1);
+                    }
+                }
+            };
 
             let arg_refs: Vec<&str> = argv[1..].iter().map(|s| s.as_str()).collect();
             let result = self
@@ -984,6 +1046,11 @@ impl<'env> Executor<'env> {
                 .get(name)
                 .unwrap()
                 .execute_with_action(&arg_refs, self.env);
+
+            // Restore the saved fds before any hooks / BuiltinActions
+            // below run (they may perform their own I/O).
+            restore_saved_fds(saved_fds);
+
             let status = result.status;
 
             // Handle special exit codes from control flow builtins
@@ -1129,6 +1196,14 @@ impl<'env> Executor<'env> {
             return Ok(status);
         }
 
+        // `builtin NAME` where NAME is not a registered builtin is an
+        // error — it must not fall through to AUTO_CD or external exec.
+        if builtin_only {
+            eprintln!("frost: builtin: no such builtin: {name}");
+            self.env.exit_status = 1;
+            return Ok(1);
+        }
+
         // AUTO_CD — a bare single word that names an existing directory
         // is treated as `cd <word>`. This runs only after the function
         // and builtin checks above have failed, so a real command never
@@ -1177,41 +1252,49 @@ impl<'env> Executor<'env> {
         self.fork_exec(&argv, &cmd.redirects)
     }
 
-    /// Fork to run a builtin with redirects applied in the child.
-    fn fork_exec_builtin(
-        &mut self,
-        argv: &[String],
-        redirects: &[frost_parser::ast::Redirect],
-    ) -> ExecResult {
-        match unsafe { sys::fork() }.map_err(ExecError::Fork)? {
-            sys::ForkOutcome::Child => {
-                if let Err(e) = redirect::apply_redirects(redirects) {
-                    eprintln!("frost: {e}");
-                    std::process::exit(1);
-                }
-                let arg_refs: Vec<&str> = argv[1..].iter().map(|s| s.as_str()).collect();
-                let status = self
-                    .builtins
-                    .get(&argv[0])
-                    .unwrap()
-                    .execute(&arg_refs, self.env);
-                std::process::exit(status);
+    /// `command -v NAME` / `command -V NAME` resolution query. Prints
+    /// the resolution and returns 0 when NAME is a builtin, a shell
+    /// function, or found on PATH; returns 1 with no output otherwise.
+    /// Lives on the executor because it needs the registry, the
+    /// function table, and PATH — none of which the leaf `command`
+    /// builtin can reach.
+    fn command_resolve_query(&self, name: Option<&str>, verbose: bool) -> i32 {
+        let Some(name) = name else {
+            return 1;
+        };
+        if self.builtins.contains(name) {
+            if verbose {
+                println!("{name} is a shell builtin");
+            } else {
+                println!("{name}");
             }
-            sys::ForkOutcome::Parent { child_pid } => {
-                match sys::wait_pid(child_pid).map_err(ExecError::Wait)? {
-                    sys::ChildStatus::Exited(code) => {
-                        self.env.exit_status = code;
-                        Ok(code)
-                    }
-                    sys::ChildStatus::Signaled(code) => {
-                        self.env.exit_status = code;
-                        Ok(code)
-                    }
-                    _ => Ok(0),
-                }
-            }
+            return 0;
         }
+        if self.env.functions.contains_key(name) {
+            if verbose {
+                println!("{name} is a shell function");
+            } else {
+                println!("{name}");
+            }
+            return 0;
+        }
+        if let Some(path) = path_lookup(&self.env, name) {
+            let resolved = path.display();
+            if verbose {
+                println!("{name} is {resolved}");
+            } else {
+                println!("{resolved}");
+            }
+            return 0;
+        }
+        1
     }
+
+    /// Fork to run a builtin with redirects applied in the child.
+    // (Builtins with redirects are now run in-process via
+    // `save_and_apply_redirects` / `restore_saved_fds` — see the builtin
+    // dispatch in `execute_simple`. The previous `fork_exec_builtin`
+    // forked, which discarded shell-state mutations like `cd`.)
 
     fn fork_exec(
         &mut self,
@@ -1473,6 +1556,38 @@ impl Drop for ProcSubFdGuard {
 /// as a structured error before forking (so the REPL can
 /// "did-you-mean"-suggest rather than letting a child's ENOENT
 /// print `frost: <name>: ENOENT`).
+/// Stash fds 0/1/2, then apply a builtin's redirects to the current
+/// process. Returns the `(original_fd, backup_fd)` pairs to hand to
+/// [`restore_saved_fds`] after the builtin runs. On failure the already-
+/// stashed fds are restored before returning the error, so the shell's
+/// own stdio is never left redirected.
+fn save_and_apply_redirects(
+    redirects: &[frost_parser::ast::Redirect],
+) -> Result<Vec<(std::os::fd::RawFd, std::os::fd::RawFd)>, redirect::RedirectError> {
+    // Back up the standard streams (the only fds builtins realistically
+    // target) above fd 9 so they don't collide with the low fds the
+    // redirect itself allocates.
+    let mut saved = Vec::new();
+    for fd in [0, 1, 2] {
+        if let Ok(backup) = sys::dup_from(fd, 10) {
+            saved.push((fd, backup));
+        }
+    }
+    if let Err(e) = redirect::apply_redirects(redirects) {
+        restore_saved_fds(saved);
+        return Err(e);
+    }
+    Ok(saved)
+}
+
+/// Restore fds saved by [`save_and_apply_redirects`], closing each backup.
+fn restore_saved_fds(saved: Vec<(std::os::fd::RawFd, std::os::fd::RawFd)>) {
+    for (orig, backup) in saved {
+        let _ = sys::dup2(backup, orig);
+        let _ = sys::close(backup);
+    }
+}
+
 fn path_lookup(env: &ShellEnv, name: &str) -> Option<std::path::PathBuf> {
     let path = env.get_var("PATH")?;
     for dir in path.split(':').filter(|p| !p.is_empty()) {
@@ -2042,6 +2157,61 @@ mod tests {
         assert_eq!(std::env::current_dir().unwrap(), start);
 
         std::env::set_current_dir(stable_dir()).unwrap();
+    }
+
+    /// `builtin cd <dir>` must dispatch to the `cd` builtin. The bare
+    /// `builtin` builtin is a no-op stub — the precommand-modifier
+    /// resolution lives in the executor. (Regression: `builtin cd` used
+    /// to no-op, which broke the zoxide `cd` override that wraps the
+    /// real cd as `builtin cd …`.)
+    #[test]
+    fn builtin_prefix_dispatches_cd() {
+        let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let dir = unique_existing_dir("builtin-cd");
+        let canon = std::fs::canonicalize(&dir).unwrap();
+
+        let mut env = ShellEnv::new();
+        let mut exec = Executor::new(&mut env);
+        let program = simple_program(vec!["builtin", "cd", dir.to_str().unwrap()]);
+        let status = exec.execute_program(&program).unwrap();
+        assert_eq!(status, 0);
+        assert_eq!(std::env::current_dir().unwrap(), canon);
+
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `cd <dir> 2>/dev/null` must change the *parent's* directory.
+    /// Builtins with redirects run in-process (fd save/restore); the old
+    /// path forked, so the chdir happened in a child and was lost — the
+    /// load-bearing failure behind the broken zoxide `cd` override, which
+    /// finalizes jumps with `builtin cd … 2>/dev/null`.
+    #[test]
+    fn cd_with_redirect_persists_in_parent() {
+        let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let dir = unique_existing_dir("cd-redirect");
+        let canon = std::fs::canonicalize(&dir).unwrap();
+
+        let mut prog = simple_program(vec!["cd", dir.to_str().unwrap()]);
+        if let Command::Simple(sc) = &mut prog.commands[0].list.first.commands[0] {
+            sc.redirects.push(frost_parser::ast::Redirect {
+                fd: Some(2),
+                op: frost_parser::ast::RedirectOp::Greater,
+                target: literal_word("/dev/null"),
+                span: Span::new(0, 0),
+            });
+        }
+
+        let mut env = ShellEnv::new();
+        let mut exec = Executor::new(&mut env);
+        let status = exec.execute_program(&prog).unwrap();
+        assert_eq!(status, 0);
+        assert_eq!(std::env::current_dir().unwrap(), canon);
+
+        std::env::set_current_dir(stable_dir()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -12,6 +12,16 @@ impl Builtin for Cd {
     }
 
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
+        // `--` ends option processing — `cd -- <path>` forces the next
+        // word to be treated as a directory (so a path that begins with
+        // `-` isn't mistaken for `cd -`). The zoxide cd-integration
+        // override relies on this: it finalizes the jump with
+        // `builtin cd -- "$target"`. Without stripping `--`, frost tried
+        // to chdir into a literal `--` and the jump silently failed.
+        let args = match args.first() {
+            Some(&"--") => &args[1..],
+            _ => args,
+        };
         let target = match args.first() {
             // `cd -` → go to OLDPWD
             Some(&"-") => match env.get_var("OLDPWD") {
@@ -175,5 +185,27 @@ mod tests {
         let cd = Cd;
         let status = cd.execute(&["-"], &mut env);
         assert_eq!(status, 1);
+    }
+
+    #[test]
+    fn cd_double_dash_strips_separator() {
+        // `cd -- <path>` — the `--` ends option processing; the next word
+        // is the directory. The zoxide cd-integration override finalizes
+        // jumps with `builtin cd -- "$target"`, so without this `cd` tried
+        // to chdir into a literal `--` and the jump silently failed.
+        let mut env = MockEnv::new();
+        let cd = Cd;
+        let status = cd.execute(&["--", "/var/log"], &mut env);
+        assert_eq!(status, 0);
+        assert_eq!(env.cwd, "/var/log");
+    }
+
+    #[test]
+    fn cd_double_dash_alone_goes_home() {
+        let mut env = MockEnv::new();
+        let cd = Cd;
+        let status = cd.execute(&["--"], &mut env);
+        assert_eq!(status, 0);
+        assert_eq!(env.cwd, "/home/user");
     }
 }
