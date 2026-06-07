@@ -489,7 +489,15 @@ fn is_meta(b: u8) -> bool {
             | b'"'
             | b'`'
             | b'$'
-            | b'#'
+            // NOTE: `#` is intentionally NOT a word terminator. In zsh a
+            // `#` starts a comment only at a WORD BOUNDARY (token start /
+            // after whitespace) — mid-word it is a literal. `next_token`
+            // already dispatches a leading `#` to `lex_comment` after
+            // `skip_whitespace`, so comments still work; keeping `#` out of
+            // is_meta makes `.#foo`, `nix build .#pkg`, and `a#b` lex as
+            // single words instead of `word` + a mid-command `Comment`
+            // token (which infinite-looped the parser — `nix build .#attr`
+            // hung the shell; diagnosed 2026-06-07).
             | b'='
             | b'{'
             | b'}'
@@ -721,6 +729,32 @@ mod tests {
                 TokenKind::Word,
                 TokenKind::Word,
                 TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn hash_is_literal_mid_word_but_comment_at_boundary() {
+        // `#` is a comment delimiter ONLY at a word boundary. Mid-word it
+        // is a literal, so `.#pkg` and `a#b` are single words — not
+        // `word` + a stray `Comment` token (which infinite-looped the
+        // parser, hanging the shell on `nix build .#attr`).
+        assert_eq!(
+            kinds("echo .#pkg"),
+            vec![TokenKind::Word, TokenKind::Word, TokenKind::Eof]
+        );
+        assert_eq!(
+            kinds("echo a#b"),
+            vec![TokenKind::Word, TokenKind::Word, TokenKind::Eof]
+        );
+        // A `#` after whitespace still starts a comment.
+        assert_eq!(
+            kinds("echo hi # c"),
+            vec![
+                TokenKind::Word,
+                TokenKind::Word,
+                TokenKind::Comment,
+                TokenKind::Eof
             ]
         );
     }
