@@ -450,37 +450,59 @@ fn first_word(line: &str) -> Option<&str> {
 }
 
 fn current_word(line: &str, pos: usize) -> WordContext<'_> {
-    // Find the start of the current word: walk backwards until whitespace
-    // or a shell word break. Keep it simple — treat `|;&<>()` and whitespace
-    // as breaks. Doesn't honor quotes yet; close enough for a first pass.
+    // Find the start of the current word by scanning from BOL to the cursor
+    // while tracking quote state. Word breaks (whitespace + `|;&<>()`) only
+    // split OUTSIDE quotes; an opening quote starts the word *after* the
+    // quote char — so completing inside `cat "my dir/<TAB>` extracts
+    // `my dir/` (the space inside the quote does not split the word, and the
+    // quote char itself is excluded from the partial). zsh/readline behave
+    // the same. (Backslash-escaped breaks are not yet handled.)
     let bytes = line.as_bytes();
     let end = pos.min(bytes.len());
-    let mut start = end;
-    while start > 0 {
-        let b = bytes[start - 1];
-        if matches!(
-            b,
-            b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'<' | b'>' | b'(' | b')'
-        ) {
-            break;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut start = 0;
+    let mut i = 0;
+    while i < end {
+        let b = bytes[i];
+        if in_single {
+            if b == b'\'' {
+                in_single = false;
+            }
+        } else if in_double {
+            if b == b'"' {
+                in_double = false;
+            }
+        } else {
+            match b {
+                b'\'' => {
+                    in_single = true;
+                    start = i + 1;
+                }
+                b'"' => {
+                    in_double = true;
+                    start = i + 1;
+                }
+                b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'<' | b'>' | b'(' | b')' => {
+                    start = i + 1;
+                }
+                _ => {}
+            }
         }
-        start -= 1;
+        i += 1;
     }
 
-    // Command position: scan backwards from word_start, skipping whitespace.
-    // If we hit BOL or a command separator (`;` `|` `&` `&&` `||`) before
-    // any non-separator character, we are at command position.
-    let mut i = start;
-    while i > 0 {
-        let b = bytes[i - 1];
-        if matches!(b, b' ' | b'\t') {
-            i -= 1;
-            continue;
-        }
-        break;
+    // Command position: scan backwards from the word start, skipping
+    // whitespace. If we hit BOL or a command separator before any other
+    // character, this word is in command position. (An opening quote
+    // immediately before `start` is not a separator, so completing inside a
+    // quote is never command position — correct.)
+    let mut j = start;
+    while j > 0 && matches!(bytes[j - 1], b' ' | b'\t') {
+        j -= 1;
     }
     let is_command_position =
-        i == 0 || matches!(bytes[i - 1], b';' | b'|' | b'&' | b'\n' | b'(' | b'{');
+        j == 0 || matches!(bytes[j - 1], b';' | b'|' | b'&' | b'\n' | b'(' | b'{');
 
     WordContext {
         word: line[start..end].to_string(),
@@ -611,6 +633,37 @@ mod tests {
         assert_eq!(ctx.word, "hell");
         assert_eq!(ctx.word_start, 5);
         assert!(!ctx.is_command_position);
+    }
+
+    #[test]
+    fn word_inside_double_quotes_keeps_spaces() {
+        // Completing inside `cat "my dir/<TAB>` — the space does not split
+        // the word, and the opening quote is excluded from the partial.
+        let ctx = current_word("cat \"my dir/", 12);
+        assert_eq!(ctx.word, "my dir/");
+        assert_eq!(ctx.word_start, 5);
+        assert!(!ctx.is_command_position);
+    }
+
+    #[test]
+    fn word_inside_single_quotes_keeps_spaces() {
+        let ctx = current_word("ls 'a b/c", 9);
+        assert_eq!(ctx.word, "a b/c");
+        assert_eq!(ctx.word_start, 4);
+    }
+
+    #[test]
+    fn unquoted_space_still_breaks_the_word() {
+        let ctx = current_word("cat my dir", 10);
+        assert_eq!(ctx.word, "dir");
+        assert_eq!(ctx.word_start, 7);
+    }
+
+    #[test]
+    fn closed_quote_then_space_breaks_again() {
+        // After a closed quote + space, a new word starts normally.
+        let ctx = current_word("cp \"a b\" c", 10);
+        assert_eq!(ctx.word, "c");
     }
 
     #[test]
