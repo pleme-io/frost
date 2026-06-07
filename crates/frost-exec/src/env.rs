@@ -197,6 +197,9 @@ pub struct ShellEnv {
     pub ppid: u32,
     /// Positional parameters (`$1`, `$2`, …).
     pub positional_params: Vec<String>,
+    /// Last argument of the previously executed command (`$_`). Updated by
+    /// the executor after each simple command finalizes its argv.
+    pub last_arg: String,
     /// Startup time for `$SECONDS`.
     start_time: Instant,
     /// Simple PRNG state for `$RANDOM` (matches zsh: rand() & 0x7fff).
@@ -234,6 +237,7 @@ impl ShellEnv {
             pid,
             ppid,
             positional_params: Vec::new(),
+            last_arg: String::new(),
             start_time: Instant::now(),
             random_state: pid,
             modal: crate::modal::ModalState::new(),

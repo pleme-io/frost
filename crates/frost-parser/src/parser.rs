@@ -1758,7 +1758,7 @@ fn parse_double_quoted_parts(content: &str) -> Vec<WordPart> {
                 let special = bytes[i + 1];
                 if matches!(
                     special,
-                    b'?' | b'!' | b'$' | b'#' | b'*' | b'@' | b'0'..=b'9'
+                    b'?' | b'!' | b'$' | b'#' | b'*' | b'@' | b'-' | b'0'..=b'9'
                 ) {
                     parts.push(WordPart::DollarVar(CompactString::from(
                         &content[i + 1..i + 2],
