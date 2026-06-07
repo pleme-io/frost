@@ -1,7 +1,79 @@
 //! Miscellaneous builtins: command, builtin, type/whence, shift, colon,
-//! alias/unalias, typeset/local/declare/integer/float/readonly.
+//! alias/unalias, typeset/local/declare/integer/float/readonly, history.
 
 use crate::{Builtin, BuiltinAction, BuiltinResult, ShellEnvironment};
+
+/// Strip a zsh extended-history prefix (`: <ts>:<elapsed>;<cmd>`) from a
+/// line, returning just the command. Plain (one-command-per-line) entries
+/// pass through unchanged. frost's reedline-backed history writes plain
+/// lines, but a shared `$HISTFILE` (e.g. blzsh's) may be extended-format,
+/// so `history` tolerates both.
+fn strip_hist_meta(line: &str) -> &str {
+    if let Some(rest) = line.strip_prefix(": ") {
+        if let Some(semi) = rest.find(';') {
+            let meta = &rest[..semi];
+            // `<ts>:<elapsed>` — colon-separated, all-digit fields.
+            if !meta.is_empty()
+                && meta
+                    .split(':')
+                    .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+            {
+                return rest[semi + 1..].trim_end();
+            }
+        }
+    }
+    line.trim_end()
+}
+
+/// history — print the command history, numbered (oldest first), like zsh.
+/// Reads `$HISTFILE` (or `$HOME/.frost_history`). An optional numeric arg
+/// limits output to the last N entries (`history 20`). The history itself
+/// lives in the reedline line-editor layer; this reads the persisted file,
+/// so it shows everything flushed to disk (the common case).
+pub struct History;
+impl Builtin for History {
+    fn name(&self) -> &str {
+        "history"
+    }
+    fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
+        use std::path::PathBuf;
+        let path: Option<PathBuf> = env
+            .get_var("HISTFILE")
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| env.home_dir().map(|h| PathBuf::from(h).join(".frost_history")));
+        let Some(path) = path else {
+            eprintln!("history: cannot resolve HISTFILE or HOME");
+            return 1;
+        };
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            // No history file yet is not an error (fresh shell).
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return 0,
+            Err(e) => {
+                eprintln!("history: {}: {e}", path.display());
+                return 1;
+            }
+        };
+        let cmds: Vec<&str> = content
+            .lines()
+            .map(strip_hist_meta)
+            .filter(|l| !l.is_empty())
+            .collect();
+        // `history N` / `history -N` → last N entries.
+        let limit = args
+            .first()
+            .and_then(|a| a.trim_start_matches('-').parse::<usize>().ok());
+        let start = match limit {
+            Some(n) if n < cmds.len() => cmds.len() - n,
+            _ => 0,
+        };
+        for (i, cmd) in cmds.iter().enumerate().skip(start) {
+            println!("{:>5}  {cmd}", i + 1);
+        }
+        0
+    }
+}
 
 /// : (colon) — do nothing, return 0.
 pub struct Colon;
@@ -1346,5 +1418,36 @@ impl Builtin for Which {
     }
     fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
         Type.execute(args, env)
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::strip_hist_meta;
+
+    #[test]
+    fn plain_line_passes_through() {
+        assert_eq!(strip_hist_meta("git push origin main"), "git push origin main");
+        assert_eq!(strip_hist_meta("echo hi"), "echo hi");
+    }
+
+    #[test]
+    fn zsh_extended_prefix_is_stripped() {
+        // `: <ts>:<elapsed>;<cmd>` → just the command.
+        assert_eq!(strip_hist_meta(": 1700000000:0;git status"), "git status");
+        assert_eq!(strip_hist_meta(": 1699999999:12;nix run .#rebuild"), "nix run .#rebuild");
+    }
+
+    #[test]
+    fn non_extended_colon_lines_are_left_alone() {
+        // A command that merely starts with `: ` but isn't ts:elapsed
+        // metadata must not be mangled.
+        assert_eq!(strip_hist_meta(": noop; echo hi"), ": noop; echo hi");
+        assert_eq!(strip_hist_meta(":(){ :|:& };:"), ":(){ :|:& };:");
+    }
+
+    #[test]
+    fn trailing_whitespace_trimmed() {
+        assert_eq!(strip_hist_meta("ls -la   "), "ls -la");
     }
 }
