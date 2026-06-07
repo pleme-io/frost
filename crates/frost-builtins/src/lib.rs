@@ -208,6 +208,7 @@ pub fn default_builtins() -> BuiltinRegistry {
     reg.register(Box::new(echo::Echo));
     reg.register(Box::new(print::Print));
     reg.register(Box::new(cd::Cd));
+    reg.register(Box::new(cd::Pwd));
     reg.register(Box::new(exit::Exit));
     reg.register(Box::new(export::Export));
 
@@ -301,6 +302,7 @@ mod tests {
         let reg = default_builtins();
         for name in &[
             "cd",
+            "pwd",
             "echo",
             "print",
             "exit",
