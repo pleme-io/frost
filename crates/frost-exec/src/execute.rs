@@ -892,6 +892,24 @@ impl<'env> Executor<'env> {
             .collect();
         let _proc_sub_guard = ProcSubFdGuard { fds: proc_sub_fds };
 
+        // `noglob` precommand modifier. Glob expansion runs HERE — upstream
+        // of the precommand-modifier strip below — so `noglob` must be
+        // recognized at the word level now, or the glob has already mangled
+        // `nix build .#attr` / `^` / `~` before we ever see the modifier.
+        // Scan the leading run of precommand-modifier barewords for
+        // `noglob` (zsh's glob-suppressing modifier; sibling of the
+        // builtin/command/exec modifiers stripped below). The highest-value
+        // interactive parity fix — nix flake refs are hand-typed under the
+        // fleet's enabled EXTENDED_GLOB.
+        let mut suppress_glob = false;
+        for word in &resolved_words {
+            match leading_literal(word) {
+                Some("noglob") => suppress_glob = true,
+                Some("nocorrect" | "exec" | "builtin" | "command") => {}
+                _ => break,
+            }
+        }
+
         // Glob expansion runs after all other word expansions. We only glob
         // words that originally contained unquoted glob AST parts — this
         // preserves zsh's GLOB_SUBST-off default (a `*` that came from a
@@ -902,6 +920,7 @@ impl<'env> Executor<'env> {
                 let expanded = self.expand_word_multi(word);
                 let preserve_empties = word_has_quoted_part(word);
                 if word_has_unquoted_glob(word)
+                    && !suppress_glob
                     && self.env.is_option_set(frost_options::ShellOption::Glob)
                 {
                     for candidate in expanded {
@@ -965,6 +984,18 @@ impl<'env> Executor<'env> {
                         let target = argv.get(1).cloned();
                         return Ok(self.command_resolve_query(target.as_deref(), verbose));
                     }
+                }
+                Some("noglob") => {
+                    // Glob suppression already applied above (suppress_glob);
+                    // strip the modifier word so the wrapped command runs.
+                    argv.remove(0);
+                }
+                Some("nocorrect") => {
+                    // Suppress spelling correction for the wrapped command.
+                    // frost has no CORRECT option yet, so this is strip +
+                    // no-op — but it must be consumed here so it is never
+                    // mistaken for a command. Sibling of noglob/builtin/command.
+                    argv.remove(0);
                 }
                 _ => break,
             }
@@ -1652,6 +1683,18 @@ fn expand_aliases(
 /// references get "null-token removal" when they expand to empty —
 /// matching POSIX. Quoted empties are preserved so `[ -n "" ]` stays
 /// three arguments and `echo "" foo ""` preserves the empties.
+/// The literal text of a word that is exactly one unquoted literal part —
+/// e.g. a bareword precommand modifier (`noglob`, `nocorrect`, `builtin`,
+/// `command`, `exec`). None for quoted, multi-part, glob, or expansion
+/// words (a precommand modifier is never any of those).
+fn leading_literal(w: &Word) -> Option<&str> {
+    use frost_parser::ast::WordPart;
+    match w.parts.as_slice() {
+        [WordPart::Literal(s)] => Some(s.as_str()),
+        _ => None,
+    }
+}
+
 fn word_has_quoted_part(w: &Word) -> bool {
     use frost_parser::ast::WordPart;
     w.parts.iter().any(|p| {

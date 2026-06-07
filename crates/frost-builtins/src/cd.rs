@@ -82,6 +82,46 @@ impl Builtin for Cd {
     }
 }
 
+/// The `pwd` builtin — print the working directory. `-L` (default)
+/// prints the logical `$PWD` (no symlink chasing, matching zsh's default
+/// and the `cd` builtin's logical-path contract); `-P` prints the
+/// physical, symlink-resolved path. Everyday command that was missing
+/// from the registry.
+pub struct Pwd;
+
+impl Builtin for Pwd {
+    fn name(&self) -> &str {
+        "pwd"
+    }
+
+    fn execute(&self, args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
+        let physical = args.iter().any(|a| *a == "-P");
+        let dir = if physical {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+        } else {
+            // Logical: prefer $PWD (kept in lock-step by chdir), fall back
+            // to the OS cwd if $PWD is somehow unset.
+            env.get_var("PWD").map(str::to_owned).or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .map(|p| p.to_string_lossy().into_owned())
+            })
+        };
+        match dir {
+            Some(d) => {
+                println!("{d}");
+                0
+            }
+            None => {
+                eprintln!("pwd: cannot determine current directory");
+                1
+            }
+        }
+    }
+}
+
 /// Search CDPATH entries for a directory matching `name`.
 fn try_cdpath(name: &str, env: &dyn ShellEnvironment) -> Option<String> {
     let cdpath = env.get_var("CDPATH")?;
@@ -207,5 +247,16 @@ mod tests {
         let status = cd.execute(&["--"], &mut env);
         assert_eq!(status, 0);
         assert_eq!(env.cwd, "/home/user");
+    }
+
+    #[test]
+    fn pwd_logical_and_physical_succeed() {
+        // pwd (-L default, reads $PWD) and pwd -P (physical OS cwd) both
+        // resolve a directory and exit 0. MockEnv seeds PWD=/tmp.
+        let mut env = MockEnv::new();
+        let pwd = Pwd;
+        assert_eq!(pwd.execute(&[], &mut env), 0);
+        assert_eq!(pwd.execute(&["-L"], &mut env), 0);
+        assert_eq!(pwd.execute(&["-P"], &mut env), 0);
     }
 }
