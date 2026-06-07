@@ -237,6 +237,7 @@ pub fn default_builtins() -> BuiltinRegistry {
     reg.register(Box::new(misc::Whence));
     reg.register(Box::new(misc::CommandBuiltin));
     reg.register(Box::new(misc::BuiltinCmd));
+    reg.register(Box::new(misc::History));
     reg.register(Box::new(misc::Alias));
     reg.register(Box::new(misc::Unalias));
     reg.register(Box::new(misc::Typeset));
@@ -303,6 +304,7 @@ mod tests {
         for name in &[
             "cd",
             "pwd",
+            "history",
             "echo",
             "print",
             "exit",
