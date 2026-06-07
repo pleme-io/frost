@@ -1026,6 +1026,21 @@ impl<'env> Executor<'env> {
             return result;
         }
 
+        // `type` / `whence` / `which` — report how a name resolves (alias /
+        // reserved word / function / builtin / PATH). Routed through the
+        // executor's resolver because the leaf builtins can't see the
+        // registry, functions, or aliases. A user FUNCTION named
+        // type/whence/which already won above. The last non-flag arg is the
+        // name; `whence` is terse unless `-v`, `type`/`which` are verbose.
+        if matches!(name.as_str(), "type" | "whence" | "which") {
+            let verbose = match name.as_str() {
+                "whence" => argv[1..].iter().any(|a| a == "-v"),
+                _ => true,
+            };
+            let target = argv[1..].iter().rev().find(|a| !a.starts_with('-'));
+            return Ok(self.command_resolve_query(target.map(String::as_str), verbose));
+        }
+
         // Check builtins. Builtins run IN-PROCESS even when redirects are
         // present: their effects are shell state (cd, export, setopt,
         // read, …) that must persist in the parent, and the
@@ -1271,9 +1286,19 @@ impl<'env> Executor<'env> {
         let Some(name) = name else {
             return 1;
         };
-        if self.builtins.contains(name) {
+        // Resolution order matches zsh: alias → reserved word → function →
+        // builtin → PATH. Used by `command -v/-V`, `type`, `whence`, `which`.
+        if let Some(value) = self.env.aliases.get(name) {
             if verbose {
-                println!("{name} is a shell builtin");
+                println!("{name} is an alias for {value}");
+            } else {
+                println!("{name}");
+            }
+            return 0;
+        }
+        if is_reserved_word(name) {
+            if verbose {
+                println!("{name} is a reserved word");
             } else {
                 println!("{name}");
             }
@@ -1287,6 +1312,14 @@ impl<'env> Executor<'env> {
             }
             return 0;
         }
+        if self.builtins.contains(name) {
+            if verbose {
+                println!("{name} is a shell builtin");
+            } else {
+                println!("{name}");
+            }
+            return 0;
+        }
         if let Some(path) = path_lookup(&self.env, name) {
             let resolved = path.display();
             if verbose {
@@ -1295,6 +1328,9 @@ impl<'env> Executor<'env> {
                 println!("{resolved}");
             }
             return 0;
+        }
+        if verbose {
+            eprintln!("{name} not found");
         }
         1
     }
@@ -1695,6 +1731,36 @@ fn expand_aliases(
 /// references get "null-token removal" when they expand to empty —
 /// matching POSIX. Quoted empties are preserved so `[ -n "" ]` stays
 /// three arguments and `echo "" foo ""` preserves the empties.
+/// Whether `word` is a shell reserved word (keyword). Used by the
+/// `type`/`whence`/`command -v` name resolver to report a name's kind.
+fn is_reserved_word(word: &str) -> bool {
+    matches!(
+        word,
+        "if" | "then"
+            | "elif"
+            | "else"
+            | "fi"
+            | "for"
+            | "while"
+            | "until"
+            | "do"
+            | "done"
+            | "case"
+            | "esac"
+            | "select"
+            | "repeat"
+            | "function"
+            | "in"
+            | "time"
+            | "coproc"
+            | "{"
+            | "}"
+            | "[["
+            | "]]"
+            | "!"
+    )
+}
+
 /// The literal text of a word that is exactly one unquoted literal part —
 /// e.g. a bareword precommand modifier (`noglob`, `nocorrect`, `builtin`,
 /// `command`, `exec`). None for quoted, multi-part, glob, or expansion
@@ -2429,6 +2495,16 @@ mod tests {
         assert!(!PrecommandModifiers::scan_suppress_glob(
             [Some("echo"), Some("noglob")].into_iter()
         ));
+    }
+
+    #[test]
+    fn reserved_words_recognized() {
+        for kw in ["if", "then", "fi", "for", "while", "do", "done", "case", "function", "[["] {
+            assert!(is_reserved_word(kw), "{kw} should be reserved");
+        }
+        for not in ["cd", "echo", "ls", "foo", ""] {
+            assert!(!is_reserved_word(not), "{not} should NOT be reserved");
+        }
     }
 
     #[test]
