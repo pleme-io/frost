@@ -293,21 +293,27 @@ fn apply_source_with_context(
         tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
     for s in sources {
         let resolved = resolve_source_path(&s.path, rc_dir);
-        let canonical = std::fs::canonicalize(&resolved).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                LispError::SourceNotFound {
+        let canonical = match std::fs::canonicalize(&resolved) {
+            Ok(c) => c,
+            // `:optional #t` — a machine-local overlay that may not exist
+            // on this host is skipped silently instead of erroring (e.g. a
+            // nix-generated `local.lisp` of per-machine ssh-host aliases).
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && s.optional => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(LispError::SourceNotFound {
                     path: resolved.display().to_string(),
                     rc: rc_dir
                         .map(|p| p.display().to_string())
                         .unwrap_or_else(|| "<inline>".into()),
-                }
-            } else {
-                LispError::SourceIo {
+                });
+            }
+            Err(e) => {
+                return Err(LispError::SourceIo {
                     path: resolved.display().to_string(),
                     source: e,
-                }
+                });
             }
-        })?;
+        };
         if !visited.insert(canonical.clone()) {
             // Already sourced in this apply-tree — silent skip keeps
             // re-exports from spamming; we aren't a package manager.
@@ -1931,6 +1937,48 @@ mod tests {
             Some("outer-alias")
         );
         assert_eq!(s.aliases, 2);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_defsource_missing_required_is_error() {
+        // A missing required (non-optional) source is a hard error.
+        let mut env = ShellEnv::new();
+        let tmp = std::env::temp_dir().join(format!("frost-defsource-req-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let outer = tmp.join("outer.lisp");
+        std::fs::write(
+            &outer,
+            "(defsource :path \"./does-not-exist.lisp\")\n(defalias :name \"bb\" :value \"x\")",
+        )
+        .unwrap();
+        let r = load_rc(&outer, &mut env);
+        assert!(matches!(r, Err(LispError::SourceNotFound { .. })));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_defsource_optional_missing_is_skipped() {
+        // `:optional #t` — a missing overlay is skipped silently, and the
+        // rest of the rc still applies. This is the machine-local local.lisp
+        // pattern (the file may not exist on every host).
+        let mut env = ShellEnv::new();
+        let tmp = std::env::temp_dir().join(format!("frost-defsource-opt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let outer = tmp.join("outer.lisp");
+        std::fs::write(
+            &outer,
+            "(defsource :path \"./local.lisp\" :optional #t)\n(defalias :name \"bb\" :value \"outer-alias\")",
+        )
+        .unwrap();
+        let s = load_rc(&outer, &mut env).unwrap();
+        assert_eq!(
+            env.aliases.get("bb").map(String::as_str),
+            Some("outer-alias")
+        );
+        assert_eq!(s.aliases, 1);
         std::fs::remove_dir_all(&tmp).ok();
     }
 

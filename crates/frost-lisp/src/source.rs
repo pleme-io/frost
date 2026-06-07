@@ -23,7 +23,14 @@
 //! * `$VAR` / `${VAR}` expansion in the path honors the current env,
 //!   with `HOME` + `XDG_CONFIG_HOME` falling back to `std::env::var`.
 //! * Missing file is **an error** (not a silent no-op) — a typo in a
-//!   sourced path shouldn't degrade silently.
+//!   sourced path shouldn't degrade silently — UNLESS `:optional #t`,
+//!   in which case a missing file is skipped. Use `:optional` for a
+//!   machine-local overlay that may not exist on every host (e.g. a
+//!   nix-generated `local.lisp` of per-machine ssh-host aliases):
+//!
+//!   ```lisp
+//!   (defsource :path "${XDG_CONFIG_HOME:-$HOME/.config}/frostmourne/local.lisp" :optional #t)
+//!   ```
 //! * Circular sourcing is guarded: the apply pass tracks visited
 //!   canonical paths and skips re-sourcing.
 
@@ -36,4 +43,9 @@ use tatara_lisp::DeriveTataraDomain;
 pub struct SourceSpec {
     /// Path to another Lisp file. `~` + `$VAR` expanded at apply time.
     pub path: String,
+    /// When true, a missing file is silently skipped instead of being a
+    /// hard error. For machine-local overlays that may not exist on
+    /// every host (a nix-generated `local.lisp`, a per-user rc.d file).
+    #[serde(default)]
+    pub optional: bool,
 }
