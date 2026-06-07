@@ -896,19 +896,10 @@ impl<'env> Executor<'env> {
         // of the precommand-modifier strip below — so `noglob` must be
         // recognized at the word level now, or the glob has already mangled
         // `nix build .#attr` / `^` / `~` before we ever see the modifier.
-        // Scan the leading run of precommand-modifier barewords for
-        // `noglob` (zsh's glob-suppressing modifier; sibling of the
-        // builtin/command/exec modifiers stripped below). The highest-value
-        // interactive parity fix — nix flake refs are hand-typed under the
-        // fleet's enabled EXTENDED_GLOB.
-        let mut suppress_glob = false;
-        for word in &resolved_words {
-            match leading_literal(word) {
-                Some("noglob") => suppress_glob = true,
-                Some("nocorrect" | "exec" | "builtin" | "command") => {}
-                _ => break,
-            }
-        }
+        // The highest-value interactive parity fix — nix flake refs are
+        // hand-typed under the fleet's enabled EXTENDED_GLOB.
+        let suppress_glob =
+            PrecommandModifiers::scan_suppress_glob(resolved_words.iter().map(leading_literal));
 
         // Glob expansion runs after all other word expansions. We only glob
         // words that originally contained unquoted glob AST parts — this
@@ -951,64 +942,45 @@ impl<'env> Executor<'env> {
         // for the first pass we implement the common case only.
         let mut argv = expand_aliases(argv, &self.env.aliases);
 
-        // Precommand modifiers: `builtin` and `command`. zsh resolves
-        // these in the executor, not as leaf builtins — a standalone
-        // `builtin`/`command` builtin cannot see the registry or the
-        // function table, so on its own it no-ops. That silently broke
-        // `builtin cd`, which is the spine of the zoxide cd-integration
+        // Precommand modifiers (`builtin`/`command`/`noglob`/`nocorrect`/
+        // `exec`). zsh resolves these in the executor, not as leaf builtins
+        // — a standalone `builtin`/`command` builtin cannot see the registry
+        // or the function table, so on its own it no-ops. That silently
+        // broke `builtin cd`, the spine of the zoxide cd-integration
         // override (`elif builtin cd "$@" …; then :`): the no-op falsely
-        // reported success, so the override took the early branch, never
-        // changed directory, and never fell through to the zoxide
-        // teleport — `cd` was a complete no-op in frostmourne (both a
-        // plain `cd /path` and a `cd <keyword>` jump; diagnosed
-        // 2026-06-06). Strip the modifier(s) here; both bypass function
-        // lookup for the target word. `builtin NAME` additionally
-        // requires NAME to be a registered builtin.
-        let mut bypass_functions = false;
-        let mut builtin_only = false;
-        loop {
-            match argv.first().map(String::as_str) {
-                Some("builtin") => {
-                    argv.remove(0);
-                    bypass_functions = true;
-                    builtin_only = true;
-                }
-                Some("command") => {
-                    argv.remove(0);
-                    bypass_functions = true;
-                    // `command -v NAME` / `command -V NAME` — a resolution
-                    // query, not execution. Handled here because it needs
-                    // the registry + function table + PATH.
-                    if matches!(argv.first().map(String::as_str), Some("-v" | "-V")) {
-                        let verbose = argv[0] == "-V";
-                        let target = argv.get(1).cloned();
-                        return Ok(self.command_resolve_query(target.as_deref(), verbose));
-                    }
-                }
-                Some("noglob") => {
-                    // Glob suppression already applied above (suppress_glob);
-                    // strip the modifier word so the wrapped command runs.
-                    argv.remove(0);
-                }
-                Some("nocorrect") => {
-                    // Suppress spelling correction for the wrapped command.
-                    // frost has no CORRECT option yet, so this is strip +
-                    // no-op — but it must be consumed here so it is never
-                    // mistaken for a command. Sibling of noglob/builtin/command.
-                    argv.remove(0);
-                }
-                _ => break,
-            }
+        // reported success, so `cd` never changed directory and never fell
+        // through to the zoxide teleport (diagnosed 2026-06-06). The typed
+        // `PrecommandModifiers` strips the leading run and folds it into one
+        // tested value; `noglob`'s glob suppression was already applied
+        // pre-glob above.
+        let mods = PrecommandModifiers::strip(&mut argv);
+
+        // `command -v NAME` / `command -V NAME` — a resolution query, not
+        // execution (needs the registry + function table + PATH).
+        if mods.command_modifier
+            && matches!(argv.first().map(String::as_str), Some("-v" | "-V"))
+        {
+            let verbose = argv[0] == "-V";
+            let target = argv.get(1).cloned();
+            return Ok(self.command_resolve_query(target.as_deref(), verbose));
         }
+
         if argv.is_empty() {
             return Ok(0);
+        }
+
+        // `exec CMD …` — replace the shell process image with CMD (no fork),
+        // so frostmourne's `reload` (= `exec frostmourne`) is a real re-exec
+        // instead of a failed PATH lookup for a nonexistent `exec` binary.
+        if mods.exec_replace {
+            return self.exec_replace(&argv, &cmd.redirects);
         }
 
         let name = &argv[0];
 
         // Check for functions first (bypassed when a `builtin`/`command`
         // precommand modifier was present — those skip the function table).
-        if let Some(fdef) = (!bypass_functions)
+        if let Some(fdef) = (!mods.bypass_functions)
             .then(|| self.env.functions.get(name).cloned())
             .flatten()
         {
@@ -1229,7 +1201,7 @@ impl<'env> Executor<'env> {
 
         // `builtin NAME` where NAME is not a registered builtin is an
         // error — it must not fall through to AUTO_CD or external exec.
-        if builtin_only {
+        if mods.require_builtin {
             eprintln!("frost: builtin: no such builtin: {name}");
             self.env.exit_status = 1;
             return Ok(1);
@@ -1326,6 +1298,40 @@ impl<'env> Executor<'env> {
     // `save_and_apply_redirects` / `restore_saved_fds` — see the builtin
     // dispatch in `execute_simple`. The previous `fork_exec_builtin`
     // forked, which discarded shell-state mutations like `cd`.)
+
+    /// `exec CMD args` — replace the current process image with CMD,
+    /// **without** forking. Redirects apply to the current process first
+    /// (they persist into the replacement, matching zsh). `sys::exec`
+    /// PATH-resolves a bare name, so `exec frostmourne` works. exec only
+    /// returns on failure — report it as 127 (not found) / 126 (other),
+    /// like a normal exec error.
+    fn exec_replace(
+        &mut self,
+        argv: &[String],
+        redirects: &[frost_parser::ast::Redirect],
+    ) -> ExecResult {
+        if !redirects.is_empty() {
+            if let Err(e) = redirect::apply_redirects(redirects) {
+                eprintln!("frost: {e}");
+                self.env.exit_status = 1;
+                return Ok(1);
+            }
+        }
+        let c_argv: Vec<CString> = argv
+            .iter()
+            .filter_map(|a| CString::new(a.as_bytes()).ok())
+            .collect();
+        let c_envp = self.env.to_env_vec();
+        let err = sys::exec(&c_argv, &c_envp);
+        eprintln!("frost: exec: {}: {err}", argv[0]);
+        let code = if err == nix::errno::Errno::ENOENT {
+            127
+        } else {
+            126
+        };
+        self.env.exit_status = code;
+        Ok(code)
+    }
 
     fn fork_exec(
         &mut self,
@@ -1692,6 +1698,91 @@ fn leading_literal(w: &Word) -> Option<&str> {
     match w.parts.as_slice() {
         [WordPart::Literal(s)] => Some(s.as_str()),
         _ => None,
+    }
+}
+
+/// The set of leading **precommand modifiers** on a simple command. zsh
+/// resolves these in the executor — they are not builtins: `builtin` and
+/// `command` change name resolution, `noglob`/`nocorrect` change
+/// expansion/correction, `exec` replaces the process image. Encapsulated
+/// as one typed, tested unit so the parse lives in one place and a new
+/// modifier (`time`, …) is one variant in [`is_modifier`] + one arm in
+/// [`apply`].
+///
+/// [`is_modifier`]: PrecommandModifiers::is_modifier
+/// [`apply`]: PrecommandModifiers::apply
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct PrecommandModifiers {
+    /// `builtin`/`command` — skip the function table for the target.
+    bypass_functions: bool,
+    /// `builtin NAME` — the target must be a registered builtin (else error).
+    require_builtin: bool,
+    /// `command` was present — gates the `command -v/-V NAME` query form.
+    command_modifier: bool,
+    /// `noglob` — suppress glob expansion for the command.
+    suppress_glob: bool,
+    /// `nocorrect` — suppress spelling correction (no-op until CORRECT).
+    suppress_correct: bool,
+    /// `exec` — replace the shell process with the command (no fork).
+    exec_replace: bool,
+}
+
+impl PrecommandModifiers {
+    /// Whether `word` is a recognized precommand modifier.
+    fn is_modifier(word: &str) -> bool {
+        matches!(
+            word,
+            "builtin" | "command" | "noglob" | "nocorrect" | "exec"
+        )
+    }
+
+    /// Fold one modifier word into the set. Caller guarantees
+    /// `is_modifier(word)`.
+    fn apply(&mut self, word: &str) {
+        match word {
+            "builtin" => {
+                self.bypass_functions = true;
+                self.require_builtin = true;
+            }
+            "command" => {
+                self.bypass_functions = true;
+                self.command_modifier = true;
+            }
+            "noglob" => self.suppress_glob = true,
+            "nocorrect" => self.suppress_correct = true,
+            "exec" => self.exec_replace = true,
+            _ => {}
+        }
+    }
+
+    /// Strip the leading run of modifier words from `argv`, folding each
+    /// into the returned set. `argv` is left with the real command at [0]
+    /// (or empty if the command was only modifiers).
+    fn strip(argv: &mut Vec<String>) -> Self {
+        let mut mods = Self::default();
+        while argv.first().is_some_and(|w| Self::is_modifier(w)) {
+            let word = argv.remove(0);
+            mods.apply(&word);
+        }
+        mods
+    }
+
+    /// Whether the leading modifier run contains `noglob`. Computed from
+    /// the literal leading words BEFORE glob expansion, because glob runs
+    /// upstream of the argv-level [`strip`](Self::strip).
+    fn scan_suppress_glob<'a>(words: impl Iterator<Item = Option<&'a str>>) -> bool {
+        let mut suppress = false;
+        for w in words {
+            match w {
+                Some(word) if Self::is_modifier(word) => {
+                    if word == "noglob" {
+                        suppress = true;
+                    }
+                }
+                _ => break,
+            }
+        }
+        suppress
     }
 }
 
@@ -2255,6 +2346,64 @@ mod tests {
 
         std::env::set_current_dir(stable_dir()).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn precommand_modifiers_strip_and_fold() {
+        // `builtin` → bypass functions + require a registered builtin.
+        let mut a = vec!["builtin".to_string(), "cd".into(), "/tmp".into()];
+        let m = PrecommandModifiers::strip(&mut a);
+        assert!(m.bypass_functions && m.require_builtin && !m.command_modifier);
+        assert_eq!(a, ["cd", "/tmp"]);
+
+        // `command` → bypass functions + eligible for the `-v` query.
+        let mut a = vec!["command".to_string(), "ls".into()];
+        let m = PrecommandModifiers::strip(&mut a);
+        assert!(m.bypass_functions && m.command_modifier && !m.require_builtin);
+        assert_eq!(a, ["ls"]);
+
+        // Chained modifiers all fold in; the real command is left at [0].
+        let mut a = vec![
+            "noglob".to_string(),
+            "nocorrect".into(),
+            "exec".into(),
+            "nix".into(),
+        ];
+        let m = PrecommandModifiers::strip(&mut a);
+        assert!(m.suppress_glob && m.suppress_correct && m.exec_replace);
+        assert_eq!(a, ["nix"]);
+
+        // No modifiers → default, argv untouched.
+        let mut a = vec!["echo".to_string(), "hi".into()];
+        let m = PrecommandModifiers::strip(&mut a);
+        assert_eq!(m, PrecommandModifiers::default());
+        assert_eq!(a, ["echo", "hi"]);
+
+        // Only-modifiers command → argv drained empty.
+        let mut a = vec!["builtin".to_string()];
+        let _ = PrecommandModifiers::strip(&mut a);
+        assert!(a.is_empty());
+    }
+
+    #[test]
+    fn precommand_modifiers_scan_suppress_glob() {
+        // `noglob` first.
+        assert!(PrecommandModifiers::scan_suppress_glob(
+            [Some("noglob"), Some("nix"), Some("build")].into_iter()
+        ));
+        // `noglob` after another modifier still counts.
+        assert!(PrecommandModifiers::scan_suppress_glob(
+            [Some("command"), Some("noglob"), Some("nix")].into_iter()
+        ));
+        // No `noglob` in the leading run.
+        assert!(!PrecommandModifiers::scan_suppress_glob(
+            [Some("builtin"), Some("cd")].into_iter()
+        ));
+        // A `noglob` AFTER the real command does not count (scan stops at
+        // the first non-modifier word).
+        assert!(!PrecommandModifiers::scan_suppress_glob(
+            [Some("echo"), Some("noglob")].into_iter()
+        ));
     }
 
     #[test]
