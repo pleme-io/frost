@@ -124,6 +124,13 @@ pub enum TokenKind {
     // ── Expansion markers ───────────────────────────────────
     /// $ (variable expansion start)
     Dollar,
+    /// A complete single-token special parameter whose name byte can't
+    /// survive as a standalone follow-on token — currently only `$#`
+    /// (the `#` would otherwise be lexed as a comment). The token's
+    /// `text` is the full `$<char>`; the parser strips the `$` to get
+    /// the parameter name. Contrast `$?`/`$@`/`$*`/`$!`, which lex as
+    /// `Dollar` + their own token and are reassembled by the parser.
+    DollarParam,
     /// ${ (parameter expansion start)
     DollarBrace,
     /// $( (command substitution start)

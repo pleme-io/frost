@@ -41,6 +41,18 @@ pub fn close(fd: RawFd) -> Result<(), nix::errno::Errno> {
     unistd::close(fd)
 }
 
+/// Duplicate `fd` onto the lowest free descriptor at or above `min_fd`.
+///
+/// Used to stash fds 0/1/2 before a builtin's redirects are applied in
+/// the *current* process, so they can be restored afterward. Builtins
+/// run in-process (never forked merely to apply a redirect), so their
+/// shell-state effects (`cd`, `export`, `setopt`, …) persist; the high
+/// `min_fd` keeps the backup clear of the low fds the redirect itself
+/// allocates.
+pub fn dup_from(fd: RawFd, min_fd: RawFd) -> Result<RawFd, nix::errno::Errno> {
+    nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_DUPFD(min_fd))
+}
+
 /// Open a file, returning a raw file descriptor.
 pub fn open(path: &std::ffi::CStr, flags: OFlag, mode: Mode) -> Result<RawFd, nix::errno::Errno> {
     let owned = nix::fcntl::open(path, flags, mode)?;

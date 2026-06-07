@@ -201,15 +201,24 @@ impl<'src> Lexer<'src> {
                 }
                 TokenKind::DollarSingleQuoted
             }
-            // Single-char POSIX special parameters that would otherwise be
-            // mis-lexed: `$#` (argv count) used to emit a bare `Dollar`
-            // followed by `#`, which `lex_comment` would then consume to
-            // newline — turning `if [ $# -eq 0 ]; then` into
-            // `Dollar Comment` and trapping `parse_compound_body` in an
-            // infinite loop on the unhandled `Comment` token. Real
-            // incident: 2026-05-30, frostmourne empty-screen hang.
-            // `$-`, `$_` would mis-lex similarly; absorb them here too.
-            Some(b'#' | b'-' | b'_') => {
+            // `$#` (argv count). The `#` can't be left for the main loop
+            // (`lex_comment` would swallow `if [ $# -eq 0 ]; then` to EOL
+            // — the 2026-05-30 frostmourne empty-screen hang) and it
+            // can't be dropped either (emitting a bare `Dollar` made
+            // unquoted `$#` expand to a literal `$`, so the zoxide
+            // cd-integration override's `[ $# -eq 0 ]` always matched →
+            // `cd` jumped HOME / no-op'd; diagnosed 2026-06-06). Emit one
+            // complete token spanning `$#`; the parser maps it to
+            // `DollarVar("#")`.
+            Some(b'#') => {
+                self.cursor.advance();
+                TokenKind::DollarParam
+            }
+            // `$-` (option flags) and `$_` (last arg) would mis-lex like
+            // `$#` did; absorb the trailing byte so it can't start a
+            // comment. Full expansion of these isn't implemented yet —
+            // they render empty rather than hang.
+            Some(b'-' | b'_') => {
                 self.cursor.advance();
                 TokenKind::Dollar
             }
