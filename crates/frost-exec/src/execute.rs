@@ -969,6 +969,12 @@ impl<'env> Executor<'env> {
             return Ok(0);
         }
 
+        // Record this command's last (fully-expanded) word as `$_` for the
+        // NEXT command. The current command's own `$_` already expanded
+        // above using the previous command's value (argv was built before
+        // this point), so updating here is correct zsh ordering.
+        self.env.last_arg = argv.last().cloned().unwrap_or_default();
+
         // `exec CMD …` — replace the shell process image with CMD (no fork),
         // so frostmourne's `reload` (= `exec frostmourne`) is a real re-exec
         // instead of a failed PATH lookup for a nonexistent `exec` binary.
@@ -1875,6 +1881,25 @@ impl ExpandEnv for ExpandBridge<'_> {
     fn seconds_elapsed(&self) -> u64 {
         self.env.seconds_elapsed()
     }
+
+    fn last_arg(&self) -> &str {
+        &self.env.last_arg
+    }
+
+    fn option_flags(&self) -> String {
+        use frost_options::ShellOption;
+        // sh-style single-letter flags for the options that have a
+        // canonical letter — enough for the common `[[ $- == *i* ]]`
+        // interactive check.
+        let mut flags = String::new();
+        if self.env.is_option_set(ShellOption::Interactive) {
+            flags.push('i');
+        }
+        if self.env.is_option_set(ShellOption::Monitor) {
+            flags.push('m');
+        }
+        flags
+    }
 }
 
 /// Invert exit status for `!` pipelines.
@@ -2404,6 +2429,19 @@ mod tests {
         assert!(!PrecommandModifiers::scan_suppress_glob(
             [Some("echo"), Some("noglob")].into_iter()
         ));
+    }
+
+    #[test]
+    fn last_arg_tracks_previous_command() {
+        // `$_` — env.last_arg becomes the last (expanded) word of the
+        // command that just ran, for the next command to read.
+        let mut env = ShellEnv::new();
+        {
+            let mut exec = Executor::new(&mut env);
+            let program = simple_program(vec!["echo", "a", "b", "c"]);
+            let _ = exec.execute_program(&program);
+        }
+        assert_eq!(env.last_arg, "c");
     }
 
     #[test]

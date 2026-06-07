@@ -210,18 +210,20 @@ impl<'src> Lexer<'src> {
             // `cd` jumped HOME / no-op'd; diagnosed 2026-06-06). Emit one
             // complete token spanning `$#`; the parser maps it to
             // `DollarVar("#")`.
-            Some(b'#') => {
+            // `$#` (argv count) and `$-` (option flags). Neither `#` nor
+            // `-` can be left for the main loop or dropped (see above for
+            // `#`), and neither can start a variable name, so each is the
+            // special param: emit one complete token → the parser maps it
+            // to `DollarVar("#")` / `DollarVar("-")`.
+            Some(b'#' | b'-') => {
                 self.cursor.advance();
                 TokenKind::DollarParam
             }
-            // `$-` (option flags) and `$_` (last arg) would mis-lex like
-            // `$#` did; absorb the trailing byte so it can't start a
-            // comment. Full expansion of these isn't implemented yet —
-            // they render empty rather than hang.
-            Some(b'-' | b'_') => {
-                self.cursor.advance();
-                TokenKind::Dollar
-            }
+            // NOTE: `$_` is intentionally NOT special-cased here. `_` is a
+            // valid identifier-start, so `$_` and `$_foo` flow through the
+            // normal `$VAR` path (Dollar + Word) and become DollarVar("_")
+            // / DollarVar("_foo"); the expander maps the bare `_` to the
+            // last-argument param. Consuming `_` here would break `$_foo`.
             _ => TokenKind::Dollar,
         }
     }

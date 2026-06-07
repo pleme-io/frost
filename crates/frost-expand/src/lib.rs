@@ -45,6 +45,15 @@ pub trait ExpandEnv {
     fn seconds_elapsed(&self) -> u64 {
         0
     }
+    /// Last argument of the previous command (for `$_`). Default empty.
+    fn last_arg(&self) -> &str {
+        ""
+    }
+    /// Enabled shell options rendered as single-char flags (for `$-`,
+    /// e.g. `i` interactive, `m` monitor). Default empty.
+    fn option_flags(&self) -> String {
+        String::new()
+    }
 }
 
 /// Typed variable values visible to the expansion engine.
@@ -280,8 +289,8 @@ impl<'a> ExpandCtx<'a> {
                 }
             }
             "0" => vec!["frost".to_string()],
-            "-" => vec![String::new()], // current option flags (TODO)
-            "_" => vec![String::new()], // last argument of previous command (TODO)
+            "-" => vec![self.env.option_flags()], // current option flags
+            "_" => vec![self.env.last_arg().to_string()], // last arg of previous command
             "RANDOM" if self.env.get_var("RANDOM").is_none() => {
                 vec![self.env.random().to_string()]
             }
@@ -1040,6 +1049,8 @@ impl<'a> ExpandCtx<'a> {
             "*" => self.env.positional_params().join(" "),
             "@" => self.env.positional_params().join(" "),
             "0" => "frost".to_string(),
+            "-" => self.env.option_flags(),
+            "_" => self.env.last_arg().to_string(),
             "RANDOM" if self.env.get_var("RANDOM").is_none() => self.env.random().to_string(),
             "SECONDS" if self.env.get_var("SECONDS").is_none() => {
                 self.env.seconds_elapsed().to_string()
