@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cargo_lock_sha256": "7585112b81b7d400cac45724caf28a897c6bbe5d3338c01b185400a9c9dc357e",
+  "cargo_lock_sha256": "07b6f9bcffcee30084f51cb152b60ab7abb789c17f2ec4f2fa4091e5a9cc135a",
   "target_resolves": {
     "base": {
       "addr2line-0.25.1": {
@@ -24,6 +24,57 @@
       "adler2-2.0.1": {
         "runtime_dependencies": [],
         "build_dependencies": [],
+        "features": []
+      },
+      "ahash-0.8.12": {
+        "runtime_dependencies": [
+          {
+            "name": "cfg_if",
+            "package_key": "cfg-if-1.0.4",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "once_cell",
+            "package_key": "once_cell-1.21.4",
+            "kind": "normal",
+            "features": [
+              "alloc"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": "cfg(not(all(target_arch = \"arm\", target_os = \"none\")))",
+            "tree": "target"
+          },
+          {
+            "name": "zerocopy",
+            "package_key": "zerocopy-0.8.52",
+            "kind": "normal",
+            "features": [
+              "simd"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [
+          {
+            "name": "version_check",
+            "package_key": "version_check-0.9.5",
+            "kind": "build",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          }
+        ],
         "features": []
       },
       "aho-corasick-1.1.4": {
@@ -229,7 +280,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "awase-0.1.0": {
+      "awase-0.1.0-92c839463b49172d5d03b379230c8433b62a7cfe": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -1306,6 +1357,48 @@
           "std"
         ]
       },
+      "dirs-6.0.0": {
+        "runtime_dependencies": [
+          {
+            "name": "dirs_sys",
+            "package_key": "dirs-sys-0.5.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "dirs-sys-0.5.0": {
+        "runtime_dependencies": [
+          {
+            "name": "libc",
+            "package_key": "libc-0.2.186",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": "cfg(unix)",
+            "tree": "target"
+          },
+          {
+            "name": "option_ext",
+            "package_key": "option-ext-0.2.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "document-features-0.2.12": {
         "runtime_dependencies": [
           {
@@ -1380,6 +1473,19 @@
           "default",
           "std"
         ]
+      },
+      "fallible-iterator-0.3.0": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "alloc",
+          "default"
+        ]
+      },
+      "fallible-streaming-iterator-0.1.9": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
       },
       "fancy-regex-0.14.0": {
         "runtime_dependencies": [
@@ -1679,7 +1785,7 @@
           },
           {
             "name": "kanshou",
-            "package_key": "kanshou-0.1.0",
+            "package_key": "kanshou-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1973,7 +2079,7 @@
         "runtime_dependencies": [
           {
             "name": "awase",
-            "package_key": "awase-0.1.0",
+            "package_key": "awase-0.1.0-92c839463b49172d5d03b379230c8433b62a7cfe",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2097,6 +2203,16 @@
             "tree": "target"
           },
           {
+            "name": "wadachi",
+            "package_key": "pleme-io-wadachi-0.1.2-721429359543efe16edd12a074156985941abd53",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "thiserror",
             "package_key": "thiserror-2.0.18",
             "kind": "normal",
@@ -2118,7 +2234,10 @@
           }
         ],
         "build_dependencies": [],
-        "features": []
+        "features": [
+          "default",
+          "frecency-wadachi"
+        ]
       },
       "frost-expand-0.1.0": {
         "runtime_dependencies": [
@@ -2298,7 +2417,7 @@
           },
           {
             "name": "ishou_tokens",
-            "package_key": "ishou-tokens-0.1.0",
+            "package_key": "ishou-tokens-0.1.0-563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2330,7 +2449,7 @@
           },
           {
             "name": "tatara_lisp",
-            "package_key": "tatara-lisp-0.2.0",
+            "package_key": "tatara-lisp-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2559,7 +2678,7 @@
           },
           {
             "name": "tatara_lisp",
-            "package_key": "tatara-lisp-0.2.0",
+            "package_key": "tatara-lisp-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3047,7 +3166,7 @@
           "std"
         ]
       },
-      "gen-macros-0.1.0": {
+      "gen-macros-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
         "runtime_dependencies": [
           {
             "name": "proc_macro2",
@@ -3086,11 +3205,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-platform-0.1.0": {
+      "gen-platform-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
         "runtime_dependencies": [
           {
             "name": "gen_macros",
-            "package_key": "gen-macros-0.1.0",
+            "package_key": "gen-macros-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3100,7 +3219,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.0",
+            "package_key": "gen-types-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3154,7 +3273,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-types-0.1.0": {
+      "gen-types-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
         "runtime_dependencies": [
           {
             "name": "blake3",
@@ -3369,8 +3488,46 @@
           "read-core"
         ]
       },
+      "hashbrown-0.14.5": {
+        "runtime_dependencies": [
+          {
+            "name": "ahash",
+            "package_key": "ahash-0.8.12",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": true,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "ahash",
+          "inline-more"
+        ]
+      },
       "hashbrown-0.17.1": {
         "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "hashlink-0.9.1": {
+        "runtime_dependencies": [
+          {
+            "name": "hashbrown",
+            "package_key": "hashbrown-0.14.5",
+            "kind": "normal",
+            "features": [
+              "ahash",
+              "inline-more"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
         "build_dependencies": [],
         "features": []
       },
@@ -3530,7 +3687,7 @@
           "default"
         ]
       },
-      "ishou-tokens-0.1.0": {
+      "ishou-tokens-0.1.0-563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085": {
         "runtime_dependencies": [
           {
             "name": "irodori",
@@ -3595,11 +3752,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "kanshou-0.1.0": {
+      "kanshou-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": {
         "runtime_dependencies": [
           {
             "name": "kanshou_derive",
-            "package_key": "kanshou-derive-0.1.0",
+            "package_key": "kanshou-derive-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3673,7 +3830,7 @@
           "derive"
         ]
       },
-      "kanshou-derive-0.1.0": {
+      "kanshou-derive-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": {
         "runtime_dependencies": [
           {
             "name": "proc_macro2",
@@ -3723,6 +3880,50 @@
           "default",
           "extra_traits",
           "std"
+        ]
+      },
+      "libsqlite3-sys-0.30.1": {
+        "runtime_dependencies": [],
+        "build_dependencies": [
+          {
+            "name": "cc",
+            "package_key": "cc-1.2.62",
+            "kind": "build",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "pkg_config",
+            "package_key": "pkg-config-0.3.33",
+            "kind": "build",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "vcpkg",
+            "package_key": "vcpkg-0.2.15",
+            "kind": "build",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": null,
+            "tree": "host"
+          }
+        ],
+        "features": [
+          "bundled",
+          "bundled_bindings",
+          "cc",
+          "default",
+          "min_sqlite_version_3_14_0",
+          "pkg-config",
+          "vcpkg"
         ]
       },
       "litrs-1.0.0": {
@@ -4120,6 +4321,11 @@
           "std"
         ]
       },
+      "option-ext-0.2.0": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
       "owo-colors-4.3.0": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -4317,6 +4523,96 @@
       },
       "pin-project-lite-0.2.17": {
         "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "pkg-config-0.3.33": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
+      "pleme-io-wadachi-0.1.2-721429359543efe16edd12a074156985941abd53": {
+        "runtime_dependencies": [
+          {
+            "name": "anyhow",
+            "package_key": "anyhow-1.0.102",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "chrono",
+            "package_key": "chrono-0.4.44",
+            "kind": "normal",
+            "features": [
+              "clock",
+              "serde"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "clap",
+            "package_key": "clap-4.6.1",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "dirs",
+            "package_key": "dirs-6.0.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "rusqlite",
+            "package_key": "rusqlite-0.32.1",
+            "kind": "normal",
+            "features": [
+              "bundled"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "wadachi_spec",
+            "package_key": "wadachi-spec-0.1.2-721429359543efe16edd12a074156985941abd53",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
         "build_dependencies": [],
         "features": []
       },
@@ -4952,6 +5248,75 @@
         ],
         "build_dependencies": [],
         "features": []
+      },
+      "rusqlite-0.32.1": {
+        "runtime_dependencies": [
+          {
+            "name": "bitflags",
+            "package_key": "bitflags-2.11.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "fallible_iterator",
+            "package_key": "fallible-iterator-0.3.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "fallible_streaming_iterator",
+            "package_key": "fallible-streaming-iterator-0.1.9",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "hashlink",
+            "package_key": "hashlink-0.9.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "libsqlite3_sys",
+            "package_key": "libsqlite3-sys-0.30.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "smallvec",
+            "package_key": "smallvec-1.15.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": [
+          "bundled",
+          "modern_sqlite"
+        ]
       },
       "rustc-demangle-0.1.27": {
         "runtime_dependencies": [],
@@ -5591,7 +5956,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-budget-0.1.0": {
+      "shigoto-budget-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -5607,7 +5972,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0",
+            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5629,7 +5994,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-dag-0.1.0": {
+      "shigoto-dag-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
         "runtime_dependencies": [
           {
             "name": "petgraph",
@@ -5655,7 +6020,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0",
+            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5677,7 +6042,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-emit-0.1.0": {
+      "shigoto-emit-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
         "runtime_dependencies": [
           {
             "name": "async_trait",
@@ -5713,7 +6078,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0",
+            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5735,11 +6100,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-gate-0.1.0": {
+      "shigoto-gate-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
         "runtime_dependencies": [
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.0",
+            "package_key": "shigoto-dag-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5749,7 +6114,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0",
+            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5761,7 +6126,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-retry-0.1.0": {
+      "shigoto-retry-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -5777,7 +6142,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0",
+            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5789,7 +6154,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-scheduler-0.1.0": {
+      "shigoto-scheduler-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -5825,7 +6190,7 @@
           },
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.0",
+            "package_key": "shigoto-budget-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5835,7 +6200,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.0",
+            "package_key": "shigoto-dag-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5845,7 +6210,7 @@
           },
           {
             "name": "shigoto_emit",
-            "package_key": "shigoto-emit-0.1.0",
+            "package_key": "shigoto-emit-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5855,7 +6220,7 @@
           },
           {
             "name": "shigoto_gate",
-            "package_key": "shigoto-gate-0.1.0",
+            "package_key": "shigoto-gate-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5865,7 +6230,7 @@
           },
           {
             "name": "shigoto_retry",
-            "package_key": "shigoto-retry-0.1.0",
+            "package_key": "shigoto-retry-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5875,7 +6240,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0",
+            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5922,7 +6287,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-types-0.1.0": {
+      "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
         "runtime_dependencies": [
           {
             "name": "async_trait",
@@ -5948,7 +6313,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.0",
+            "package_key": "gen-platform-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5958,7 +6323,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.0",
+            "package_key": "gen-types-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6394,7 +6759,7 @@
           "visit-mut"
         ]
       },
-      "tatara-lisp-0.2.0": {
+      "tatara-lisp-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": {
         "runtime_dependencies": [
           {
             "name": "blake3",
@@ -6430,7 +6795,7 @@
           },
           {
             "name": "tatara_lisp_derive",
-            "package_key": "tatara-lisp-derive-0.2.0",
+            "package_key": "tatara-lisp-derive-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6454,7 +6819,7 @@
           "default"
         ]
       },
-      "tatara-lisp-derive-0.2.0": {
+      "tatara-lisp-derive-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": {
         "runtime_dependencies": [
           {
             "name": "proc_macro2",
@@ -7392,6 +7757,11 @@
           "default"
         ]
       },
+      "vcpkg-0.2.15": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
+      },
       "version_check-0.9.5": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -7402,6 +7772,57 @@
           {
             "name": "memchr",
             "package_key": "memchr-2.8.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "wadachi-spec-0.1.2-721429359543efe16edd12a074156985941abd53": {
+        "runtime_dependencies": [
+          {
+            "name": "chrono",
+            "package_key": "chrono-0.4.44",
+            "kind": "normal",
+            "features": [
+              "clock",
+              "serde"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.150",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7456,6 +7877,13 @@
           "alloc",
           "default",
           "std"
+        ]
+      },
+      "zerocopy-0.8.52": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "simd"
         ]
       },
       "zmij-1.0.21": {
@@ -9980,6 +10408,10 @@
     "adler2-2.0.1": {
       "edition": "2021"
     },
+    "ahash-0.8.12": {
+      "edition": "2018",
+      "build_script": "build.rs"
+    },
     "aho-corasick-1.1.4": {
       "edition": "2021"
     },
@@ -10015,7 +10447,7 @@
     "autocfg-1.5.1": {
       "edition": "2015"
     },
-    "awase-0.1.0": {
+    "awase-0.1.0-92c839463b49172d5d03b379230c8433b62a7cfe": {
       "edition": "2024"
     },
     "backtrace-0.3.76": {
@@ -10136,6 +10568,12 @@
     "digest-0.10.7": {
       "edition": "2018"
     },
+    "dirs-6.0.0": {
+      "edition": "2015"
+    },
+    "dirs-sys-0.5.0": {
+      "edition": "2015"
+    },
     "document-features-0.2.12": {
       "edition": "2018",
       "proc_macro": true,
@@ -10155,6 +10593,12 @@
     },
     "errno-0.3.14": {
       "edition": "2018"
+    },
+    "fallible-iterator-0.3.0": {
+      "edition": "2018"
+    },
+    "fallible-streaming-iterator-0.1.9": {
+      "edition": "2015"
     },
     "fancy-regex-0.14.0": {
       "edition": "2018"
@@ -10356,14 +10800,14 @@
     "futures-util-0.3.32": {
       "edition": "2018"
     },
-    "gen-macros-0.1.0": {
+    "gen-macros-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
       "edition": "2024",
       "proc_macro": true
     },
-    "gen-platform-0.1.0": {
+    "gen-platform-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
       "edition": "2024"
     },
-    "gen-types-0.1.0": {
+    "gen-types-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
       "edition": "2024"
     },
     "generic-array-0.14.7": {
@@ -10377,8 +10821,14 @@
     "gimli-0.32.3": {
       "edition": "2018"
     },
+    "hashbrown-0.14.5": {
+      "edition": "2021"
+    },
     "hashbrown-0.17.1": {
       "edition": "2024"
+    },
+    "hashlink-0.9.1": {
+      "edition": "2018"
     },
     "heck-0.5.0": {
       "edition": "2021"
@@ -10416,7 +10866,7 @@
     "is_terminal_polyfill-1.70.2": {
       "edition": "2021"
     },
-    "ishou-tokens-0.1.0": {
+    "ishou-tokens-0.1.0-563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085": {
       "edition": "2024"
     },
     "itertools-0.13.0": {
@@ -10425,10 +10875,10 @@
     "itoa-1.0.18": {
       "edition": "2021"
     },
-    "kanshou-0.1.0": {
+    "kanshou-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": {
       "edition": "2024"
     },
-    "kanshou-derive-0.1.0": {
+    "kanshou-derive-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": {
       "edition": "2024",
       "proc_macro": true
     },
@@ -10438,6 +10888,11 @@
     "libc-0.2.186": {
       "edition": "2021",
       "build_script": "build.rs"
+    },
+    "libsqlite3-sys-0.30.1": {
+      "edition": "2021",
+      "build_script": "build.rs",
+      "links": "sqlite3"
     },
     "litrs-1.0.0": {
       "edition": "2021"
@@ -10491,6 +10946,9 @@
     "once_cell-1.21.4": {
       "edition": "2021"
     },
+    "option-ext-0.2.0": {
+      "edition": "2015"
+    },
     "owo-colors-4.3.0": {
       "edition": "2021",
       "build_script": "build.rs"
@@ -10518,6 +10976,22 @@
     },
     "pin-project-lite-0.2.17": {
       "edition": "2018"
+    },
+    "pkg-config-0.3.33": {
+      "edition": "2018"
+    },
+    "pleme-io-wadachi-0.1.2-721429359543efe16edd12a074156985941abd53": {
+      "edition": "2024",
+      "lib_target": {
+        "name": "wadachi",
+        "path": "src/lib.rs"
+      },
+      "binaries": [
+        {
+          "name": "wadachi",
+          "path": "src/bin/wadachi.rs"
+        }
+      ]
     },
     "pretty_assertions-1.4.1": {
       "edition": "2018"
@@ -10558,6 +11032,9 @@
     "rmcp-macros-0.15.0": {
       "edition": "2024",
       "proc_macro": true
+    },
+    "rusqlite-0.32.1": {
+      "edition": "2021"
     },
     "rustc-demangle-0.1.27": {
       "edition": "2015"
@@ -10643,25 +11120,25 @@
     "sharded-slab-0.1.7": {
       "edition": "2018"
     },
-    "shigoto-budget-0.1.0": {
+    "shigoto-budget-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
       "edition": "2024"
     },
-    "shigoto-dag-0.1.0": {
+    "shigoto-dag-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
       "edition": "2024"
     },
-    "shigoto-emit-0.1.0": {
+    "shigoto-emit-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
       "edition": "2024"
     },
-    "shigoto-gate-0.1.0": {
+    "shigoto-gate-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
       "edition": "2024"
     },
-    "shigoto-retry-0.1.0": {
+    "shigoto-retry-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
       "edition": "2024"
     },
-    "shigoto-scheduler-0.1.0": {
+    "shigoto-scheduler-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
       "edition": "2024"
     },
-    "shigoto-types-0.1.0": {
+    "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
       "edition": "2024"
     },
     "shikumi-0.1.0": {
@@ -10720,10 +11197,10 @@
     "syn-2.0.117": {
       "edition": "2021"
     },
-    "tatara-lisp-0.2.0": {
+    "tatara-lisp-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": {
       "edition": "2021"
     },
-    "tatara-lisp-derive-0.2.0": {
+    "tatara-lisp-derive-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": {
       "edition": "2021",
       "proc_macro": true
     },
@@ -10823,11 +11300,17 @@
     "utf8parse-0.2.2": {
       "edition": "2018"
     },
+    "vcpkg-0.2.15": {
+      "edition": "2015"
+    },
     "version_check-0.9.5": {
       "edition": "2015"
     },
     "vte-0.14.1": {
       "edition": "2021"
+    },
+    "wadachi-spec-0.1.2-721429359543efe16edd12a074156985941abd53": {
+      "edition": "2024"
     },
     "walkdir-2.5.0": {
       "edition": "2018"
@@ -10837,6 +11320,10 @@
     },
     "yansi-1.0.1": {
       "edition": "2021"
+    },
+    "zerocopy-0.8.52": {
+      "edition": "2021",
+      "build_script": "build.rs"
     },
     "zmij-1.0.21": {
       "edition": "2021",
@@ -10859,22 +11346,24 @@
     }
   },
   "git_nar_sha256": {
-    "awase-0.1.0": "sha256-S5NLLs9zyGL7LXhI3F4JbGN003vzIMZxMjAc6cGJfj4=",
-    "gen-macros-0.1.0": "sha256-1T16SvFS9RChdC9U+KO949d1N4Wv23t5wjUDacWcXqg=",
-    "gen-platform-0.1.0": "sha256-1T16SvFS9RChdC9U+KO949d1N4Wv23t5wjUDacWcXqg=",
-    "gen-types-0.1.0": "sha256-1T16SvFS9RChdC9U+KO949d1N4Wv23t5wjUDacWcXqg=",
-    "ishou-tokens-0.1.0": "sha256-+kzhHYtbo1lxEI9chtwFve5D/0nor38nMdEADf3nvZ4=",
-    "kanshou-0.1.0": "sha256-mXcqgumIEtvdzc5indo11F/M7Qib/Ep3qsDal8q0T24=",
-    "kanshou-derive-0.1.0": "sha256-mXcqgumIEtvdzc5indo11F/M7Qib/Ep3qsDal8q0T24=",
-    "shigoto-budget-0.1.0": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-dag-0.1.0": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-emit-0.1.0": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-gate-0.1.0": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-retry-0.1.0": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-scheduler-0.1.0": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-types-0.1.0": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "tatara-lisp-0.2.0": "sha256-5Lv0gja4VgaOiRf8HxhZQYmj9/HAcZeb0kNhiukgTWU=",
-    "tatara-lisp-derive-0.2.0": "sha256-5Lv0gja4VgaOiRf8HxhZQYmj9/HAcZeb0kNhiukgTWU="
+    "awase-0.1.0-92c839463b49172d5d03b379230c8433b62a7cfe": "sha256-S5NLLs9zyGL7LXhI3F4JbGN003vzIMZxMjAc6cGJfj4=",
+    "gen-macros-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": "sha256-1T16SvFS9RChdC9U+KO949d1N4Wv23t5wjUDacWcXqg=",
+    "gen-platform-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": "sha256-1T16SvFS9RChdC9U+KO949d1N4Wv23t5wjUDacWcXqg=",
+    "gen-types-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": "sha256-1T16SvFS9RChdC9U+KO949d1N4Wv23t5wjUDacWcXqg=",
+    "ishou-tokens-0.1.0-563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085": "sha256-+kzhHYtbo1lxEI9chtwFve5D/0nor38nMdEADf3nvZ4=",
+    "kanshou-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": "sha256-mXcqgumIEtvdzc5indo11F/M7Qib/Ep3qsDal8q0T24=",
+    "kanshou-derive-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": "sha256-mXcqgumIEtvdzc5indo11F/M7Qib/Ep3qsDal8q0T24=",
+    "pleme-io-wadachi-0.1.2-721429359543efe16edd12a074156985941abd53": "sha256-28AE0k5asJlBwlF56JdLHO42UIV1cWOXG+wL0GGIDas=",
+    "shigoto-budget-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
+    "shigoto-dag-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
+    "shigoto-emit-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
+    "shigoto-gate-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
+    "shigoto-retry-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
+    "shigoto-scheduler-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
+    "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
+    "tatara-lisp-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": "sha256-5Lv0gja4VgaOiRf8HxhZQYmj9/HAcZeb0kNhiukgTWU=",
+    "tatara-lisp-derive-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": "sha256-5Lv0gja4VgaOiRf8HxhZQYmj9/HAcZeb0kNhiukgTWU=",
+    "wadachi-spec-0.1.2-721429359543efe16edd12a074156985941abd53": "sha256-28AE0k5asJlBwlF56JdLHO42UIV1cWOXG+wL0GGIDas="
   },
   "flake_metadata": {}
 }
