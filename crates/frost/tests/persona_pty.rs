@@ -1,10 +1,22 @@
 //! L0 persona PTY harness — the REAL frost binary under a typed fake terminal.
 //!
-//! M0 of the terminal integration-test plan (espelho destination): a
-//! `TerminalPersona` owns the master side of a real PTY and answers (or
-//! refuses to answer) frost's VT queries per a typed `DsrPolicy`, while a
-//! timed script injects keystrokes. Each test asserts *liveness invariants*,
-//! not mechanisms — they hold regardless of how reedline/crossterm evolve.
+//! M0 of the terminal integration-test plan, now espelho-native: the typed
+//! host surface (`espelho::{AnswerPolicy, TerminalPersona, VtQuery,
+//! VtAnswer}`) owns the query catalog, the rolling wire scan, the answer
+//! wires, and the policy algebra; this file keeps only the PTY plumbing.
+//! A `TerminalPersona` owns the master side of a real PTY and answers (or
+//! refuses to answer) frost's VT queries per its typed `AnswerPolicy`,
+//! while a timed script injects keystrokes. Each test asserts *liveness
+//! invariants*, not mechanisms — they hold regardless of how
+//! reedline/crossterm evolve.
+//!
+//! Deliberately NOT espelho's `apply()` interpreter: its `busy_wait`
+//! drains-and-discards env reads during answer latency, which would drop
+//! exactly the inter-query traffic (seki repaint between CPR query and
+//! answer) the E5 rows exist to exercise. The local poll loop sleeps
+//! through latency instead, so the rolling scan never loses bytes —
+//! equal-strength assertions, typed surface upstream. (Seam noted for
+//! espelho: a latency model that keeps reading without discarding.)
 //!
 //! Incidents codified (2026-06-10):
 //! - E2: a mute terminal (never answers `ESC[6n`) fatally killed the shell at
@@ -16,9 +28,12 @@
 //! - E1-harness fragility: a per-chunk (non-rolling) `ESC[6n` scan misses
 //!   queries split across reads. → `split_escapes_roundtrip` answers with the
 //!   reply itself fragmented, proving frost tolerates fragmented answers.
+//! - Host-died-mid-session: a host that answers, then goes permanently mute
+//!   (mado's attach thread exiting, a daemon restart) must degrade to the
+//!   mute contract, not kill the guest. → `answer_then_mute_midsession_survives`.
 //!
 //! The no-freeze-under-mute invariant went LIVE with the pleme-io reedline
-//! fork (CPR as optimization, never a liveness dependency): under MuteDsr the
+//! fork (CPR as optimization, never a liveness dependency): under Mute the
 //! painter falls back to a safe row, the prompt paints, and commands round-
 //! trip. Residual (#[ignore]d): fd0-TARGETING builtin redirects cycle fd 0 and
 //! kill the crossterm/mio kqueue registration — an INPUT-liveness class (no
@@ -28,23 +43,18 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::time::{Duration, Instant};
 
+use espelho::{AnswerPolicy, TerminalPersona, VtQuery};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 
-/// How the persona treats `ESC[6n` (DSR-6 / CPR) queries.
-#[derive(Clone, Copy, Debug)]
-enum DsrPolicy {
-    /// Answer every query with `ESC[25;1R` after `latency`. A REAL terminal
-    /// answers with latency (mado's full engate→VT→send_keys loop measured
-    /// ~tens of ms) — and the 2026-06-10 answer-loss race only triggers when
-    /// the answer lands AFTER reedline's filtered read window. latency=0
-    /// would test an unrealistically instant terminal and miss the race.
-    Answer { latency: Duration },
-    /// Never answer — the hostile-terminal class (E2/E4).
-    Mute,
-    /// Answer, but fragment the reply across two writes with a gap —
-    /// terminals are not obligated to write escape sequences atomically.
-    SplitReply { gap: Duration },
+/// The harness persona: espelho policy + the cursor position the old
+/// hand-rolled harness always reported (`ESC[25;1R`) — identical wire.
+fn persona(policy: AnswerPolicy) -> TerminalPersona {
+    TerminalPersona {
+        policy,
+        report_row: 25,
+        report_col: 1,
+    }
 }
 
 /// A timed keystroke injection.
@@ -61,13 +71,13 @@ struct Outcome {
     alive_at_end: bool,
 }
 
-/// Drive the real `frost` binary on a real PTY under `policy` for `total`,
+/// Drive the real `frost` binary on a real PTY under `persona` for `total`,
 /// injecting `script` keystrokes at their offsets. `rc` (when set) becomes
 /// the child's FROSTRC so personas can exercise rc-declared behavior
 /// hermetically. Returns the observation; never panics on session mechanics
 /// (assertions live in the tests).
 fn drive(
-    policy: DsrPolicy,
+    persona: TerminalPersona,
     script: &[Send],
     total: Duration,
     rc: Option<&std::path::Path>,
@@ -111,7 +121,8 @@ fn drive(
     let mut master = std::fs::File::from(master);
 
     let mut transcript: Vec<u8> = Vec::new();
-    let mut scan = 0usize; // rolling ESC[6n scan cursor (never per-chunk)
+    let mut scan = 0usize; // rolling VT-query scan cursor (never per-chunk)
+    let mut queries_seen = 0u32; // all kinds — drives AnswerThenMute's cutover
     let mut cpr_queries = 0usize;
     let mut sent = vec![false; script.len()];
     let mut alive = true;
@@ -131,20 +142,27 @@ fn drive(
                 break;
             }
         }
-        // Rolling scan: answer every complete ESC[6n found so far.
-        while let Some(rel) = find(&transcript[scan..], b"\x1b[6n") {
-            scan += rel + 4;
-            cpr_queries += 1;
-            match policy {
-                DsrPolicy::Answer { latency } => {
-                    std::thread::sleep(latency);
-                    let _ = master.write_all(b"\x1b[25;1R");
-                }
-                DsrPolicy::Mute => {}
-                DsrPolicy::SplitReply { gap } => {
-                    let _ = master.write_all(b"\x1b[25;");
-                    std::thread::sleep(gap);
-                    let _ = master.write_all(b"1R");
+        // Rolling scan: answer every complete VT query found so far, per
+        // the persona's typed policy (espelho owns catalog + wires).
+        while let Some((query, end)) = VtQuery::scan(&transcript, scan) {
+            scan = end;
+            queries_seen += 1;
+            if query == VtQuery::CursorPosition {
+                cpr_queries += 1;
+            }
+            if let Some(answer) = persona.answer_for(query, queries_seen) {
+                let wire = answer.wire();
+                match persona.policy {
+                    AnswerPolicy::SplitReply { gap } => {
+                        let mid = wire.len() / 2;
+                        let _ = master.write_all(&wire[..mid]);
+                        std::thread::sleep(gap);
+                        let _ = master.write_all(&wire[mid..]);
+                    }
+                    _ => {
+                        std::thread::sleep(persona.latency());
+                        let _ = master.write_all(&wire);
+                    }
                 }
             }
         }
@@ -186,9 +204,14 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[test]
 fn answers_dsr_idle_stays_alive() {
     let Some(o) = drive(
-        DsrPolicy::Answer {
+        persona(AnswerPolicy::Answer {
+            // A REAL terminal answers with latency (mado's full
+            // engate→VT→send_keys loop measured ~tens of ms) — and the
+            // 2026-06-10 answer-loss race only triggers when the answer
+            // lands AFTER reedline's filtered read window. latency=0
+            // would test an unrealistically instant terminal and miss it.
             latency: Duration::from_millis(50),
-        },
+        }),
         &[],
         Duration::from_secs(2),
         None,
@@ -231,11 +254,11 @@ fn post_accept_line_survives_and_executes() {
         },
     ];
     let Some(o) = drive(
-        DsrPolicy::Answer {
+        persona(AnswerPolicy::Answer {
             // 50ms reproduced the answer-loss death 100% of the time on
             // pre-retry frost (5/5 sessions, 2026-06-10 evidence runs).
             latency: Duration::from_millis(50),
-        },
+        }),
         &script,
         Duration::from_secs(6),
         None,
@@ -269,13 +292,66 @@ fn mute_dsr_never_fatal() {
     // Wide window: under Mute every remaining tolerant cursor::position()
     // site still blocks ~2s before its fallback, so the round-trip lands
     // ~6s in. Slow-but-usable is the contract for a hostile terminal.
-    let Some(o) = drive(DsrPolicy::Mute, &script, Duration::from_secs(12), None) else {
+    let Some(o) = drive(
+        persona(AnswerPolicy::Mute),
+        &script,
+        Duration::from_secs(12),
+        None,
+    ) else {
         return;
     };
     let ran = count(&o.transcript, b"MARKER_MUTE") >= 2;
     assert!(
         o.alive_at_end && ran && !o.read_error,
         "mute-DSR terminal must be fully usable (no-freeze): alive={} ran={} read_error={} cpr={}",
+        o.alive_at_end,
+        ran,
+        o.read_error,
+        o.cpr_queries
+    );
+}
+
+/// The "host died mid-session" class (mado's attach thread exiting, a
+/// daemon restart): a persona that answers the first 2 queries then goes
+/// permanently mute. The shell starts life under a healthy terminal, loses
+/// it MID-SESSION, and must degrade to the mute contract — alive, prompt
+/// proceeds via the painter fallback, and a command still round-trips
+/// after the recovery window. Espelho's `AnswerThenMute` policy is the
+/// typed surface for exactly this cutover.
+#[test]
+fn answer_then_mute_midsession_survives_and_executes() {
+    let script = [
+        // Accept-line while the host is (still) answering — repaint
+        // traffic burns through the answered budget so the mute cutover
+        // lands mid-session, not at boot.
+        Send {
+            at: Duration::from_millis(800),
+            bytes: b"\r",
+        },
+        // Past the worst-case CPR-timeout window after the cutover so the
+        // command lands in the degraded-but-usable regime.
+        Send {
+            at: Duration::from_millis(4000),
+            bytes: b"echo MARKER_ATM\r",
+        },
+    ];
+    // Same wide window as the mute row: post-cutover cursor::position()
+    // sites block ~2s each before their fallback.
+    let Some(o) = drive(
+        persona(AnswerPolicy::AnswerThenMute {
+            n: 2,
+            latency: Duration::from_millis(20),
+        }),
+        &script,
+        Duration::from_secs(12),
+        None,
+    ) else {
+        return;
+    };
+    let ran = count(&o.transcript, b"MARKER_ATM") >= 2;
+    assert!(
+        o.alive_at_end && ran && !o.read_error,
+        "host death mid-session must degrade to the mute contract: alive={} ran={} read_error={} cpr={}",
         o.alive_at_end,
         ran,
         o.read_error,
@@ -292,9 +368,9 @@ fn split_escapes_roundtrip() {
         bytes: b"echo MARKER_SPLIT\r",
     }];
     let Some(o) = drive(
-        DsrPolicy::SplitReply {
+        persona(AnswerPolicy::SplitReply {
             gap: Duration::from_millis(10),
-        },
+        }),
         &script,
         Duration::from_secs(5),
         None,
@@ -338,9 +414,9 @@ fn notify_hook_must_not_break_cpr() {
         },
     ];
     let Some(o) = drive(
-        DsrPolicy::Answer {
+        persona(AnswerPolicy::Answer {
             latency: Duration::from_millis(0),
-        },
+        }),
         &script,
         Duration::from_secs(7),
         Some(&rc),
@@ -373,9 +449,9 @@ fn builtin_redirect_must_not_wedge_next_prompt() {
         },
     ];
     let Some(o) = drive(
-        DsrPolicy::Answer {
+        persona(AnswerPolicy::Answer {
             latency: Duration::from_millis(20),
-        },
+        }),
         &script,
         Duration::from_secs(7),
         None,
@@ -410,9 +486,9 @@ fn builtin_stdin_redirect_must_not_wedge_next_prompt() {
         },
     ];
     let Some(o) = drive(
-        DsrPolicy::Answer {
+        persona(AnswerPolicy::Answer {
             latency: Duration::from_millis(20),
-        },
+        }),
         &script,
         Duration::from_secs(7),
         None,
@@ -479,11 +555,11 @@ fn frostmourne_rc_post_accept_survives_and_executes() {
         },
     ];
     let Some(o) = drive(
-        DsrPolicy::Answer {
+        persona(AnswerPolicy::Answer {
             // The latency that reproduced the answer-loss death 5/5 on
             // pre-fix frost under this exact rc.
             latency: Duration::from_millis(50),
-        },
+        }),
         &script,
         Duration::from_secs(12),
         Some(&rc_path),

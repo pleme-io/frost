@@ -612,6 +612,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "espelho"
+version = "0.1.0"
+source = "git+https://github.com/pleme-io/espelho#e1ff733cb78637c1d38eac46abbfe2d7719dd5af"
+dependencies = [
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -691,6 +700,7 @@ dependencies = [
  "async-trait",
  "clap",
  "crossterm 0.29.0",
+ "espelho",
  "frost-builtins",
  "frost-compat",
  "frost-complete",
