@@ -98,3 +98,12 @@ itoa = "1"
 # Tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── pleme-io reedline fork ─────────────────────────────────────────────
+# CPR (ESC[6n cursor-position) is an optimization, never a liveness
+# dependency: painter falls back to a safe row instead of erroring out of
+# read_line (incident 2026-06-10 — lost/unanswered CPR killed or froze the
+# shell). Fork repo created GitOps-natively by the (wedge-fixed) rio
+# operator from org.yaml; upstream v0.42.0 + the painter patch.
+[patch.crates-io]
+reedline = { git = "https://github.com/pleme-io/reedline" }
