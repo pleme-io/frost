@@ -1171,6 +1171,20 @@ fn interactive(
     let mut history = frost_history::History::from_file(&history_path)
         .unwrap_or_else(|_| frost_history::History::new());
 
+    // A reedline cursor-position-report (DSR / CPR — `ESC[6n`) timeout must
+    // NOT kill the shell. Some terminals / multiplexers never answer it, and
+    // mado's embedded tear session answers a beat late (a startup race: the
+    // first prompt's CPR fires before the engate attach thread that feeds
+    // mado's VT engine + writes the response back is live). Before this, the
+    // first read_line returned Err → the REPL `break`s → the shell exits →
+    // the host terminal sees child-PTY EOF and closes. We instead retry a
+    // bounded number of times so the late/again-queried CPR self-heals.
+    let mut cpr_retries: u32 = 0;
+    // ~5s of retrying at 25ms backoff — covers the embedded-DSR startup race
+    // many times over, while still giving up (rather than busy-looping) if a
+    // terminal genuinely never answers ESC[6n.
+    const MAX_CPR_RETRIES: u32 = 200;
+
     loop {
         // Drain and dispatch any signals delivered while we were
         // waiting / running. Fires `deftrap`-authored handlers.
@@ -1234,6 +1248,7 @@ fn interactive(
         });
         match outcome {
             Ok(ReadLineOutcome::Input(line)) => {
+                cpr_retries = 0;
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
                     continue;
@@ -1388,10 +1403,23 @@ fn interactive(
             }
             Ok(ReadLineOutcome::Interrupted) => {
                 // Match zsh: Ctrl-C just discards the current line.
+                cpr_retries = 0;
                 continue;
             }
             Ok(ReadLineOutcome::Eof) => break,
             Err(e) => {
+                // A cursor-position-report (DSR / CPR) timeout is transient:
+                // retry rather than exit so a late-answering host terminal
+                // (e.g. mado's embedded session on the first prompt) heals
+                // instead of killing the shell. Any other read error, or CPR
+                // that never resolves, is still fatal.
+                if e.to_string().contains("cursor position")
+                    && cpr_retries < MAX_CPR_RETRIES
+                {
+                    cpr_retries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                    continue;
+                }
                 eprintln!("frost: read error: {e}");
                 break;
             }
