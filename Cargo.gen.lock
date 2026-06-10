@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cargo_lock_sha256": "3beb8486e2c95a7dca1a5d7d4a671dd10a08eef43c51ac3b67b4613297738249",
+  "cargo_lock_sha256": "2a589325c5d77ce89321b9eabf42d912fa6d405bd2e259574dfc6dd468eea4f5",
   "target_resolves": {
     "base": {
       "addr2line-0.25.1": {
@@ -908,6 +908,16 @@
             "tree": "target"
           },
           {
+            "name": "filedescriptor",
+            "package_key": "filedescriptor-0.8.3",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": true,
+            "target": "cfg(unix)",
+            "tree": "target"
+          },
+          {
             "name": "mio",
             "package_key": "mio-1.2.1",
             "kind": "normal",
@@ -981,7 +991,9 @@
           "bracketed-paste",
           "default",
           "events",
+          "filedescriptor",
           "serde",
+          "use-dev-tty",
           "windows"
         ]
       },
@@ -1474,6 +1486,34 @@
           "std"
         ]
       },
+      "espelho-0.1.0-e1ff733cb78637c1d38eac46abbfe2d7719dd5af": {
+        "runtime_dependencies": [
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "fallible-iterator-0.3.0": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -1638,6 +1678,32 @@
           "toml",
           "yaml"
         ]
+      },
+      "filedescriptor-0.8.3": {
+        "runtime_dependencies": [
+          {
+            "name": "libc",
+            "package_key": "libc-0.2.186",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-1.0.69",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
       },
       "find-msvc-tools-0.1.9": {
         "runtime_dependencies": [],
@@ -1983,7 +2049,7 @@
           },
           {
             "name": "reedline",
-            "package_key": "reedline-0.42.0-31960da265d64b1148d72ac870de841cf6e872d4",
+            "package_key": "reedline-0.42.0-c48c877410946dd9aadc3cab8d69983bc545a138",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2811,7 +2877,7 @@
           },
           {
             "name": "reedline",
-            "package_key": "reedline-0.42.0-31960da265d64b1148d72ac870de841cf6e872d4",
+            "package_key": "reedline-0.42.0-c48c877410946dd9aadc3cab8d69983bc545a138",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4763,7 +4829,7 @@
           "proc-macro"
         ]
       },
-      "reedline-0.42.0-31960da265d64b1148d72ac870de841cf6e872d4": {
+      "reedline-0.42.0-c48c877410946dd9aadc3cab8d69983bc545a138": {
         "runtime_dependencies": [
           {
             "name": "chrono",
@@ -4783,7 +4849,9 @@
             "package_key": "crossterm-0.28.1",
             "kind": "normal",
             "features": [
-              "serde"
+              "serde",
+              "use-dev-tty",
+              "events"
             ],
             "uses_default_features": true,
             "optional": false,
@@ -6996,6 +7064,22 @@
           "unicode-width"
         ]
       },
+      "thiserror-1.0.69": {
+        "runtime_dependencies": [
+          {
+            "name": "thiserror_impl",
+            "package_key": "thiserror-impl-1.0.69",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "thiserror-2.0.18": {
         "runtime_dependencies": [
           {
@@ -7014,6 +7098,42 @@
           "default",
           "std"
         ]
+      },
+      "thiserror-impl-1.0.69": {
+        "runtime_dependencies": [
+          {
+            "name": "proc_macro2",
+            "package_key": "proc-macro2-1.0.106",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "syn",
+            "package_key": "syn-2.0.117",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
       },
       "thiserror-impl-2.0.18": {
         "runtime_dependencies": [
@@ -8219,6 +8339,7 @@
             "features": [
               "alloc",
               "libc-extra-traits",
+              "process",
               "std",
               "stdio",
               "termios"
@@ -8560,6 +8681,7 @@
             "features": [
               "alloc",
               "libc-extra-traits",
+              "process",
               "std",
               "stdio",
               "termios"
@@ -8789,7 +8911,8 @@
               "errno",
               "general",
               "ioctl",
-              "no_std"
+              "no_std",
+              "prctl"
             ]
           },
           "linux-raw-sys-0.12.1": {
@@ -8975,6 +9098,7 @@
             "features": [
               "alloc",
               "libc-extra-traits",
+              "process",
               "std",
               "stdio",
               "termios"
@@ -9224,7 +9348,8 @@
               "errno",
               "general",
               "ioctl",
-              "no_std"
+              "no_std",
+              "prctl"
             ]
           },
           "linux-raw-sys-0.12.1": {
@@ -9410,6 +9535,7 @@
             "features": [
               "alloc",
               "libc-extra-traits",
+              "process",
               "std",
               "stdio",
               "termios"
@@ -9685,7 +9811,8 @@
               "errno",
               "general",
               "ioctl",
-              "no_std"
+              "no_std",
+              "prctl"
             ]
           },
           "linux-raw-sys-0.12.1": {
@@ -9871,6 +9998,7 @@
             "features": [
               "alloc",
               "libc-extra-traits",
+              "process",
               "std",
               "stdio",
               "termios"
@@ -10146,7 +10274,8 @@
               "errno",
               "general",
               "ioctl",
-              "no_std"
+              "no_std",
+              "prctl"
             ]
           },
           "linux-raw-sys-0.12.1": {
@@ -10332,6 +10461,7 @@
             "features": [
               "alloc",
               "libc-extra-traits",
+              "process",
               "std",
               "stdio",
               "termios"
@@ -10633,6 +10763,9 @@
     "errno-0.3.14": {
       "edition": "2018"
     },
+    "espelho-0.1.0-e1ff733cb78637c1d38eac46abbfe2d7719dd5af": {
+      "edition": "2021"
+    },
     "fallible-iterator-0.3.0": {
       "edition": "2018"
     },
@@ -10651,6 +10784,9 @@
     "figment-0.10.19": {
       "edition": "2018",
       "build_script": "build.rs"
+    },
+    "filedescriptor-0.8.3": {
+      "edition": "2018"
     },
     "find-msvc-tools-0.1.9": {
       "edition": "2018"
@@ -11046,7 +11182,7 @@
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "reedline-0.42.0-31960da265d64b1148d72ac870de841cf6e872d4": {
+    "reedline-0.42.0-c48c877410946dd9aadc3cab8d69983bc545a138": {
       "edition": "2021"
     },
     "ref-cast-1.0.25": {
@@ -11251,9 +11387,17 @@
     "textwrap-0.16.2": {
       "edition": "2021"
     },
+    "thiserror-1.0.69": {
+      "edition": "2021",
+      "build_script": "build.rs"
+    },
     "thiserror-2.0.18": {
       "edition": "2021",
       "build_script": "build.rs"
+    },
+    "thiserror-impl-1.0.69": {
+      "edition": "2021",
+      "proc_macro": true
     },
     "thiserror-impl-2.0.18": {
       "edition": "2021",
@@ -11385,13 +11529,14 @@
   },
   "git_nar_sha256": {
     "awase-0.1.0-afa79c28177c5dbbe7ad185fd63d6a136f12cd73": "sha256-xdRG+nNbOTbYbPmT7DmRL87/lkccIYhDI4FPOQif+Uc=",
+    "espelho-0.1.0-e1ff733cb78637c1d38eac46abbfe2d7719dd5af": "sha256-mX8YVMxg+W4ea5ofdL5KLid6S5oKiGN48angjAj8OVc=",
     "gen-macros-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
     "gen-platform-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
     "gen-types-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
     "ishou-tokens-0.1.0-563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085": "sha256-+kzhHYtbo1lxEI9chtwFve5D/0nor38nMdEADf3nvZ4=",
     "kanshou-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": "sha256-qxi/pBubzx4MfFDtJL4qLEoOSV43WF9Hc2VriRNlpCA=",
     "kanshou-derive-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": "sha256-qxi/pBubzx4MfFDtJL4qLEoOSV43WF9Hc2VriRNlpCA=",
-    "reedline-0.42.0-31960da265d64b1148d72ac870de841cf6e872d4": "sha256-gmDpK80S942ZI0wNg6yZuGKh/EQh3EuthMOuWt+UmqQ=",
+    "reedline-0.42.0-c48c877410946dd9aadc3cab8d69983bc545a138": "sha256-EFYdWwYrGUXrb+QcYI5SFS/4oGLslKSqsUptiLqM5sY=",
     "shigoto-budget-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
     "shigoto-dag-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
     "shigoto-emit-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",

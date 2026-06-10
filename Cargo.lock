@@ -156,7 +156,7 @@ version = "0.1.0"
 source = "git+https://github.com/pleme-io/awase#afa79c28177c5dbbe7ad185fd63d6a136f12cd73"
 dependencies = [
  "serde",
- "thiserror",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -429,6 +429,7 @@ checksum = "829d955a0bb380ef178a640b91779e3987da38c9aea133b20614cfed8cdea9c6"
 dependencies = [
  "bitflags",
  "crossterm_winapi",
+ "filedescriptor",
  "mio",
  "parking_lot",
  "rustix 0.38.44",
@@ -617,7 +618,7 @@ version = "0.1.0"
 source = "git+https://github.com/pleme-io/espelho#e1ff733cb78637c1d38eac46abbfe2d7719dd5af"
 dependencies = [
  "serde",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -676,6 +677,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "filedescriptor"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e40758ed24c9b2eeb76c35fb0aebc66c626084edd827e07e1552279814c6682d"
+dependencies = [
+ "libc",
+ "thiserror 1.0.69",
+ "winapi",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -727,7 +739,7 @@ dependencies = [
  "shigoto-scheduler",
  "shigoto-types",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -739,7 +751,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "pretty_assertions",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -765,7 +777,7 @@ dependencies = [
  "reedline",
  "serde",
  "serde_yaml_ng",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -777,7 +789,7 @@ dependencies = [
  "serde_yaml",
  "shikumi",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -799,7 +811,7 @@ dependencies = [
  "nix",
  "pleme-io-wadachi",
  "pretty_assertions",
- "thiserror",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -813,7 +825,7 @@ dependencies = [
  "indexmap",
  "insta",
  "pretty_assertions",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -822,7 +834,7 @@ version = "0.1.0"
 dependencies = [
  "insta",
  "pretty_assertions",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -830,7 +842,7 @@ name = "frost-history"
 version = "0.1.0"
 dependencies = [
  "pretty_assertions",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -841,7 +853,7 @@ dependencies = [
  "compact_str",
  "insta",
  "pretty_assertions",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -858,7 +870,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tatara-lisp",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -881,7 +893,7 @@ version = "0.1.0"
 dependencies = [
  "insta",
  "pretty_assertions",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -892,7 +904,7 @@ dependencies = [
  "frost-lexer",
  "insta",
  "pretty_assertions",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -902,7 +914,7 @@ dependencies = [
  "itoa",
  "libc",
  "pretty_assertions",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -938,7 +950,7 @@ dependencies = [
  "nu-ansi-term",
  "pretty_assertions",
  "reedline",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1058,7 +1070,7 @@ dependencies = [
  "inventory",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1072,7 +1084,7 @@ dependencies = [
  "inventory",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1263,7 +1275,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c1e6ec2a36084626fdbd4dcfb8beb53d0b5f6125b4cd54a4d45abddf6ffbbb9"
 dependencies = [
  "serde",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1322,7 +1334,7 @@ dependencies = [
  "kanshou-derive",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -1747,13 +1759,13 @@ checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
 dependencies = [
  "getrandom 0.2.17",
  "libredox",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "reedline"
 version = "0.42.0"
-source = "git+https://github.com/pleme-io/reedline#31960da265d64b1148d72ac870de841cf6e872d4"
+source = "git+https://github.com/pleme-io/reedline#c48c877410946dd9aadc3cab8d69983bc545a138"
 dependencies = [
  "chrono",
  "crossterm 0.28.1",
@@ -1764,7 +1776,7 @@ dependencies = [
  "strip-ansi-escapes",
  "strum",
  "strum_macros",
- "thiserror",
+ "thiserror 2.0.18",
  "unicode-segmentation",
  "unicode-width 0.2.2",
 ]
@@ -1822,7 +1834,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2095,7 +2107,7 @@ source = "git+https://github.com/pleme-io/shigoto#1f37e3ee4d4859264a11b688644f80
 dependencies = [
  "serde",
  "shigoto-types",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2106,7 +2118,7 @@ dependencies = [
  "petgraph",
  "serde",
  "shigoto-types",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2153,7 +2165,7 @@ dependencies = [
  "shigoto-gate",
  "shigoto-retry",
  "shigoto-types",
- "thiserror",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -2172,7 +2184,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2185,7 +2197,7 @@ dependencies = [
  "figment",
  "notify",
  "serde",
- "thiserror",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -2335,7 +2347,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tatara-lisp-derive",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2383,11 +2395,31 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.18",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -2652,7 +2684,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
