@@ -32,7 +32,10 @@ awase = { git = "https://github.com/pleme-io/awase" }
 # every dir change at the chdir chokepoint and resolves smart-cd, both IN-PROCESS
 # (lib is imported as `wadachi`; package is pleme-io-wadachi). Behind a default
 # feature so the engine still builds standalone with --no-default-features.
-pleme-io-wadachi = { git = "https://github.com/pleme-io/wadachi", optional = true }
+# crates.io (not git): a published crate is root-level, so gen's lockfile-builder
+# finds src/lib.rs (a git workspace-member in a subdir does not → "extern
+# location does not exist"). Lib imported as pleme_io_wadachi.
+pleme-io-wadachi = { version = "0.1.4", optional = true }
 
 [features]
 default = ["frecency-wadachi"]

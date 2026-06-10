@@ -15,6 +15,48 @@ use frost_parser::ast::{Redirect, RedirectOp, WordPart};
 
 use crate::sys;
 
+/// The standard fds (0/1/2) this redirect set will mutate when applied
+/// IN-PROCESS (the builtin path). Used by the save/restore wrapper to back
+/// up ONLY the fds the redirects actually touch.
+///
+/// Why this matters (incident 2026-06-10): restoring an UNTOUCHED fd via
+/// `dup2(backup, fd)` momentarily closes that fd — and closing an fd
+/// instance silently DELETES any kqueue/epoll registration bound to it.
+/// crossterm/mio's terminal event source registers fd 0; cycling fd 0
+/// through dup2 for a `2>/dev/null` builtin redirect left the event source
+/// permanently deaf — every later cursor-position read timed out and the
+/// shell wedged (input eaten forever). Backing up only the touched fds makes
+/// the common `>/dev/null` / `2>/dev/null` cases leave fd 0 alone entirely.
+/// (A redirect that legitimately targets fd 0 still cycles it — that residual
+/// is covered by the ignored persona row in frost\'s tests until the
+/// event-source re-registration fix lands.)
+pub fn touched_std_fds(redirects: &[Redirect]) -> Vec<std::os::fd::RawFd> {
+    let mut out = std::collections::BTreeSet::new();
+    for r in redirects {
+        match r.op {
+            RedirectOp::Less
+            | RedirectOp::LessGreater
+            | RedirectOp::DoubleLess
+            | RedirectOp::DoubleLessDash
+            | RedirectOp::TripleLess => {
+                out.insert(r.fd.unwrap_or(0) as std::os::fd::RawFd);
+            }
+            RedirectOp::Greater
+            | RedirectOp::GreaterPipe
+            | RedirectOp::GreaterBang
+            | RedirectOp::DoubleGreater
+            | RedirectOp::FdDup => {
+                out.insert(r.fd.unwrap_or(1) as std::os::fd::RawFd);
+            }
+            RedirectOp::AmpGreater | RedirectOp::AmpDoubleGreater => {
+                out.insert(1);
+                out.insert(2);
+            }
+        }
+    }
+    out.into_iter().filter(|fd| (0..=2).contains(fd)).collect()
+}
+
 /// Error type for redirection failures.
 #[derive(Debug, thiserror::Error)]
 pub enum RedirectError {
