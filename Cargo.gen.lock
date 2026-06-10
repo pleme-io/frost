@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cargo_lock_sha256": "8c76e804808fb75f68e2d217c7cefe0bb44585f3d83a176a08282a9b1c352061",
+  "cargo_lock_sha256": "3beb8486e2c95a7dca1a5d7d4a671dd10a08eef43c51ac3b67b4613297738249",
   "target_resolves": {
     "base": {
       "addr2line-0.25.1": {
@@ -81,7 +81,7 @@
         "runtime_dependencies": [
           {
             "name": "memchr",
-            "package_key": "memchr-2.8.0",
+            "package_key": "memchr-2.8.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -280,7 +280,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "awase-0.1.0-92c839463b49172d5d03b379230c8433b62a7cfe": {
+      "awase-0.1.0-afa79c28177c5dbbe7ad185fd63d6a136f12cd73": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -445,7 +445,7 @@
           "std"
         ]
       },
-      "bitflags-2.11.1": {
+      "bitflags-2.13.0": {
         "runtime_dependencies": [
           {
             "name": "serde_core",
@@ -485,7 +485,7 @@
         "runtime_dependencies": [
           {
             "name": "memchr",
-            "package_key": "memchr-2.8.0",
+            "package_key": "memchr-2.8.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -548,7 +548,7 @@
           "alloc"
         ]
       },
-      "cc-1.2.62": {
+      "cc-1.2.63": {
         "runtime_dependencies": [
           {
             "name": "find_msvc_tools",
@@ -562,7 +562,7 @@
           },
           {
             "name": "shlex",
-            "package_key": "shlex-1.3.0",
+            "package_key": "shlex-2.0.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -584,7 +584,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "chrono-0.4.44": {
+      "chrono-0.4.45": {
         "runtime_dependencies": [
           {
             "name": "iana_time_zone",
@@ -782,7 +782,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "compact_str-0.8.1": {
+      "compact_str-0.8.2": {
         "runtime_dependencies": [
           {
             "name": "castaway",
@@ -883,7 +883,7 @@
         "runtime_dependencies": [
           {
             "name": "unicode_segmentation",
-            "package_key": "unicode-segmentation-1.13.2",
+            "package_key": "unicode-segmentation-1.13.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -899,7 +899,7 @@
         "runtime_dependencies": [
           {
             "name": "bitflags",
-            "package_key": "bitflags-2.11.1",
+            "package_key": "bitflags-2.13.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -909,7 +909,7 @@
           },
           {
             "name": "mio",
-            "package_key": "mio-1.2.0",
+            "package_key": "mio-1.2.1",
             "kind": "normal",
             "features": [
               "os-poll"
@@ -989,7 +989,7 @@
         "runtime_dependencies": [
           {
             "name": "bitflags",
-            "package_key": "bitflags-2.11.1",
+            "package_key": "bitflags-2.13.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1021,7 +1021,7 @@
           },
           {
             "name": "mio",
-            "package_key": "mio-1.2.0",
+            "package_key": "mio-1.2.1",
             "kind": "normal",
             "features": [
               "os-poll"
@@ -1099,7 +1099,7 @@
           },
           {
             "name": "typenum",
-            "package_key": "typenum-1.20.0",
+            "package_key": "typenum-1.20.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1511,7 +1511,7 @@
           },
           {
             "name": "regex_syntax",
-            "package_key": "regex-syntax-0.8.10",
+            "package_key": "regex-syntax-0.8.11",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1785,7 +1785,7 @@
           },
           {
             "name": "kanshou",
-            "package_key": "kanshou-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16",
+            "package_key": "kanshou-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1983,7 +1983,7 @@
           },
           {
             "name": "reedline",
-            "package_key": "reedline-0.42.0",
+            "package_key": "reedline-0.42.0-31960da265d64b1148d72ac870de841cf6e872d4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2079,7 +2079,7 @@
         "runtime_dependencies": [
           {
             "name": "awase",
-            "package_key": "awase-0.1.0-92c839463b49172d5d03b379230c8433b62a7cfe",
+            "package_key": "awase-0.1.0-afa79c28177c5dbbe7ad185fd63d6a136f12cd73",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2089,7 +2089,7 @@
           },
           {
             "name": "compact_str",
-            "package_key": "compact_str-0.8.1",
+            "package_key": "compact_str-0.8.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2243,7 +2243,7 @@
         "runtime_dependencies": [
           {
             "name": "compact_str",
-            "package_key": "compact_str-0.8.1",
+            "package_key": "compact_str-0.8.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2341,7 +2341,7 @@
           },
           {
             "name": "compact_str",
-            "package_key": "compact_str-0.8.1",
+            "package_key": "compact_str-0.8.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2367,7 +2367,7 @@
         "runtime_dependencies": [
           {
             "name": "compact_str",
-            "package_key": "compact_str-0.8.1",
+            "package_key": "compact_str-0.8.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2584,7 +2584,7 @@
         "runtime_dependencies": [
           {
             "name": "compact_str",
-            "package_key": "compact_str-0.8.1",
+            "package_key": "compact_str-0.8.2",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2811,7 +2811,7 @@
           },
           {
             "name": "reedline",
-            "package_key": "reedline-0.42.0",
+            "package_key": "reedline-0.42.0-31960da265d64b1148d72ac870de841cf6e872d4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3120,7 +3120,7 @@
           },
           {
             "name": "memchr",
-            "package_key": "memchr-2.8.0",
+            "package_key": "memchr-2.8.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3166,7 +3166,7 @@
           "std"
         ]
       },
-      "gen-macros-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
+      "gen-macros-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": {
         "runtime_dependencies": [
           {
             "name": "proc_macro2",
@@ -3205,11 +3205,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-platform-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
+      "gen-platform-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": {
         "runtime_dependencies": [
           {
             "name": "gen_macros",
-            "package_key": "gen-macros-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed",
+            "package_key": "gen-macros-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3219,7 +3219,7 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed",
+            "package_key": "gen-types-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3273,7 +3273,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "gen-types-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
+      "gen-types-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": {
         "runtime_dependencies": [
           {
             "name": "blake3",
@@ -3287,7 +3287,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.44",
+            "package_key": "chrono-0.4.45",
             "kind": "normal",
             "features": [
               "serde"
@@ -3359,7 +3359,7 @@
         "runtime_dependencies": [
           {
             "name": "typenum",
-            "package_key": "typenum-1.20.0",
+            "package_key": "typenum-1.20.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3536,6 +3536,15 @@
         "build_dependencies": [],
         "features": []
       },
+      "hex-0.4.3": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": [
+          "alloc",
+          "default",
+          "std"
+        ]
+      },
       "ident_case-1.0.1": {
         "runtime_dependencies": [],
         "build_dependencies": [],
@@ -3657,7 +3666,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "irodori-0.1.0": {
+      "irodori-0.1.1": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -3666,6 +3675,16 @@
             "features": [
               "derive"
             ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
             "uses_default_features": true,
             "optional": false,
             "target": null,
@@ -3691,7 +3710,7 @@
         "runtime_dependencies": [
           {
             "name": "irodori",
-            "package_key": "irodori-0.1.0",
+            "package_key": "irodori-0.1.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3752,11 +3771,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "kanshou-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": {
+      "kanshou-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": {
         "runtime_dependencies": [
           {
             "name": "kanshou_derive",
-            "package_key": "kanshou-derive-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16",
+            "package_key": "kanshou-derive-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3830,7 +3849,7 @@
           "derive"
         ]
       },
-      "kanshou-derive-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": {
+      "kanshou-derive-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": {
         "runtime_dependencies": [
           {
             "name": "proc_macro2",
@@ -3887,7 +3906,7 @@
         "build_dependencies": [
           {
             "name": "cc",
-            "package_key": "cc-1.2.62",
+            "package_key": "cc-1.2.63",
             "kind": "build",
             "features": [],
             "uses_default_features": true,
@@ -3950,7 +3969,7 @@
           "default"
         ]
       },
-      "log-0.4.29": {
+      "log-0.4.32": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
@@ -3973,7 +3992,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "memchr-2.8.0": {
+      "memchr-2.8.1": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
@@ -4159,7 +4178,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "mio-1.2.0": {
+      "mio-1.2.1": {
         "runtime_dependencies": [
           {
             "name": "libc",
@@ -4173,7 +4192,7 @@
           },
           {
             "name": "log",
-            "package_key": "log-0.4.29",
+            "package_key": "log-0.4.32",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4195,7 +4214,7 @@
         "runtime_dependencies": [
           {
             "name": "bitflags",
-            "package_key": "bitflags-2.11.1",
+            "package_key": "bitflags-2.13.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4250,7 +4269,7 @@
         "runtime_dependencies": [
           {
             "name": "bitflags",
-            "package_key": "bitflags-2.11.1",
+            "package_key": "bitflags-2.13.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4290,7 +4309,7 @@
         "runtime_dependencies": [
           {
             "name": "memchr",
-            "package_key": "memchr-2.8.0",
+            "package_key": "memchr-2.8.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -4545,7 +4564,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.44",
+            "package_key": "chrono-0.4.45",
             "kind": "normal",
             "features": [
               "clock",
@@ -4744,11 +4763,11 @@
           "proc-macro"
         ]
       },
-      "reedline-0.42.0": {
+      "reedline-0.42.0-31960da265d64b1148d72ac870de841cf6e872d4": {
         "runtime_dependencies": [
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.44",
+            "package_key": "chrono-0.4.45",
             "kind": "normal",
             "features": [
               "clock",
@@ -4855,7 +4874,7 @@
           },
           {
             "name": "unicode_segmentation",
-            "package_key": "unicode-segmentation-1.13.2",
+            "package_key": "unicode-segmentation-1.13.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4943,7 +4962,7 @@
           },
           {
             "name": "memchr",
-            "package_key": "memchr-2.8.0",
+            "package_key": "memchr-2.8.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -4953,7 +4972,7 @@
           },
           {
             "name": "regex_syntax",
-            "package_key": "regex-syntax-0.8.10",
+            "package_key": "regex-syntax-0.8.11",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4993,7 +5012,7 @@
           "unicode-word-boundary"
         ]
       },
-      "regex-syntax-0.8.10": {
+      "regex-syntax-0.8.11": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
@@ -5032,7 +5051,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.44",
+            "package_key": "chrono-0.4.45",
             "kind": "normal",
             "features": [
               "serde",
@@ -5047,7 +5066,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.44",
+            "package_key": "chrono-0.4.45",
             "kind": "normal",
             "features": [
               "serde",
@@ -5253,7 +5272,7 @@
         "runtime_dependencies": [
           {
             "name": "bitflags",
-            "package_key": "bitflags-2.11.1",
+            "package_key": "bitflags-2.13.0",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5410,7 +5429,7 @@
         "runtime_dependencies": [
           {
             "name": "chrono04",
-            "package_key": "chrono-0.4.44",
+            "package_key": "chrono-0.4.45",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -5735,7 +5754,7 @@
           },
           {
             "name": "memchr",
-            "package_key": "memchr-2.8.0",
+            "package_key": "memchr-2.8.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -5956,7 +5975,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-budget-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+      "shigoto-budget-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -5972,7 +5991,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -5994,7 +6013,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-dag-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+      "shigoto-dag-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
         "runtime_dependencies": [
           {
             "name": "petgraph",
@@ -6020,7 +6039,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6042,7 +6061,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-emit-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+      "shigoto-emit-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
         "runtime_dependencies": [
           {
             "name": "async_trait",
@@ -6078,7 +6097,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6100,11 +6119,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-gate-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+      "shigoto-gate-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
         "runtime_dependencies": [
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-dag-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6114,7 +6133,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6126,7 +6145,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-retry-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+      "shigoto-retry-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -6142,7 +6161,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6154,7 +6173,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-scheduler-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+      "shigoto-scheduler-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -6178,7 +6197,7 @@
           },
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.44",
+            "package_key": "chrono-0.4.45",
             "kind": "normal",
             "features": [
               "serde"
@@ -6190,7 +6209,7 @@
           },
           {
             "name": "shigoto_budget",
-            "package_key": "shigoto-budget-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-budget-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6200,7 +6219,7 @@
           },
           {
             "name": "shigoto_dag",
-            "package_key": "shigoto-dag-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-dag-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6210,7 +6229,7 @@
           },
           {
             "name": "shigoto_emit",
-            "package_key": "shigoto-emit-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-emit-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6220,7 +6239,7 @@
           },
           {
             "name": "shigoto_gate",
-            "package_key": "shigoto-gate-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-gate-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6230,7 +6249,7 @@
           },
           {
             "name": "shigoto_retry",
-            "package_key": "shigoto-retry-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-retry-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6240,7 +6259,7 @@
           },
           {
             "name": "shigoto_types",
-            "package_key": "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1",
+            "package_key": "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6287,7 +6306,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+      "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
         "runtime_dependencies": [
           {
             "name": "async_trait",
@@ -6300,8 +6319,18 @@
             "tree": "host"
           },
           {
+            "name": "blake3",
+            "package_key": "blake3-1.8.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "chrono",
-            "package_key": "chrono-0.4.44",
+            "package_key": "chrono-0.4.45",
             "kind": "normal",
             "features": [
               "serde"
@@ -6313,7 +6342,7 @@
           },
           {
             "name": "gen_platform",
-            "package_key": "gen-platform-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed",
+            "package_key": "gen-platform-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6323,7 +6352,17 @@
           },
           {
             "name": "gen_types",
-            "package_key": "gen-types-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed",
+            "package_key": "gen-types-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "hex",
+            "package_key": "hex-0.4.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6451,7 +6490,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shlex-1.3.0": {
+      "shlex-2.0.1": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": [
@@ -6503,7 +6542,7 @@
           },
           {
             "name": "mio_1_0",
-            "package_key": "mio-1.2.0",
+            "package_key": "mio-1.2.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6575,7 +6614,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "socket2-0.6.3": {
+      "socket2-0.6.4": {
         "runtime_dependencies": [
           {
             "name": "libc",
@@ -7072,7 +7111,7 @@
           },
           {
             "name": "mio",
-            "package_key": "mio-1.2.0",
+            "package_key": "mio-1.2.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -7082,7 +7121,7 @@
           },
           {
             "name": "mio",
-            "package_key": "mio-1.2.0",
+            "package_key": "mio-1.2.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -7122,7 +7161,7 @@
           },
           {
             "name": "socket2",
-            "package_key": "socket2-0.6.3",
+            "package_key": "socket2-0.6.4",
             "kind": "normal",
             "features": [
               "all"
@@ -7533,7 +7572,7 @@
         "runtime_dependencies": [
           {
             "name": "log",
-            "package_key": "log-0.4.29",
+            "package_key": "log-0.4.32",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7690,7 +7729,7 @@
           "tracing-log"
         ]
       },
-      "typenum-1.20.0": {
+      "typenum-1.20.1": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
@@ -7724,7 +7763,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "unicode-segmentation-1.13.2": {
+      "unicode-segmentation-1.13.3": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
@@ -7771,7 +7810,7 @@
         "runtime_dependencies": [
           {
             "name": "memchr",
-            "package_key": "memchr-2.8.0",
+            "package_key": "memchr-2.8.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -7787,7 +7826,7 @@
         "runtime_dependencies": [
           {
             "name": "chrono",
-            "package_key": "chrono-0.4.44",
+            "package_key": "chrono-0.4.45",
             "kind": "normal",
             "features": [
               "clock",
@@ -7854,7 +7893,7 @@
         "runtime_dependencies": [
           {
             "name": "memchr",
-            "package_key": "memchr-2.8.0",
+            "package_key": "memchr-2.8.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -7941,7 +7980,7 @@
             "build_dependencies": [
               {
                 "name": "cc",
-                "package_key": "cc-1.2.62",
+                "package_key": "cc-1.2.63",
                 "kind": "build",
                 "features": [],
                 "uses_default_features": true,
@@ -8047,7 +8086,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -8077,7 +8116,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.29",
+                "package_key": "log-0.4.32",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -8117,7 +8156,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -8189,7 +8228,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -8318,7 +8357,7 @@
             "build_dependencies": [
               {
                 "name": "cc",
-                "package_key": "cc-1.2.62",
+                "package_key": "cc-1.2.63",
                 "kind": "build",
                 "features": [],
                 "uses_default_features": true,
@@ -8388,7 +8427,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -8418,7 +8457,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.29",
+                "package_key": "log-0.4.32",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -8458,7 +8497,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -8530,7 +8569,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -8659,7 +8698,7 @@
             "build_dependencies": [
               {
                 "name": "cc",
-                "package_key": "cc-1.2.62",
+                "package_key": "cc-1.2.63",
                 "kind": "build",
                 "features": [],
                 "uses_default_features": true,
@@ -8690,11 +8729,11 @@
               "fallback"
             ]
           },
-          "inotify-0.11.1": {
+          "inotify-0.11.2": {
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -8769,7 +8808,7 @@
             "runtime_dependencies": [
               {
                 "name": "inotify",
-                "package_key": "inotify-0.11.1",
+                "package_key": "inotify-0.11.2",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -8789,7 +8828,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.29",
+                "package_key": "log-0.4.32",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -8799,7 +8838,7 @@
               },
               {
                 "name": "mio",
-                "package_key": "mio-1.2.0",
+                "package_key": "mio-1.2.1",
                 "kind": "normal",
                 "features": [
                   "os-ext"
@@ -8811,7 +8850,7 @@
               },
               {
                 "name": "mio",
-                "package_key": "mio-1.2.0",
+                "package_key": "mio-1.2.1",
                 "kind": "normal",
                 "features": [
                   "os-ext"
@@ -8853,7 +8892,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -8945,7 +8984,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -9094,7 +9133,7 @@
             "build_dependencies": [
               {
                 "name": "cc",
-                "package_key": "cc-1.2.62",
+                "package_key": "cc-1.2.63",
                 "kind": "build",
                 "features": [],
                 "uses_default_features": true,
@@ -9125,11 +9164,11 @@
               "fallback"
             ]
           },
-          "inotify-0.11.1": {
+          "inotify-0.11.2": {
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -9204,7 +9243,7 @@
             "runtime_dependencies": [
               {
                 "name": "inotify",
-                "package_key": "inotify-0.11.1",
+                "package_key": "inotify-0.11.2",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -9224,7 +9263,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.29",
+                "package_key": "log-0.4.32",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -9234,7 +9273,7 @@
               },
               {
                 "name": "mio",
-                "package_key": "mio-1.2.0",
+                "package_key": "mio-1.2.1",
                 "kind": "normal",
                 "features": [
                   "os-ext"
@@ -9246,7 +9285,7 @@
               },
               {
                 "name": "mio",
-                "package_key": "mio-1.2.0",
+                "package_key": "mio-1.2.1",
                 "kind": "normal",
                 "features": [
                   "os-ext"
@@ -9288,7 +9327,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -9380,7 +9419,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -9519,7 +9558,7 @@
             "build_dependencies": [
               {
                 "name": "cc",
-                "package_key": "cc-1.2.62",
+                "package_key": "cc-1.2.63",
                 "kind": "build",
                 "features": [],
                 "uses_default_features": true,
@@ -9586,11 +9625,11 @@
               "fallback"
             ]
           },
-          "inotify-0.11.1": {
+          "inotify-0.11.2": {
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -9665,7 +9704,7 @@
             "runtime_dependencies": [
               {
                 "name": "inotify",
-                "package_key": "inotify-0.11.1",
+                "package_key": "inotify-0.11.2",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -9685,7 +9724,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.29",
+                "package_key": "log-0.4.32",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -9695,7 +9734,7 @@
               },
               {
                 "name": "mio",
-                "package_key": "mio-1.2.0",
+                "package_key": "mio-1.2.1",
                 "kind": "normal",
                 "features": [
                   "os-ext"
@@ -9707,7 +9746,7 @@
               },
               {
                 "name": "mio",
-                "package_key": "mio-1.2.0",
+                "package_key": "mio-1.2.1",
                 "kind": "normal",
                 "features": [
                   "os-ext"
@@ -9749,7 +9788,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -9841,7 +9880,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -9980,7 +10019,7 @@
             "build_dependencies": [
               {
                 "name": "cc",
-                "package_key": "cc-1.2.62",
+                "package_key": "cc-1.2.63",
                 "kind": "build",
                 "features": [],
                 "uses_default_features": true,
@@ -10047,11 +10086,11 @@
               "fallback"
             ]
           },
-          "inotify-0.11.1": {
+          "inotify-0.11.2": {
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -10126,7 +10165,7 @@
             "runtime_dependencies": [
               {
                 "name": "inotify",
-                "package_key": "inotify-0.11.1",
+                "package_key": "inotify-0.11.2",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -10146,7 +10185,7 @@
               },
               {
                 "name": "log",
-                "package_key": "log-0.4.29",
+                "package_key": "log-0.4.32",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": true,
@@ -10156,7 +10195,7 @@
               },
               {
                 "name": "mio",
-                "package_key": "mio-1.2.0",
+                "package_key": "mio-1.2.1",
                 "kind": "normal",
                 "features": [
                   "os-ext"
@@ -10168,7 +10207,7 @@
               },
               {
                 "name": "mio",
-                "package_key": "mio-1.2.0",
+                "package_key": "mio-1.2.1",
                 "kind": "normal",
                 "features": [
                   "os-ext"
@@ -10210,7 +10249,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -10302,7 +10341,7 @@
             "runtime_dependencies": [
               {
                 "name": "bitflags",
-                "package_key": "bitflags-2.11.1",
+                "package_key": "bitflags-2.13.0",
                 "kind": "normal",
                 "features": [],
                 "uses_default_features": false,
@@ -10447,7 +10486,7 @@
     "autocfg-1.5.1": {
       "edition": "2015"
     },
-    "awase-0.1.0-92c839463b49172d5d03b379230c8433b62a7cfe": {
+    "awase-0.1.0-afa79c28177c5dbbe7ad185fd63d6a136f12cd73": {
       "edition": "2024"
     },
     "backtrace-0.3.76": {
@@ -10465,7 +10504,7 @@
     "bit-vec-0.8.0": {
       "edition": "2015"
     },
-    "bitflags-2.11.1": {
+    "bitflags-2.13.0": {
       "edition": "2021"
     },
     "blake3-1.8.5": {
@@ -10484,7 +10523,7 @@
     "castaway-0.2.4": {
       "edition": "2018"
     },
-    "cc-1.2.62": {
+    "cc-1.2.63": {
       "edition": "2018"
     },
     "cfg-if-1.0.4": {
@@ -10493,7 +10532,7 @@
     "cfg_aliases-0.2.1": {
       "edition": "2018"
     },
-    "chrono-0.4.44": {
+    "chrono-0.4.45": {
       "edition": "2021"
     },
     "clap-4.6.1": {
@@ -10518,7 +10557,7 @@
     "colorchoice-1.0.5": {
       "edition": "2021"
     },
-    "compact_str-0.8.1": {
+    "compact_str-0.8.2": {
       "edition": "2021"
     },
     "console-0.16.3": {
@@ -10800,14 +10839,14 @@
     "futures-util-0.3.32": {
       "edition": "2018"
     },
-    "gen-macros-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
+    "gen-macros-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": {
       "edition": "2024",
       "proc_macro": true
     },
-    "gen-platform-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
+    "gen-platform-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": {
       "edition": "2024"
     },
-    "gen-types-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": {
+    "gen-types-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": {
       "edition": "2024"
     },
     "generic-array-0.14.7": {
@@ -10833,6 +10872,9 @@
     "heck-0.5.0": {
       "edition": "2021"
     },
+    "hex-0.4.3": {
+      "edition": "2018"
+    },
     "iana-time-zone-0.1.65": {
       "edition": "2021"
     },
@@ -10851,7 +10893,7 @@
     "inventory-0.3.24": {
       "edition": "2021"
     },
-    "irodori-0.1.0": {
+    "irodori-0.1.1": {
       "edition": "2024"
     },
     "is_ci-1.2.0": {
@@ -10875,10 +10917,10 @@
     "itoa-1.0.18": {
       "edition": "2021"
     },
-    "kanshou-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": {
+    "kanshou-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": {
       "edition": "2024"
     },
-    "kanshou-derive-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": {
+    "kanshou-derive-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": {
       "edition": "2024",
       "proc_macro": true
     },
@@ -10900,13 +10942,13 @@
     "lock_api-0.4.14": {
       "edition": "2021"
     },
-    "log-0.4.29": {
+    "log-0.4.32": {
       "edition": "2021"
     },
     "matchers-0.2.0": {
       "edition": "2018"
     },
-    "memchr-2.8.0": {
+    "memchr-2.8.1": {
       "edition": "2021"
     },
     "miette-7.6.0": {
@@ -10919,7 +10961,7 @@
     "miniz_oxide-0.8.9": {
       "edition": "2021"
     },
-    "mio-1.2.0": {
+    "mio-1.2.1": {
       "edition": "2021"
     },
     "nix-0.29.0": {
@@ -11004,7 +11046,7 @@
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "reedline-0.42.0": {
+    "reedline-0.42.0-31960da265d64b1148d72ac870de841cf6e872d4": {
       "edition": "2021"
     },
     "ref-cast-1.0.25": {
@@ -11018,7 +11060,7 @@
     "regex-automata-0.4.14": {
       "edition": "2021"
     },
-    "regex-syntax-0.8.10": {
+    "regex-syntax-0.8.11": {
       "edition": "2021"
     },
     "rmcp-0.15.0": {
@@ -11116,32 +11158,32 @@
     "sharded-slab-0.1.7": {
       "edition": "2018"
     },
-    "shigoto-budget-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+    "shigoto-budget-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
       "edition": "2024"
     },
-    "shigoto-dag-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+    "shigoto-dag-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
       "edition": "2024"
     },
-    "shigoto-emit-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+    "shigoto-emit-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
       "edition": "2024"
     },
-    "shigoto-gate-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+    "shigoto-gate-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
       "edition": "2024"
     },
-    "shigoto-retry-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+    "shigoto-retry-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
       "edition": "2024"
     },
-    "shigoto-scheduler-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+    "shigoto-scheduler-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
       "edition": "2024"
     },
-    "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": {
+    "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
       "edition": "2024"
     },
     "shikumi-0.1.0": {
       "edition": "2024"
     },
-    "shlex-1.3.0": {
-      "edition": "2015"
+    "shlex-2.0.1": {
+      "edition": "2018"
     },
     "signal-hook-0.3.18": {
       "edition": "2018",
@@ -11162,7 +11204,7 @@
     "smallvec-1.15.1": {
       "edition": "2018"
     },
-    "socket2-0.6.3": {
+    "socket2-0.6.4": {
       "edition": "2021"
     },
     "static_assertions-1.1.0": {
@@ -11258,7 +11300,7 @@
     "tracing-subscriber-0.3.23": {
       "edition": "2018"
     },
-    "typenum-1.20.0": {
+    "typenum-1.20.1": {
       "edition": "2018"
     },
     "uncased-0.9.10": {
@@ -11271,7 +11313,7 @@
     "unicode-linebreak-0.1.5": {
       "edition": "2021"
     },
-    "unicode-segmentation-1.13.2": {
+    "unicode-segmentation-1.13.3": {
       "edition": "2018"
     },
     "unicode-width-0.1.14": {
@@ -11328,7 +11370,7 @@
     "cpufeatures-0.3.0": {
       "edition": "2024"
     },
-    "inotify-0.11.1": {
+    "inotify-0.11.2": {
       "edition": "2018"
     },
     "inotify-sys-0.1.5": {
@@ -11342,20 +11384,21 @@
     }
   },
   "git_nar_sha256": {
-    "awase-0.1.0-92c839463b49172d5d03b379230c8433b62a7cfe": "sha256-S5NLLs9zyGL7LXhI3F4JbGN003vzIMZxMjAc6cGJfj4=",
-    "gen-macros-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": "sha256-1T16SvFS9RChdC9U+KO949d1N4Wv23t5wjUDacWcXqg=",
-    "gen-platform-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": "sha256-1T16SvFS9RChdC9U+KO949d1N4Wv23t5wjUDacWcXqg=",
-    "gen-types-0.1.0-f64b2cb80d99c519953bb1f56b562c0c3c42a5ed": "sha256-1T16SvFS9RChdC9U+KO949d1N4Wv23t5wjUDacWcXqg=",
+    "awase-0.1.0-afa79c28177c5dbbe7ad185fd63d6a136f12cd73": "sha256-xdRG+nNbOTbYbPmT7DmRL87/lkccIYhDI4FPOQif+Uc=",
+    "gen-macros-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
+    "gen-platform-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
+    "gen-types-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
     "ishou-tokens-0.1.0-563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085": "sha256-+kzhHYtbo1lxEI9chtwFve5D/0nor38nMdEADf3nvZ4=",
-    "kanshou-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": "sha256-mXcqgumIEtvdzc5indo11F/M7Qib/Ep3qsDal8q0T24=",
-    "kanshou-derive-0.1.0-cb1fb0f30dd3a22e9773ad0e9fceae9d26daae16": "sha256-mXcqgumIEtvdzc5indo11F/M7Qib/Ep3qsDal8q0T24=",
-    "shigoto-budget-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-dag-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-emit-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-gate-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-retry-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-scheduler-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
-    "shigoto-types-0.1.0-0a30877d119a14e2238bbb254d882e10a0c83cf1": "sha256-iojUbiMcqgUH6PIon78niTUfu7OgfqfF6u/KCVhc0KM=",
+    "kanshou-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": "sha256-qxi/pBubzx4MfFDtJL4qLEoOSV43WF9Hc2VriRNlpCA=",
+    "kanshou-derive-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": "sha256-qxi/pBubzx4MfFDtJL4qLEoOSV43WF9Hc2VriRNlpCA=",
+    "reedline-0.42.0-31960da265d64b1148d72ac870de841cf6e872d4": "sha256-gmDpK80S942ZI0wNg6yZuGKh/EQh3EuthMOuWt+UmqQ=",
+    "shigoto-budget-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
+    "shigoto-dag-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
+    "shigoto-emit-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
+    "shigoto-gate-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
+    "shigoto-retry-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
+    "shigoto-scheduler-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
+    "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
     "tatara-lisp-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": "sha256-5Lv0gja4VgaOiRf8HxhZQYmj9/HAcZeb0kNhiukgTWU=",
     "tatara-lisp-derive-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": "sha256-5Lv0gja4VgaOiRf8HxhZQYmj9/HAcZeb0kNhiukgTWU="
   },

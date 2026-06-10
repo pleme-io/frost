@@ -17,10 +17,12 @@
 //!   queries split across reads. → `split_escapes_roundtrip` answers with the
 //!   reply itself fragmented, proving frost tolerates fragmented answers.
 //!
-//! The no-freeze-under-mute invariant (typed keystrokes echoed during a CPR
-//! wait) is deliberately NOT asserted yet — it is the M1 reedline-fork
-//! deliverable (CPR as optimization, never a liveness dependency). Tier:
-//! only-mitigated today; do not round up.
+//! The no-freeze-under-mute invariant went LIVE with the pleme-io reedline
+//! fork (CPR as optimization, never a liveness dependency): under MuteDsr the
+//! painter falls back to a safe row, the prompt paints, and commands round-
+//! trip. Residual (#[ignore]d): fd0-TARGETING builtin redirects cycle fd 0 and
+//! kill the crossterm/mio kqueue registration — an INPUT-liveness class (no
+//! keystrokes at all, CPR irrelevant) needing an event-source reset upstream.
 
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
@@ -254,23 +256,29 @@ fn post_accept_line_survives_and_executes() {
     );
 }
 
-/// E2 codified: a terminal that never answers CPR must not kill the shell.
-/// (Frozen-but-alive is the accepted M0 tier; no-freeze is the M1 fork work.)
+/// E2/E4 codified, full strength: a terminal that never answers CPR must not
+/// kill OR freeze the shell — the prompt proceeds (reedline-fork painter
+/// fallback) and a command still round-trips. Old frost died at ~2.1s;
+/// retry-only frost survived but ate input; the fork executes.
 #[test]
 fn mute_dsr_never_fatal() {
-    let Some(o) = drive(DsrPolicy::Mute, &[], Duration::from_secs(6), None) else {
+    let script = [Send {
+        at: Duration::from_millis(2500),
+        bytes: b"echo MARKER_MUTE\r",
+    }];
+    // Wide window: under Mute every remaining tolerant cursor::position()
+    // site still blocks ~2s before its fallback, so the round-trip lands
+    // ~6s in. Slow-but-usable is the contract for a hostile terminal.
+    let Some(o) = drive(DsrPolicy::Mute, &script, Duration::from_secs(12), None) else {
         return;
     };
+    let ran = count(&o.transcript, b"MARKER_MUTE") >= 2;
     assert!(
+        o.alive_at_end && ran && !o.read_error,
+        "mute-DSR terminal must be fully usable (no-freeze): alive={} ran={} read_error={} cpr={}",
         o.alive_at_end,
-        "mute-DSR terminal must never be fatal: alive={} read_error={} cpr_queries={}",
-        o.alive_at_end,
+        ran,
         o.read_error,
-        o.cpr_queries
-    );
-    assert!(
-        o.cpr_queries >= 2,
-        "expected the bounded CPR retry to re-query (≥2 queries), saw {}",
         o.cpr_queries
     );
 }
@@ -429,4 +437,66 @@ fn count(haystack: &[u8], needle: &[u8]) -> usize {
         i += p + needle.len();
     }
     n
+}
+
+/// E5-faithful row: the FULL frostmourne rc (seki prompt, hooks, notify,
+/// bindings — the repaint traffic that made the answer-loss race and the
+/// kqueue wedge reproducible) driven under a realistic-latency persona.
+/// Local-only discovery (boot_harness pattern): builds the rc aggregate
+/// from the adjacent frostmourne checkout's lisp/*.lisp in lexical order;
+/// SKIPs when the checkout is absent (hermetic builds).
+#[test]
+fn frostmourne_rc_post_accept_survives_and_executes() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let lisp_dir = std::path::PathBuf::from(home).join("code/github/pleme-io/frostmourne/lisp");
+    if !lisp_dir.is_dir() {
+        eprintln!("SKIP frostmourne_rc row: no local frostmourne checkout at {}", lisp_dir.display());
+        return;
+    }
+    let mut files: Vec<_> = std::fs::read_dir(&lisp_dir)
+        .expect("read lisp dir")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "lisp"))
+        .collect();
+    files.sort();
+    let mut rc = String::new();
+    for f in &files {
+        rc.push_str(&std::fs::read_to_string(f).expect("read rc file"));
+        rc.push('\n');
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rc_path = dir.path().join("rc.lisp");
+    std::fs::write(&rc_path, rc).unwrap();
+
+    let script = [
+        Send {
+            at: Duration::from_millis(2000),
+            bytes: b"\r",
+        },
+        Send {
+            at: Duration::from_millis(5000),
+            bytes: b"echo MARKER_FM_RC\r",
+        },
+    ];
+    let Some(o) = drive(
+        DsrPolicy::Answer {
+            // The latency that reproduced the answer-loss death 5/5 on
+            // pre-fix frost under this exact rc.
+            latency: Duration::from_millis(50),
+        },
+        &script,
+        Duration::from_secs(12),
+        Some(&rc_path),
+    ) else {
+        return;
+    };
+    let ran = count(&o.transcript, b"MARKER_FM_RC") >= 2;
+    assert!(
+        o.alive_at_end && ran && !o.read_error,
+        "full frostmourne rc must survive accept-line and execute: alive={} ran={} read_error={} cpr={}",
+        o.alive_at_end,
+        ran,
+        o.read_error,
+        o.cpr_queries
+    );
 }
