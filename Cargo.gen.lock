@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cargo_lock_sha256": "a4278d434f14b8c0a9a4c22f43dedd1b81e57e87cf76ee34e6ae9c469e0d8ef5",
+  "cargo_lock_sha256": "8c76e804808fb75f68e2d217c7cefe0bb44585f3d83a176a08282a9b1c352061",
   "target_resolves": {
     "base": {
       "addr2line-0.25.1": {
