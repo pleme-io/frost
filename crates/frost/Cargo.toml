@@ -65,3 +65,11 @@ shigoto-budget = { git = "https://github.com/pleme-io/shigoto" }
 shigoto-retry = { git = "https://github.com/pleme-io/shigoto" }
 async-trait = "0.1"
 thiserror = { workspace = true }
+# ─── persona_pty L0 harness (terminal integration-test plan M0) ────────
+# tests/persona_pty.rs drives the REAL frost binary on a real PTY under a
+# typed TerminalPersona (Answer / Mute / SplitReply DSR policies) and
+# asserts liveness invariants: never-fatal CPR, post-accept-line survival
+# (the 2026-06-10 CPR answer-loss race), fragmented-reply tolerance.
+nix = { workspace = true }
+libc = { workspace = true }
+tempfile = "3"
