@@ -468,12 +468,12 @@ fn builtin_redirect_must_not_wedge_next_prompt() {
     );
 }
 
-/// HONEST RESIDUAL: a builtin redirect that legitimately TARGETS fd 0 must
-/// cycle fd 0, which still deletes the tty event-source registration —
-/// the wedge persists for this narrow case. The structural fix is event-
-/// source re-registration (or the reedline fork making CPR optional) — M1.
+/// CLOSED 2026-06-10: fd0-targeting builtin redirects cycle fd 0, which
+/// used to delete crossterm/mio's kqueue registration (input-deaf forever).
+/// The reedline fork now enables crossterm's `use-dev-tty` poll(2) source —
+/// pollfds are rebuilt per read, so there is no persistent registration to
+/// lose when an fd instance cycles. This row is the proof.
 #[test]
-#[ignore = "fd0-targeting builtin redirects still cycle fd 0 — event-source re-registration pending (M1)"]
 fn builtin_stdin_redirect_must_not_wedge_next_prompt() {
     let script = [
         Send {
