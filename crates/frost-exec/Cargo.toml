@@ -28,6 +28,17 @@ fancy-regex = { workspace = true }
 # and Search (`/` `?` scrollback) modes. Re-uses the same primitive that
 # mado / ayatsuri / namimado consume — no duplicate state machine.
 awase = { git = "https://github.com/pleme-io/awase" }
+# wadachi (轍) — directory frecency. frost is the SOLE recorder: it records
+# every dir change at the chdir chokepoint and resolves smart-cd, both IN-PROCESS
+# (lib is imported as `wadachi`; package is pleme-io-wadachi). Behind a default
+# feature so the engine still builds standalone with --no-default-features.
+pleme-io-wadachi = { git = "https://github.com/pleme-io/wadachi", optional = true }
+
+[features]
+default = ["frecency-wadachi"]
+# In-process wadachi directory frecency (record-on-cd + smart-cd). On by default
+# for the fleet; opt out with --no-default-features to build a pure shell engine.
+frecency-wadachi = ["dep:pleme-io-wadachi"]
 
 [dev-dependencies]
 frost-lexer = { workspace = true }
