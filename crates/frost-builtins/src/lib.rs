@@ -65,6 +65,19 @@ pub trait ShellEnvironment {
 
     /// Set a variable's type to associative array (`typeset -A`).
     fn set_var_associative(&mut self, _name: &str) {}
+
+    /// Record a visit to `path` into the directory-frecency store (wadachi 轍).
+    /// Default is a no-op; the interactive `ShellEnv` overrides it. Best-effort
+    /// by contract — recording must never affect navigation, so the override
+    /// swallows every error.
+    fn record_visit(&mut self, _path: &str) {}
+
+    /// Resolve a bare `cd` token to the best frecency-ranked directory, used by
+    /// the `cd` builtin's smart-cd fallback when a literal `cd` fails. Default
+    /// returns `None` (no frecency available).
+    fn resolve_frecency(&self, _needle: &str) -> Option<String> {
+        None
+    }
 }
 
 // ── Builtin action (replaces __FROST_* magic variables) ──────────────

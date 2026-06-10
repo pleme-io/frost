@@ -200,6 +200,11 @@ pub struct ShellEnv {
     /// Last argument of the previously executed command (`$_`). Updated by
     /// the executor after each simple command finalizes its argv.
     pub last_arg: String,
+    /// Signal + pseudo-signal (EXIT/ERR/DEBUG) trap handlers. Lives here,
+    /// not on the Executor, because a fresh Executor is built per command
+    /// (it borrows this env) — so a `trap` set in one command must persist
+    /// to fire from a later command or at shell exit.
+    pub traps: crate::trap::TrapTable,
     /// Startup time for `$SECONDS`.
     start_time: Instant,
     /// Simple PRNG state for `$RANDOM` (matches zsh: rand() & 0x7fff).
@@ -238,6 +243,7 @@ impl ShellEnv {
             ppid,
             positional_params: Vec::new(),
             last_arg: String::new(),
+            traps: crate::trap::TrapTable::new(),
             start_time: Instant::now(),
             random_state: pid,
             modal: crate::modal::ModalState::new(),
@@ -664,11 +670,51 @@ impl ShellEnvironment for ShellEnv {
             self.set_var("OLDPWD", &old);
         }
         self.set_var("PWD", &logical.to_string_lossy());
+        // Record into wadachi (轍). This `chdir` is the one chokepoint every
+        // directory change flows through — `cd`, AUTO_CD, and `pushd`/`popd`
+        // all land here — so a single call records *every* dir change.
+        let visited = logical.to_string_lossy().into_owned();
+        self.record_visit(&visited);
         Ok(())
     }
 
     fn home_dir(&self) -> Option<&str> {
         self.get_var("HOME")
+    }
+
+    fn record_visit(&mut self, path: &str) {
+        // Fire a visit into wadachi. Synchronous (reaps the child; `cd` is
+        // interactive so the few-ms cost is fine) and best-effort — if wadachi
+        // isn't installed or the write fails, frecency simply doesn't record
+        // and navigation is never affected. The in-process store is the named
+        // destination; this subprocess form is the documented interim.
+        let _ = std::process::Command::new("wadachi")
+            .arg("add")
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    fn resolve_frecency(&self, needle: &str) -> Option<String> {
+        let out = std::process::Command::new("wadachi")
+            .arg("resolve")
+            .arg(needle)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8(out.stdout).ok()?;
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_owned())
+        }
     }
 }
 
