@@ -60,20 +60,30 @@ struct Outcome {
 }
 
 /// Drive the real `frost` binary on a real PTY under `policy` for `total`,
-/// injecting `script` keystrokes at their offsets. Returns the observation;
-/// never panics on session mechanics (assertions live in the tests).
-fn drive(policy: DsrPolicy, script: &[Send], total: Duration) -> Option<Outcome> {
+/// injecting `script` keystrokes at their offsets. `rc` (when set) becomes
+/// the child's FROSTRC so personas can exercise rc-declared behavior
+/// hermetically. Returns the observation; never panics on session mechanics
+/// (assertions live in the tests).
+fn drive(
+    policy: DsrPolicy,
+    script: &[Send],
+    total: Duration,
+    rc: Option<&std::path::Path>,
+) -> Option<Outcome> {
     use nix::pty::ForkptyResult;
     use std::ffi::CString;
 
     let home = tempfile::tempdir().expect("tempdir");
     let exe = CString::new(env!("CARGO_BIN_EXE_frost")).unwrap();
     let argv = [exe.clone()];
-    let envp: Vec<CString> = vec![
+    let mut envp: Vec<CString> = vec![
         CString::new("TERM=xterm-256color").unwrap(),
         CString::new(format!("HOME={}", home.path().display())).unwrap(),
         CString::new("PATH=/usr/bin:/bin").unwrap(),
     ];
+    if let Some(rc) = rc {
+        envp.push(CString::new(format!("FROSTRC={}", rc.display())).unwrap());
+    }
 
     // SAFETY: the child performs only async-signal-safe operations between
     // fork and exec (execve / _exit), per fork-in-threaded-process rules.
@@ -179,6 +189,7 @@ fn answers_dsr_idle_stays_alive() {
         },
         &[],
         Duration::from_secs(2),
+        None,
     ) else {
         return;
     };
@@ -225,6 +236,7 @@ fn post_accept_line_survives_and_executes() {
         },
         &script,
         Duration::from_secs(6),
+        None,
     ) else {
         return;
     };
@@ -246,7 +258,7 @@ fn post_accept_line_survives_and_executes() {
 /// (Frozen-but-alive is the accepted M0 tier; no-freeze is the M1 fork work.)
 #[test]
 fn mute_dsr_never_fatal() {
-    let Some(o) = drive(DsrPolicy::Mute, &[], Duration::from_secs(6)) else {
+    let Some(o) = drive(DsrPolicy::Mute, &[], Duration::from_secs(6), None) else {
         return;
     };
     assert!(
@@ -277,6 +289,7 @@ fn split_escapes_roundtrip() {
         },
         &script,
         Duration::from_secs(5),
+        None,
     ) else {
         return;
     };
@@ -284,6 +297,54 @@ fn split_escapes_roundtrip() {
     assert!(
         o.alive_at_end && ran,
         "fragmented CPR replies must still be consumed: alive={} ran={} cpr={}",
+        o.alive_at_end,
+        ran,
+        o.cpr_queries
+    );
+}
+
+/// 2026-06-10 part 2 — the defnotify freeze: a `(defnotify …)` rc form
+/// synthesizes a precmd hook whose body runs through the command engine
+/// before EVERY prompt, and that execution wedges the next read_line's CPR
+/// read — the shell survives (retry) but eats all input forever, even with
+/// 0ms-latency DSR answers. Bisection proved the single form is necessary
+/// and sufficient. IGNORED until the engine-side fix lands (frostmourne
+/// shipped with the form disabled meanwhile); un-ignore + re-enable the rc
+/// form together.
+#[test]
+#[ignore = "defnotify precmd hook wedges post-accept CPR — engine fix pending (incident 2026-06-10)"]
+fn notify_hook_must_not_break_cpr() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rc = dir.path().join("rc.lisp");
+    std::fs::write(
+        &rc,
+        "(defnotify :threshold-ms 30000 :title \"t\" :message \"m\")\n",
+    )
+    .unwrap();
+    let script = [
+        Send {
+            at: Duration::from_millis(1200),
+            bytes: b"\r",
+        },
+        Send {
+            at: Duration::from_millis(3600),
+            bytes: b"echo MARKER_NOTIFY\r",
+        },
+    ];
+    let Some(o) = drive(
+        DsrPolicy::Answer {
+            latency: Duration::from_millis(0),
+        },
+        &script,
+        Duration::from_secs(7),
+        Some(&rc),
+    ) else {
+        return;
+    };
+    let ran = count(&o.transcript, b"MARKER_NOTIFY") >= 2;
+    assert!(
+        o.alive_at_end && ran,
+        "defnotify precmd must not wedge the post-accept CPR: alive={} ran={} cpr={}",
         o.alive_at_end,
         ran,
         o.cpr_queries
