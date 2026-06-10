@@ -683,37 +683,33 @@ impl ShellEnvironment for ShellEnv {
     }
 
     fn record_visit(&mut self, path: &str) {
-        // Fire a visit into wadachi. Synchronous (reaps the child; `cd` is
-        // interactive so the few-ms cost is fine) and best-effort — if wadachi
-        // isn't installed or the write fails, frecency simply doesn't record
-        // and navigation is never affected. The in-process store is the named
-        // destination; this subprocess form is the documented interim.
-        let _ = std::process::Command::new("wadachi")
-            .arg("add")
-            .arg(path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        // Record IN-PROCESS into wadachi (轍) — no subprocess fork, no PATH
+        // dependency. Best-effort by contract: a frecency error is swallowed so
+        // it can never affect navigation. frost is the SOLE recorder; every
+        // directory change flows through chdir → here exactly once.
+        #[cfg(feature = "frecency-wadachi")]
+        {
+            let _ = wadachi::record(path);
+        }
+        #[cfg(not(feature = "frecency-wadachi"))]
+        {
+            let _ = path;
+        }
     }
 
     fn resolve_frecency(&self, needle: &str) -> Option<String> {
-        let out = std::process::Command::new("wadachi")
-            .arg("resolve")
-            .arg(needle)
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
+        // In-process smart-cd resolve — only called when a literal `cd` failed.
+        #[cfg(feature = "frecency-wadachi")]
+        {
+            return wadachi::resolve(needle)
+                .ok()
+                .flatten()
+                .map(|p| p.to_string_lossy().into_owned());
         }
-        let s = String::from_utf8(out.stdout).ok()?;
-        let t = s.trim();
-        if t.is_empty() {
+        #[cfg(not(feature = "frecency-wadachi"))]
+        {
+            let _ = needle;
             None
-        } else {
-            Some(t.to_owned())
         }
     }
 }
