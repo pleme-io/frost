@@ -1643,11 +1643,18 @@ impl Drop for ProcSubFdGuard {
 fn save_and_apply_redirects(
     redirects: &[frost_parser::ast::Redirect],
 ) -> Result<Vec<(std::os::fd::RawFd, std::os::fd::RawFd)>, redirect::RedirectError> {
-    // Back up the standard streams (the only fds builtins realistically
-    // target) above fd 9 so they don't collide with the low fds the
-    // redirect itself allocates.
+    // Back up ONLY the std fds these redirects actually touch, above fd 9
+    // so they don't collide with the low fds the redirect itself allocates.
+    //
+    // NEVER cycle an untouched fd: restoring via dup2 momentarily closes
+    // the destination fd, and closing an fd instance silently deletes any
+    // kqueue/epoll registration bound to it. crossterm/mio's terminal event
+    // source registers fd 0 — cycling it for a `2>/dev/null` builtin
+    // redirect left the event source permanently deaf (every later
+    // cursor-position read timed out; the shell wedged eating input —
+    // incident 2026-06-10, surfaced via frostmourne's defnotify precmd).
     let mut saved = Vec::new();
-    for fd in [0, 1, 2] {
+    for fd in redirect::touched_std_fds(redirects) {
         if let Ok(backup) = sys::dup_from(fd, 10) {
             saved.push((fd, backup));
         }

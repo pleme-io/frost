@@ -305,14 +305,12 @@ fn split_escapes_roundtrip() {
 
 /// 2026-06-10 part 2 — the defnotify freeze: a `(defnotify …)` rc form
 /// synthesizes a precmd hook whose body runs through the command engine
-/// before EVERY prompt, and that execution wedges the next read_line's CPR
-/// read — the shell survives (retry) but eats all input forever, even with
-/// 0ms-latency DSR answers. Bisection proved the single form is necessary
-/// and sufficient. IGNORED until the engine-side fix lands (frostmourne
-/// shipped with the form disabled meanwhile); un-ignore + re-enable the rc
-/// form together.
+/// before EVERY prompt. Root cause: the in-process builtin-redirect
+/// save/restore cycled fd 0 through dup2 even for `2>/dev/null`, and the
+/// momentary close deleted crossterm/mio's kqueue registration for the tty
+/// — every later CPR read timed out (alive-but-frozen, any DSR latency).
+/// Fixed by `redirect::touched_std_fds` (back up only the touched fds).
 #[test]
-#[ignore = "defnotify precmd hook wedges post-accept CPR — engine fix pending (incident 2026-06-10)"]
 fn notify_hook_must_not_break_cpr() {
     let dir = tempfile::tempdir().expect("tempdir");
     let rc = dir.path().join("rc.lisp");
@@ -345,6 +343,78 @@ fn notify_hook_must_not_break_cpr() {
     assert!(
         o.alive_at_end && ran,
         "defnotify precmd must not wedge the post-accept CPR: alive={} ran={} cpr={}",
+        o.alive_at_end,
+        ran,
+        o.cpr_queries
+    );
+}
+
+/// Minimal repro of the kqueue-deletion wedge: a BUILTIN with a non-fd0
+/// redirect must not affect the next prompt (externals fork, so only the
+/// in-process path is at risk). Failed before `touched_std_fds`.
+#[test]
+fn builtin_redirect_must_not_wedge_next_prompt() {
+    let script = [
+        Send {
+            at: Duration::from_millis(1200),
+            bytes: b"true 2>/dev/null\r",
+        },
+        Send {
+            at: Duration::from_millis(3600),
+            bytes: b"echo MARKER_REDIR\r",
+        },
+    ];
+    let Some(o) = drive(
+        DsrPolicy::Answer {
+            latency: Duration::from_millis(20),
+        },
+        &script,
+        Duration::from_secs(7),
+        None,
+    ) else {
+        return;
+    };
+    let ran = count(&o.transcript, b"MARKER_REDIR") >= 2;
+    assert!(
+        o.alive_at_end && ran,
+        "builtin 2>/dev/null must not wedge the next prompt: alive={} ran={} cpr={}",
+        o.alive_at_end,
+        ran,
+        o.cpr_queries
+    );
+}
+
+/// HONEST RESIDUAL: a builtin redirect that legitimately TARGETS fd 0 must
+/// cycle fd 0, which still deletes the tty event-source registration —
+/// the wedge persists for this narrow case. The structural fix is event-
+/// source re-registration (or the reedline fork making CPR optional) — M1.
+#[test]
+#[ignore = "fd0-targeting builtin redirects still cycle fd 0 — event-source re-registration pending (M1)"]
+fn builtin_stdin_redirect_must_not_wedge_next_prompt() {
+    let script = [
+        Send {
+            at: Duration::from_millis(1200),
+            bytes: b"true </dev/null\r",
+        },
+        Send {
+            at: Duration::from_millis(3600),
+            bytes: b"echo MARKER_FD0\r",
+        },
+    ];
+    let Some(o) = drive(
+        DsrPolicy::Answer {
+            latency: Duration::from_millis(20),
+        },
+        &script,
+        Duration::from_secs(7),
+        None,
+    ) else {
+        return;
+    };
+    let ran = count(&o.transcript, b"MARKER_FD0") >= 2;
+    assert!(
+        o.alive_at_end && ran,
+        "builtin </dev/null wedges the next prompt (fd0 cycled): alive={} ran={} cpr={}",
         o.alive_at_end,
         ran,
         o.cpr_queries
