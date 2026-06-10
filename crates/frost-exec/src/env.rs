@@ -689,7 +689,7 @@ impl ShellEnvironment for ShellEnv {
         // directory change flows through chdir → here exactly once.
         #[cfg(feature = "frecency-wadachi")]
         {
-            let _ = wadachi::record(path);
+            let _ = pleme_io_wadachi::record(path);
         }
         #[cfg(not(feature = "frecency-wadachi"))]
         {
@@ -701,7 +701,7 @@ impl ShellEnvironment for ShellEnv {
         // In-process smart-cd resolve — only called when a literal `cd` failed.
         #[cfg(feature = "frecency-wadachi")]
         {
-            return wadachi::resolve(needle)
+            return pleme_io_wadachi::resolve(needle)
                 .ok()
                 .flatten()
                 .map(|p| p.to_string_lossy().into_owned());
