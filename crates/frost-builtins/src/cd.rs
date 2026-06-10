@@ -75,11 +75,40 @@ impl Builtin for Cd {
         match env.chdir(&target) {
             Ok(()) => 0,
             Err(e) => {
+                // Smart-cd: when a *bare* token isn't a real directory, fall
+                // back to the wadachi (轍) frecency store — `cd wad` jumps to
+                // the most-worn path matching "wad". Only plain tokens get this
+                // treatment; absolute / `./` / `..` / `~` / `-` forms must fail
+                // honestly. This is the in-process replacement for zoxide's
+                // `cd`-override shell function.
+                if let Some(needle) = frecency_needle(args) {
+                    if let Some(hit) = env.resolve_frecency(needle) {
+                        if env.chdir(&hit).is_ok() {
+                            return 0;
+                        }
+                    }
+                }
                 eprintln!("cd: {target}: {e}");
                 1
             }
         }
     }
+}
+
+/// The bare-token frecency needle, if `args` is eligible for smart-cd. Returns
+/// `None` for `-`, `~…`, absolute, `./…`, and `..…` forms, which must resolve
+/// literally or fail honestly.
+fn frecency_needle<'a>(args: &'a [&'a str]) -> Option<&'a str> {
+    let arg = *args.first()?;
+    if arg == "-"
+        || arg.starts_with('~')
+        || arg.starts_with('/')
+        || arg.starts_with("./")
+        || arg.starts_with("..")
+    {
+        return None;
+    }
+    Some(arg)
 }
 
 /// The `pwd` builtin — print the working directory. `-L` (default)
