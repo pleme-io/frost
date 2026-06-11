@@ -39,6 +39,14 @@ pub use tree::{CompletionNode, CompletionTree, FlagNode, PositNode};
 // frost-lisp dep for the common "wire specs into the completer" path.
 pub use frost_lisp::{FlagSpec, PositSpec, SubcmdSpec, ValueKind};
 
+/// Ranked directory suggestions from beyond the local filesystem walk
+/// — e.g. wadachi's frecency index (real visits plus dirs the
+/// background indexer discovered). Takes the partial word, returns
+/// directory paths rendered with a trailing `/`. Consulted for the
+/// `dir`-kind builtin positionals (`cd` / `pushd`) only — jump
+/// candidates make no sense for `mkdir` / `rmdir`.
+pub type DirOracle = Box<dyn Fn(&str) -> Vec<String> + Send>;
+
 /// The frost completion engine.
 ///
 /// Construction is cheap; `complete` is called on every Tab press so
@@ -59,6 +67,9 @@ pub struct FrostCompleter {
     /// / `(defposit …)` forms. Consulted first; a miss falls through
     /// to the flat `arg_completions` path above.
     tree: CompletionTree,
+    /// Optional frecency/index oracle for `dir`-kind completion —
+    /// see [`DirOracle`].
+    dir_oracle: Option<DirOracle>,
 }
 
 impl FrostCompleter {
@@ -68,7 +79,17 @@ impl FrostCompleter {
             arg_completions: HashMap::new(),
             command_descriptions: HashMap::new(),
             tree: CompletionTree::default(),
+            dir_oracle: None,
         }
+    }
+
+    /// Install a [`DirOracle`] — ranked dir candidates (frecency
+    /// index) merged into `cd` / `pushd` completion ahead of the
+    /// local filesystem walk.
+    #[must_use]
+    pub fn with_dir_oracle(mut self, oracle: DirOracle) -> Self {
+        self.dir_oracle = Some(oracle);
+        self
     }
 
     /// Install the rich completion tree assembled from `(defsubcmd)`,
@@ -205,7 +226,35 @@ impl Completer for FrostCompleter {
                     },
                 ));
             }
-            out.extend(value_kind_candidates(&kind, &ctx.word, span));
+            // Frecency oracle — ranked dirs from the wadachi index
+            // (real visits + background-indexed dirs), so
+            // `cd wad<Tab>` offers ~/code/github/pleme-io/wadachi/
+            // without the operator ever having to be near it in the
+            // filesystem. `dir` kind only: jump candidates make no
+            // sense for `mkdir`/`rmdir` (`dirs` kind).
+            if kind == ValueKind::Dir
+                && let Some(oracle) = &self.dir_oracle
+            {
+                out.extend(oracle(&ctx.word).into_iter().take(8).map(|value| {
+                    Suggestion {
+                        description: Some("frecency".into()),
+                        append_whitespace: false,
+                        style: None,
+                        extra: None,
+                        span,
+                        value,
+                    }
+                }));
+            }
+            // Local filesystem walk, deduped against anything the
+            // oracle already offered.
+            let seen: std::collections::BTreeSet<String> =
+                out.iter().map(|s| s.value.clone()).collect();
+            out.extend(
+                value_kind_candidates(&kind, &ctx.word, span)
+                    .into_iter()
+                    .filter(|s| !seen.contains(&s.value)),
+            );
             return out;
         }
 
@@ -1000,6 +1049,45 @@ mod tests {
             "dir positional must not fold plain files back in: {out:?}"
         );
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn cd_merges_dir_oracle_candidates_with_dedupe() {
+        let tmp = scratch_dir("oracle");
+        let oracle_dir = format!("{}/sub/", tmp.display());
+        let oracle_dir_clone = oracle_dir.clone();
+        let mut completer = FrostCompleter::with_default_builtins().with_dir_oracle(
+            Box::new(move |_| vec![oracle_dir_clone.clone(), "/frecency/jump/".into()]),
+        );
+        // Bare-word completion: oracle candidates appear, marked.
+        let out = completer.complete("cd ju", 5);
+        let jump = out
+            .iter()
+            .find(|s| s.value == "/frecency/jump/")
+            .expect("oracle candidate must be offered for cd");
+        assert_eq!(jump.description.as_deref(), Some("frecency"));
+        assert!(!jump.append_whitespace, "dirs stay open for descent");
+
+        // Dedupe: when the oracle and the filesystem walk produce the
+        // SAME path, it appears once.
+        let line = format!("cd {}/", tmp.display());
+        let out = completer.complete(&line, line.len());
+        let dupes = out.iter().filter(|s| s.value == oracle_dir).count();
+        assert_eq!(dupes, 1, "oracle+fs duplicates must collapse: {out:?}");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn mkdir_does_not_consult_the_dir_oracle() {
+        // Jump candidates make no sense for mkdir/rmdir (`dirs` kind);
+        // the oracle is `dir`-kind (cd/pushd) only.
+        let mut completer = FrostCompleter::with_default_builtins()
+            .with_dir_oracle(Box::new(|_| vec!["/frecency/jump/".into()]));
+        let out = completer.complete("mkdir ju", 8);
+        assert!(
+            out.iter().all(|s| s.value != "/frecency/jump/"),
+            "mkdir must not offer frecency jumps: {out:?}"
+        );
     }
 
     #[test]
