@@ -290,7 +290,7 @@ async fn all_frostmourne_rc_files_apply_within_timeout() {
     // reproduces faithfully. Per-Job 1-second timeout via
     // shigoto-scheduler's `set_timeout` is the canonical Signal::Timeout
     // entry point.
-    let emitter: Arc<dyn TransitionEmitter> = Arc::new(NullEmitter);
+    let emitter: Arc<dyn TransitionEmitter> = Arc::new(NullEmitter::new());
     let scheduler = InProcessScheduler::new("frostmourne-boot").with_emitter(emitter);
 
     let mut budget = BudgetTree::new();
