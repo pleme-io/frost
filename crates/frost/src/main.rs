@@ -1120,7 +1120,13 @@ fn interactive(
         frost_complete::FrostCompleter::with_default_builtins()
             .with_arg_completions(rc_completions.clone())
             .with_descriptions(rc_descriptions)
-            .with_rich_completions(&rc_subcmds, &rc_flags, &rc_positionals),
+            .with_rich_completions(&rc_subcmds, &rc_flags, &rc_positionals)
+            // wadachi (轍) frecency oracle: `cd wad<Tab>` offers
+            // ranked dirs from the index — real visits plus dirs the
+            // background indexer discovered — no filesystem proximity
+            // needed. Empty-vec when the frecency feature is off or
+            // the store is unreadable, so completion never degrades.
+            .with_dir_oracle(Box::new(|word| frost_exec::frecent_dirs(word, 8))),
     );
     // Highlighter's "is this a known command?" lookup needs a union of
     // builtins + rc-declared aliases/functions + rc-declared completion

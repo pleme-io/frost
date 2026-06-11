@@ -714,6 +714,40 @@ impl ShellEnvironment for ShellEnv {
     }
 }
 
+/// Ranked frecent directories matching `needle` — completion-menu
+/// candidates for `cd` / `pushd` from the wadachi (轍) index: real
+/// visits plus background-indexed dirs the operator has never
+/// visited. Rendered with a trailing `/` so the completer can keep
+/// descending. Empty when the frecency feature is off or the store is
+/// unreadable — completion must never error.
+#[must_use]
+pub fn frecent_dirs(needle: &str, limit: usize) -> Vec<String> {
+    #[cfg(feature = "frecency-wadachi")]
+    {
+        match pleme_io_wadachi::top_n(needle, limit) {
+            Ok(ranked) => ranked
+                .into_iter()
+                .map(|r| {
+                    let mut s = r.path.to_string_lossy().into_owned();
+                    if !s.ends_with('/') {
+                        s.push('/');
+                    }
+                    s
+                })
+                .collect(),
+            Err(e) => {
+                tracing::debug!(error = %e, "wadachi top_n failed — no frecency candidates");
+                Vec::new()
+            }
+        }
+    }
+    #[cfg(not(feature = "frecency-wadachi"))]
+    {
+        let _ = (needle, limit);
+        Vec::new()
+    }
+}
+
 /// Resolve `arg` to an absolute LOGICAL path against `base`, collapsing
 /// `.` and `..` LEXICALLY without touching the filesystem — so symlinks
 /// are never chased (zsh's default `cd`: `$PWD` keeps the path the user
