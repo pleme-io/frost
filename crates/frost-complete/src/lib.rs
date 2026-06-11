@@ -5,6 +5,11 @@
 //!
 //! * **Command completion** at position 0 of a command: matches against
 //!   shell builtins + every executable reachable via `$PATH`.
+//! * **Typed per-command argument completion** from rc-authored
+//!   `(defsubcmd)` / `(defflag)` / `(defposit)` specs (the rich tree),
+//!   plus engine-native positional kinds for path-taking builtins —
+//!   `cd` / `pushd` complete directories only, the typed equivalent of
+//!   zsh's `_cd` / `_directories` compdef wiring.
 //! * **Filename completion** everywhere else: expands the partial word
 //!   against the filesystem, honoring `~` expansion.
 //!
@@ -14,8 +19,8 @@
 //!
 //! Not yet covered (tracked upstream):
 //!
-//! * Per-command argument completion (compsys `_arguments` specs, zsh
-//!   `compdef` definitions).
+//! * Consuming zsh-native compsys specs at runtime (`_arguments`,
+//!   `compdef`) — forge-side conversion only, see [`parse_zsh_compdef`].
 //! * Completion from aliases / functions / named parameters.
 //! * Menu-select completion widgets and `zstyle` configuration.
 
@@ -95,7 +100,10 @@ impl FrostCompleter {
     /// Replace the rc-authored per-command argument completion map.
     /// Merged with filesystem suggestions at argument position, so a
     /// command with declared args still allows filename completion for
-    /// anything not in the list.
+    /// anything not in the list. Exception: commands with a typed
+    /// builtin positional kind (`cd`, `pushd`, `mkdir`, `rmdir`) merge
+    /// declared args with *directories only* — plain files are never
+    /// offered for those.
     pub fn with_arg_completions(mut self, map: HashMap<String, Vec<String>>) -> Self {
         self.arg_completions = map;
         self
@@ -134,31 +142,76 @@ impl Completer for FrostCompleter {
                 .collect();
         }
 
+        // Identify the command the cursor's argument belongs to — the
+        // first word of the current *logical command segment*, not of
+        // the whole buffer (`cd /tmp && cat <Tab>` completes for
+        // `cat`, never `cd`).
+        let segment_start = logical_segment_start(line, ctx.word_start);
+        let segment = &line[segment_start..ctx.word_start];
+        let cmd_name = first_word(segment);
+
         // Argument position — try the rich tree first for description-
         // bearing candidates. Falls through to flat args + filesystem.
-        if let Some(cmd_name) = first_word(line)
-            && let Some(mut tree_sugs) = self.tree_suggestions(line, &ctx, cmd_name, span)
+        if let Some(cmd_name) = cmd_name
+            && let Some((mut tree_sugs, active_kind)) =
+                self.tree_suggestions(segment, &ctx, cmd_name, span)
         {
-            // Still fold in filesystem completion so path-like arguments
-            // remain easy to type even after a known subcommand.
-            tree_sugs.extend(
-                filename_candidates(&ctx.word)
-                    .into_iter()
-                    .map(|value| Suggestion {
+            // Fold in filesystem completion so path-like arguments stay
+            // easy to type after a known subcommand — unless the active
+            // spec's value kind already walked the filesystem (file/dir
+            // kinds): those candidates were enumerated above with the
+            // kind's own filter, so a generic fold would re-add the very
+            // entries the kind excludes (files after a dirs-only `dir`
+            // kind) and duplicate the rest.
+            let kind_owns_fs = active_kind
+                .as_ref()
+                .is_some_and(ValueKind::completes_from_fs);
+            if !kind_owns_fs {
+                tree_sugs.extend(
+                    filename_candidates(&ctx.word)
+                        .into_iter()
+                        .map(|value| Suggestion {
+                            description: None,
+                            append_whitespace: !value.ends_with('/'),
+                            style: None,
+                            extra: None,
+                            span,
+                            value,
+                        }),
+                );
+            }
+            return tree_sugs;
+        }
+
+        // Typed positional kinds for path-taking builtins — `cd` and
+        // friends complete directories only, with no rc spec needed.
+        // rc-authored flat args (e.g. bookmark names) still merge in;
+        // an rc completion tree entry for the command wins outright
+        // (consulted above).
+        if let Some(cmd_name) = cmd_name
+            && let Some(kind) = builtin_positional_kind(cmd_name)
+            && !ctx.word.starts_with('-')
+        {
+            let mut out: Vec<Suggestion> = Vec::new();
+            if let Some(args) = self.arg_completions.get(cmd_name) {
+                out.extend(args.iter().filter(|a| a.starts_with(&ctx.word)).map(
+                    |value| Suggestion {
                         description: None,
                         append_whitespace: !value.ends_with('/'),
                         style: None,
                         extra: None,
                         span,
-                        value,
-                    }),
-            );
-            return tree_sugs;
+                        value: value.clone(),
+                    },
+                ));
+            }
+            out.extend(value_kind_candidates(&kind, &ctx.word, span));
+            return out;
         }
 
         // Flat-args fallback (legacy `(defcompletion :args …)` path).
         let mut out: Vec<String> = Vec::new();
-        if let Some(cmd_name) = first_word(line) {
+        if let Some(cmd_name) = cmd_name {
             if let Some(args) = self.arg_completions.get(cmd_name) {
                 out.extend(args.iter().filter(|a| a.starts_with(&ctx.word)).cloned());
             }
@@ -181,22 +234,28 @@ impl FrostCompleter {
     /// Return rich completions from the tree if the command is
     /// known. Consumes the partial-line context; each suggestion
     /// carries the spec's description so reedline's menu shows it.
+    ///
+    /// The second tuple element is the [`ValueKind`] that drove the
+    /// candidates for the *current word* (a flag's value or a
+    /// positional), when one applied — `complete` uses it to decide
+    /// whether the generic filesystem fold-in is still warranted.
+    ///
+    /// `segment` is the current logical command's text up to (but not
+    /// including) the current word — see `logical_segment_start`.
     fn tree_suggestions(
         &self,
-        line: &str,
+        segment: &str,
         ctx: &WordContext<'_>,
         cmd_name: &str,
         span: Span,
-    ) -> Option<Vec<Suggestion>> {
+    ) -> Option<(Vec<Suggestion>, Option<ValueKind>)> {
         if !self.tree.knows(cmd_name) {
             return None;
         }
 
-        // Split the line up to (but not including) the current word.
-        // Everything before `word_start` that's past the command name
-        // is a potential subcommand token.
-        let prefix_line = &line[..ctx.word_start];
-        let mut path_parts: Vec<&str> = prefix_line.split_whitespace().collect();
+        // Everything in the segment past the command name is a
+        // potential subcommand token.
+        let mut path_parts: Vec<&str> = segment.split_whitespace().collect();
         // Drop the command name itself from the walk — the tree's
         // top-level lookup is keyed by it.
         let _ = path_parts.drain(..1);
@@ -246,8 +305,9 @@ impl FrostCompleter {
         if last_flag_takes_value {
             if let Some(kind) = last_flag_kind {
                 out.extend(value_kind_candidates(&kind, &ctx.word, span));
+                return Some((out, Some(kind)));
             }
-            return Some(out);
+            return Some((out, None));
         }
 
         // Case B — the current word starts with `-`: offer flags.
@@ -264,7 +324,7 @@ impl FrostCompleter {
                     });
                 }
             }
-            return Some(out);
+            return Some((out, None));
         }
 
         // Case C — at a subcommand / positional position. Offer
@@ -282,11 +342,13 @@ impl FrostCompleter {
                 });
             }
         }
+        let mut active_kind = None;
         if let Some(posit) = current.positionals.get(&positional_index) {
             out.extend(value_kind_candidates(&posit.takes, &ctx.word, span));
+            active_kind = Some(posit.takes.clone());
         }
 
-        Some(out)
+        Some((out, active_kind))
     }
 }
 
@@ -308,9 +370,13 @@ fn value_kind_candidates(kind: &ValueKind, prefix: &str, span: Span) -> Vec<Sugg
                 value,
             })
             .collect(),
-        ValueKind::File | ValueKind::Files => filename_candidates(prefix)
+        // Filesystem kinds walk the directory under the prefix. File
+        // kinds include directories too — descending into a
+        // subdirectory is part of typing a file path; dir kinds keep
+        // directories only (`cd`'s contract).
+        k if k.completes_from_fs() => filename_candidates(prefix)
             .into_iter()
-            .filter(|c| !c.ends_with('/') || kind.directories_only())
+            .filter(|c| !k.directories_only() || c.ends_with('/'))
             .map(|value| Suggestion {
                 description: None,
                 append_whitespace: !value.ends_with('/'),
@@ -320,19 +386,20 @@ fn value_kind_candidates(kind: &ValueKind, prefix: &str, span: Span) -> Vec<Sugg
                 value,
             })
             .collect(),
-        ValueKind::Dir | ValueKind::Dirs => filename_candidates(prefix)
-            .into_iter()
-            .filter(|c| c.ends_with('/'))
-            .map(|value| Suggestion {
-                description: None,
-                append_whitespace: false,
-                style: None,
-                extra: None,
-                span,
-                value,
-            })
-            .collect(),
         _ => Vec::new(),
+    }
+}
+
+/// Positional [`ValueKind`]s frost knows natively for path-taking
+/// builtins — the typed equivalent of zsh's `_cd` / `_directories`
+/// compdef wiring, shipped in the engine so `cd <Tab>` is dirs-only
+/// out of the box. An rc-authored completion tree entry for the same
+/// command overrides this (the tree is consulted first in `complete`).
+fn builtin_positional_kind(cmd: &str) -> Option<ValueKind> {
+    match cmd {
+        "cd" | "pushd" => Some(ValueKind::Dir),
+        "mkdir" | "rmdir" => Some(ValueKind::Dirs),
+        _ => None,
     }
 }
 
@@ -447,6 +514,42 @@ fn first_word(line: &str) -> Option<&str> {
     } else {
         Some(&trimmed[..end])
     }
+}
+
+/// Byte offset where the *current logical command* begins — the
+/// position just past the last unquoted `;`, `|`, `&`, newline, `(`
+/// or `{` before `before`. Mirrors the separator set `current_word`
+/// uses for command-position detection, with the same quote-state
+/// tracking, so `cd /tmp && cat <Tab>` attributes the argument to
+/// `cat`, not to the buffer's first word.
+fn logical_segment_start(line: &str, before: usize) -> usize {
+    let bytes = line.as_bytes();
+    let end = before.min(bytes.len());
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut seg = 0;
+    let mut i = 0;
+    while i < end {
+        let b = bytes[i];
+        if in_single {
+            if b == b'\'' {
+                in_single = false;
+            }
+        } else if in_double {
+            if b == b'"' {
+                in_double = false;
+            }
+        } else {
+            match b {
+                b'\'' => in_single = true,
+                b'"' => in_double = true,
+                b';' | b'|' | b'&' | b'\n' | b'(' | b'{' => seg = i + 1,
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    seg
 }
 
 fn current_word(line: &str, pos: usize) -> WordContext<'_> {
@@ -593,7 +696,16 @@ fn filename_candidates(partial: &str) -> Vec<String> {
         rendered.push_str(&name_str);
 
         // Append `/` for directories so the user can keep completing.
-        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+        // `DirEntry::file_type()` does NOT follow symlinks — resolve
+        // through `metadata()` so a symlinked directory (e.g. `/tmp`
+        // on macOS) still reads as a dir and survives dirs-only
+        // filters like `cd`'s.
+        let is_dir = entry.file_type().is_ok_and(|t| {
+            t.is_dir()
+                || (t.is_symlink()
+                    && std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir()))
+        });
+        if is_dir {
             rendered.push('/');
         }
         out.insert(rendered);
@@ -744,5 +856,164 @@ mod tests {
         // must see the matching builtins.
         assert!(out.contains(&"exit".to_string()));
         assert!(!out.contains(&"echo".to_string()));
+    }
+
+    /// Scratch dir with one file (`alpha.txt`) and one subdir (`sub/`).
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let tmp = std::env::temp_dir().join(format!("frost-complete-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("sub")).unwrap();
+        std::fs::write(tmp.join("alpha.txt"), "").unwrap();
+        tmp
+    }
+
+    #[test]
+    fn cd_completes_directories_only() {
+        let tmp = scratch_dir("cd");
+        let mut completer = FrostCompleter::with_default_builtins();
+        let line = format!("cd {}/", tmp.display());
+        let out = completer.complete(&line, line.len());
+        assert!(
+            out.iter().any(|s| s.value.ends_with("sub/")),
+            "cd must offer the subdirectory: {out:?}"
+        );
+        assert!(
+            out.iter().all(|s| s.value.ends_with('/')),
+            "cd must offer directories only, got: {out:?}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn cd_merges_rc_flat_args_with_directories() {
+        let tmp = scratch_dir("cd-args");
+        let mut map = HashMap::new();
+        map.insert("cd".to_string(), vec!["sub".to_string()]);
+        let mut completer = FrostCompleter::with_default_builtins().with_arg_completions(map);
+        let line = format!("cd {}/", tmp.display());
+        let out = completer.complete(&line, line.len());
+        // The flat arg doesn't match the typed path prefix, but the
+        // dirs-only filesystem walk still applies.
+        assert!(out.iter().all(|s| s.value.ends_with('/')));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn cd_offers_matching_rc_flat_args_alongside_directories() {
+        let mut map = HashMap::new();
+        map.insert(
+            "cd".to_string(),
+            vec!["bookmark-work".to_string(), "bookmark-play/".to_string()],
+        );
+        let mut completer = FrostCompleter::with_default_builtins().with_arg_completions(map);
+        let out = completer.complete("cd bookmark-", 12);
+        let work = out
+            .iter()
+            .find(|s| s.value == "bookmark-work")
+            .expect("rc flat arg must be offered for cd");
+        assert!(work.append_whitespace);
+        // Slash-terminated rc args keep the path open for descent —
+        // same rule as every filesystem suggestion in this crate.
+        let play = out
+            .iter()
+            .find(|s| s.value == "bookmark-play/")
+            .expect("slash-terminated rc flat arg must be offered for cd");
+        assert!(!play.append_whitespace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cd_offers_symlinked_directories() {
+        // `DirEntry::file_type()` does not follow symlinks; the dirs-
+        // only filter must still see a symlink-to-dir as a directory
+        // (on macOS `/tmp` itself is one — `cd /tm<Tab>` must work).
+        let tmp = scratch_dir("cd-symlink");
+        std::os::unix::fs::symlink(tmp.join("sub"), tmp.join("link")).unwrap();
+        let mut completer = FrostCompleter::with_default_builtins();
+        let line = format!("cd {}/li", tmp.display());
+        let out = completer.complete(&line, line.len());
+        assert!(
+            out.iter().any(|s| s.value.ends_with("link/")),
+            "symlinked dir must complete for cd: {out:?}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn second_command_after_cd_still_completes_files() {
+        // `cd /tmp && cat <Tab>` belongs to `cat` — the dirs-only
+        // builtin kind of the buffer's FIRST word must not leak into
+        // later logical commands.
+        let tmp = scratch_dir("cd-multi");
+        let mut completer = FrostCompleter::with_default_builtins();
+        for joiner in ["&&", ";", "|"] {
+            let line = format!("cd /tmp {joiner} cat {}/", tmp.display());
+            let out = completer.complete(&line, line.len());
+            assert!(
+                out.iter().any(|s| s.value.ends_with("alpha.txt")),
+                "files must complete for the second command (joiner {joiner:?}): {out:?}"
+            );
+        }
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn logical_segment_start_tracks_separators_and_quotes() {
+        assert_eq!(logical_segment_start("cat file", 8), 0);
+        assert_eq!(logical_segment_start("cd /tmp && cat f", 16), 10);
+        assert_eq!(logical_segment_start("ls; cd s", 8), 3);
+        // Separators inside quotes don't start a new segment.
+        assert_eq!(logical_segment_start("echo 'a;b' c", 12), 0);
+        assert_eq!(logical_segment_start("echo \"a|b\" c", 12), 0);
+    }
+
+    #[test]
+    fn builtin_positional_kinds_cover_path_taking_builtins() {
+        assert_eq!(builtin_positional_kind("cd"), Some(ValueKind::Dir));
+        assert_eq!(builtin_positional_kind("pushd"), Some(ValueKind::Dir));
+        assert_eq!(builtin_positional_kind("mkdir"), Some(ValueKind::Dirs));
+        assert_eq!(builtin_positional_kind("rmdir"), Some(ValueKind::Dirs));
+        assert_eq!(builtin_positional_kind("echo"), None);
+    }
+
+    #[test]
+    fn tree_dir_positional_does_not_fold_in_files() {
+        let tmp = scratch_dir("tree-dir");
+        let mut completer = FrostCompleter::with_default_builtins().with_rich_completions(
+            &[],
+            &[],
+            &[frost_lisp::PositSpec {
+                path: "go".into(),
+                index: 1,
+                takes: Some("dir".into()),
+                description: None,
+            }],
+        );
+        let line = format!("go {}/", tmp.display());
+        let out = completer.complete(&line, line.len());
+        assert!(
+            out.iter().any(|s| s.value.ends_with("sub/")),
+            "dir positional must offer the subdirectory: {out:?}"
+        );
+        assert!(
+            out.iter().all(|s| s.value.ends_with('/')),
+            "dir positional must not fold plain files back in: {out:?}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn file_kind_offers_directories_for_descent() {
+        let tmp = scratch_dir("file-descent");
+        let span = Span { start: 0, end: 0 };
+        let prefix = format!("{}/", tmp.display());
+        let out = value_kind_candidates(&ValueKind::File, &prefix, span);
+        let values: Vec<&str> = out.iter().map(|s| s.value.as_str()).collect();
+        assert!(values.iter().any(|v| v.ends_with("alpha.txt")));
+        assert!(
+            values.iter().any(|v| v.ends_with("sub/")),
+            "file kind must include directories so the user can descend: {values:?}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
