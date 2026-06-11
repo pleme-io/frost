@@ -155,13 +155,89 @@ impl TtyTakeover {
         if !status.success() {
             return Ok(None);
         }
-        let trimmed = selection.trim();
+        let cleaned = strip_terminal_controls(&selection);
+        let trimmed = cleaned.trim();
         if trimmed.is_empty() {
             Ok(None)
         } else {
             Ok(Some(trimmed.to_string()))
         }
     }
+}
+
+/// Strip terminal control sequences from a captured selection.
+///
+/// 2026-06-11 incident: skim 3.x's stack (ratatui
+/// `CrosstermBackend::get_cursor_position` → `crossterm::cursor::position`)
+/// wrote its `ESC[6n` cursor query to the process stdout — the selection
+/// pipe — so frost spliced `^[[6n` into the line editor in front of every
+/// recalled command, and a cancelled picker returned the bare query as a
+/// non-empty "selection" that the operator then accepted into history.
+/// skim-tab fixed the emission side (`TtyStdoutGuard`); this is frost's
+/// half of the contract: **a selection is printable text — terminal
+/// control bytes cannot cross this boundary into the editor buffer**,
+/// no matter what a present or future picker binary leaks.
+///
+/// Removes: CSI (`ESC[…<final>`), OSC (`ESC]…BEL`/`ESC]…ST`),
+/// DCS/SOS/PM/APC (`ESC P/X/^/_ … ST`), two-byte `ESC <c>` escapes, and
+/// all C0 controls except `\n` and `\t`. Keeps everything else verbatim
+/// (shell-quoted paths, multi-line multi-selections).
+fn strip_terminal_controls(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => match chars.peek() {
+                // CSI: ESC [ … final byte in @..=~
+                Some('[') => {
+                    chars.next();
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                // OSC: ESC ] … (BEL | ESC \)
+                Some(']') => {
+                    chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        }
+                        if c == '\x1b' {
+                            if chars.peek() == Some(&'\\') {
+                                chars.next();
+                            }
+                            break;
+                        }
+                    }
+                }
+                // DCS / SOS / PM / APC: ESC P/X/^/_ … ESC \
+                Some('P' | 'X' | '^' | '_') => {
+                    chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '\x1b' {
+                            if chars.peek() == Some(&'\\') {
+                                chars.next();
+                            }
+                            break;
+                        }
+                    }
+                }
+                // Two-byte escape (ESC c, ESC =, …) — drop both.
+                Some(_) => {
+                    chars.next();
+                }
+                // Lone trailing ESC — drop.
+                None => {}
+            },
+            // C0 controls other than newline/tab never belong in a
+            // selection (CR included — zsh history is LF-framed).
+            c if c.is_control() && c != '\n' && c != '\t' => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -268,5 +344,59 @@ mod tests {
         // `takeover` moved on the prior call. Documented here so
         // future maintainers see the intent.
         // let _ = takeover.spawn_and_capture();
+    }
+
+    // ── selection sanitization (2026-06-11 CPR-leak incident) ──────
+
+    /// The exact incident bytes: skim 3.x leaked its `ESC[6n` cursor
+    /// query into the selection pipe ahead of the picked command. The
+    /// boundary must hand the caller the command, never the query.
+    #[test]
+    fn cpr_query_prefix_is_stripped_from_selection() {
+        let sel = TtyTakeover::new("printf")
+            .arg("\x1b[6ngit push origin main")
+            .spawn_and_capture()
+            .expect("printf should spawn");
+        assert_eq!(sel.as_deref(), Some("git push origin main"));
+    }
+
+    /// Cancelled picker, pre-fix shape: stdout was ONLY the leaked
+    /// query. That must read as "no selection", not a 5-byte command
+    /// the operator then accepts into shell history.
+    #[test]
+    fn control_only_stdout_yields_none() {
+        let sel = TtyTakeover::new("printf")
+            .arg("\x1b[6n")
+            .spawn_and_capture()
+            .expect("printf should spawn");
+        assert_eq!(sel, None);
+    }
+
+    #[test]
+    fn strip_removes_csi_osc_dcs_and_bare_controls() {
+        assert_eq!(strip_terminal_controls("\x1b[6ngit status"), "git status");
+        assert_eq!(strip_terminal_controls("a\x1b[31mred\x1b[0mb"), "aredb");
+        assert_eq!(
+            strip_terminal_controls("\x1b]0;title\x07ls -la"),
+            "ls -la"
+        );
+        assert_eq!(
+            strip_terminal_controls("\x1bP+q544e\x1b\\echo hi"),
+            "echo hi"
+        );
+        assert_eq!(strip_terminal_controls("cd /tmp\r"), "cd /tmp");
+        assert_eq!(strip_terminal_controls("dangling\x1b"), "dangling");
+    }
+
+    #[test]
+    fn strip_keeps_printable_selections_verbatim() {
+        // Shell-quoted paths and multi-line multi-selections are the
+        // legitimate shapes — they pass through untouched.
+        assert_eq!(
+            strip_terminal_controls("'my dir/file name.txt'"),
+            "'my dir/file name.txt'"
+        );
+        assert_eq!(strip_terminal_controls("a.txt\nb.txt"), "a.txt\nb.txt");
+        assert_eq!(strip_terminal_controls("col1\tcol2"), "col1\tcol2");
     }
 }
