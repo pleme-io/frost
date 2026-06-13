@@ -83,7 +83,7 @@ tatara-lisp = { git = "https://github.com/pleme-io/tatara", rev = "a1062f8069bb3
 # resolves through this crate at apply time, killing the duplicate-bind
 # class of bug (2026-05-21 Ctrl-R incident). HTTPS like tatara-lisp so
 # the Nix daemon vendors via access-tokens.conf inside the sandbox.
-ishou-tokens = { git = "https://github.com/pleme-io/ishou", rev = "563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085" }
+ishou-tokens = { git = "https://github.com/pleme-io/ishou", rev = "e7b645dd9da1248444b9bdfd969a66afb0858915" }
 
 # Testing
 pretty_assertions = "1"

@@ -70,8 +70,8 @@ pub use pkg::{LoadSpec, LockedPkgSpec, PkgSpec, split_source_scheme};
 pub use prompt::PromptSpec;
 pub use source::SourceSpec;
 pub use theme::{
-    ThemeSpec, catppuccin_mocha, gruvbox_dark, merge_theme, nord_default, preset_by_name,
-    tokyo_night,
+    ThemeSpec, borealis_night, catppuccin_mocha, gruvbox_dark, merge_theme, nord_default,
+    preset_by_name, tokyo_night,
 };
 pub use trap::TrapSpec;
 
@@ -302,7 +302,9 @@ fn apply_source_with_context(
     locked_pkgs: &mut std::collections::HashMap<String, LockedPkgSpec>,
 ) -> LispResult<ApplySummary> {
     let mut summary = ApplySummary {
-        theme: nord_default(),
+        // Borealis-night is the prescribed fleet theme; a user's
+        // partial `(deftheme …)` merges onto it.
+        theme: borealis_night(),
         ..Default::default()
     };
 
@@ -1909,7 +1911,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_deftheme_merges_onto_nord_default() {
+    fn apply_deftheme_merges_onto_borealis_default() {
         let mut env = ShellEnv::new();
         // r##"..."## so the embedded "#FFFFFF" doesn't close the raw
         // string on its first `"#` sequence.
@@ -1923,17 +1925,17 @@ mod tests {
         assert_eq!(s.theme.name.as_deref(), Some("my-custom"));
         assert_eq!(s.theme.hint.as_deref(), Some("#FFFFFF"));
         assert_eq!(s.theme.command.as_deref(), Some("#00FF00"));
-        // Non-overlaid fields retain Nord defaults.
-        assert_eq!(s.theme.unknown_command.as_deref(), Some("#EBCB8B"));
-        assert_eq!(s.theme.string.as_deref(), Some("#88C0D0"));
+        // Non-overlaid fields retain Borealis defaults (BORN tokens).
+        assert_eq!(s.theme.unknown_command.as_deref(), Some("#EDC980")); // first_light
+        assert_eq!(s.theme.string.as_deref(), Some("#73C6D9")); // ice_cyan
     }
 
     #[test]
-    fn apply_empty_rc_yields_pure_nord_theme() {
+    fn apply_empty_rc_yields_pure_borealis_theme() {
         let mut env = ShellEnv::new();
         let s = apply_source("", &mut env).unwrap();
-        let nord = nord_default();
-        assert_eq!(s.theme, nord);
+        let borealis = borealis_night();
+        assert_eq!(s.theme, borealis);
     }
 
     #[test]
