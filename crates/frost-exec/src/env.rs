@@ -230,6 +230,22 @@ impl ShellEnv {
             global.variables.insert(key, ShellVar::exported(value));
         }
 
+        // Startup $PWD validation (zsh parity). zsh trusts an inherited
+        // PWD only when it names the directory we're actually in —
+        // same dev+ino as `.` — which preserves a LOGICAL (symlinked)
+        // $PWD while rejecting a stale one from a spawner that set cwd
+        // without restamping the env block. Without this check, chdir
+        // resolves relative paths against the lie ($PWD is its base),
+        // so the whole session navigates from a phantom location.
+        if let Ok(cwd) = std::env::current_dir() {
+            let inherited = global.variables.get("PWD").map(|v| v.as_str().to_string());
+            if let Some(corrected) = startup_pwd(inherited.as_deref(), &cwd) {
+                global
+                    .variables
+                    .insert("PWD".to_string(), ShellVar::exported(corrected));
+            }
+        }
+
         let pid = std::process::id();
         let ppid = nix::unistd::getppid().as_raw() as u32;
 
@@ -775,6 +791,35 @@ fn logical_absolutize(base: &std::path::Path, arg: &std::path::Path) -> std::pat
     acc
 }
 
+/// The startup `$PWD` decision (zsh parity), pure in its inputs so the
+/// rule is testable without touching the process-global env or cwd:
+/// `None` ⇒ the inherited value names `cwd` and is kept verbatim (the
+/// logical pwd survives); `Some(corrected)` ⇒ the inherited value is
+/// absent or stale and `$PWD` must be reseeded from the physical cwd.
+fn startup_pwd(inherited: Option<&str>, cwd: &std::path::Path) -> Option<String> {
+    match inherited {
+        Some(pwd) if pwd_names_cwd(pwd, cwd) => None,
+        _ => Some(cwd.to_string_lossy().into_owned()),
+    }
+}
+
+/// Whether an inherited `$PWD` string names the directory the process
+/// is actually in — zsh's startup acceptance rule. The value must be
+/// absolute and resolve (symlinks followed for the CHECK only) to the
+/// same dev+ino as `cwd`. This keeps a LOGICAL symlinked $PWD intact
+/// (`/tmp` vs `/private/tmp`) while rejecting a stale one inherited
+/// from a spawner that changed cwd without restamping its env block.
+fn pwd_names_cwd(pwd: &str, cwd: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if !std::path::Path::new(pwd).is_absolute() {
+        return false;
+    }
+    let (Ok(claimed), Ok(actual)) = (std::fs::metadata(pwd), std::fs::metadata(cwd)) else {
+        return false;
+    };
+    claimed.dev() == actual.dev() && claimed.ino() == actual.ino()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -801,6 +846,69 @@ mod tests {
         let mut env = ShellEnv::new();
         env.set_var("FOO", "bar");
         assert_eq!(env.get_var("FOO"), Some("bar"));
+    }
+
+    // The startup-$PWD tests exercise the pure decision function
+    // `startup_pwd(inherited, cwd)` with explicit directories. They
+    // deliberately do NOT go through `ShellEnv::new` + the process
+    // env: sibling tests in this crate chdir the process and cargo
+    // runs tests in parallel threads, so any assertion on the global
+    // cwd/PWD races. `ShellEnv::new` is a two-line consumer of the
+    // function under test.
+    #[test]
+    fn startup_corrects_divergent_inherited_pwd() {
+        // Latent lying-$PWD class (2026-06-11 investigation): a spawner
+        // that sets the child cwd without restamping PWD hands the
+        // shell a phantom location, and chdir then resolves relative
+        // paths against the lie. Startup must reject an inherited PWD
+        // whose inode differs from the cwd and reseed from the cwd.
+        let base = std::env::temp_dir().join(format!("frost-pwd-divergent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let stale = base.join("a");
+        let actual = base.join("b");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::create_dir_all(&actual).unwrap();
+
+        assert_eq!(
+            startup_pwd(Some(stale.to_string_lossy().as_ref()), &actual),
+            Some(actual.to_string_lossy().into_owned()),
+            "divergent inherited PWD must be corrected to the physical cwd"
+        );
+        assert_eq!(
+            startup_pwd(None, &actual),
+            Some(actual.to_string_lossy().into_owned()),
+            "absent inherited PWD must be seeded from the physical cwd"
+        );
+        // A relative inherited PWD is never trusted, even if it would
+        // happen to resolve — $PWD must be absolute.
+        assert_eq!(
+            startup_pwd(Some("."), &actual),
+            Some(actual.to_string_lossy().into_owned()),
+            "relative inherited PWD must be rejected"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn startup_preserves_logical_symlink_pwd() {
+        // zsh keeps the LOGICAL $PWD: a symlink alias of the cwd inode
+        // is the user's navigation history, not a lie. Same dev+ino ⇒
+        // the inherited value survives verbatim (startup_pwd: None).
+        let base = std::env::temp_dir().join(format!("frost-pwd-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let real = base.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = base.join("logical");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert_eq!(
+            startup_pwd(Some(link.to_string_lossy().as_ref()), &real),
+            None,
+            "symlinked-but-same-inode inherited PWD must be preserved (logical pwd)"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

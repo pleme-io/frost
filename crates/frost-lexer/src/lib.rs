@@ -7,6 +7,8 @@
 mod cursor;
 mod lexer;
 mod token;
+mod words;
 
 pub use lexer::Lexer;
 pub use token::{Span, Token, TokenKind};
+pub use words::split_words;

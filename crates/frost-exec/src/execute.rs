@@ -1620,8 +1620,12 @@ impl Drop for ProcSubFdGuard {
 ///
 /// * Only the first word of a simple command is matched against the alias
 ///   table.
-/// * An alias value is re-tokenized on whitespace; the resulting words
-///   replace argv\[0\] and argv\[1..\] is appended.
+/// * An alias value is re-tokenized through the frost lexer's word
+///   splitter ([`frost_lexer::split_words`]) — quote removal and
+///   backslash escapes apply, so a defmark-style `cd '/a b'` splices to
+///   `[cd, /a b]`, never a literal-quoted argv word (the 2026-06-11
+///   `nix` mark incident). The resulting words replace argv\[0\] and
+///   argv\[1..\] is appended.
 /// * Recursion is bounded by tracking which alias names have been expanded
 ///   in this pass — a self-referential `alias ls='ls --color'` expands once
 ///   and then falls through to the real `ls`.
@@ -1714,11 +1718,12 @@ fn expand_aliases(
             break;
         };
         seen.insert(first.clone());
-        // Tokenize the alias value on whitespace. This is intentionally
-        // simpler than full shell tokenization — aliases commonly look
-        // like `ls -la` or `grep --color=auto` and don't need quoting.
-        let mut replacement: Vec<String> =
-            value.split_whitespace().map(|s| s.to_string()).collect();
+        // Tokenize the alias value with the lexer's quote-aware word
+        // splitter. Plain values (`ls -la`, `grep --color=auto`) take
+        // its whitespace fast path unchanged; quoted values (defmark's
+        // `cd '/path with spaces'`) get quote removal + escapes so the
+        // spliced argv carries the real path, not literal quote chars.
+        let mut replacement: Vec<String> = frost_lexer::split_words(value);
         if replacement.is_empty() {
             break;
         }
@@ -2635,5 +2640,81 @@ mod tests {
         // the original word so the user gets a clean "command not found"
         // rather than a confusing blank execution.
         assert_eq!(expand_aliases(argv, &a), vec!["nop", "arg"]);
+    }
+
+    #[test]
+    fn alias_value_tokenization_matrix() {
+        // Regression for the 2026-06-11 defmark incident: alias values
+        // were re-tokenized with `split_whitespace`, so the defmark-
+        // registered `nix` → `cd '/Users/…/nix'` spliced argv with the
+        // single quotes still INSIDE the word and the cd builtin failed
+        // ENOENT on a path that exists. Every row must splice with
+        // quote removal + escapes applied; unquoted rows must stay
+        // byte-identical to the historical splitter; trailing argv is
+        // always appended after the replacement.
+        struct Row {
+            alias: (&'static str, &'static str),
+            argv: &'static [&'static str],
+            expect: &'static [&'static str],
+        }
+        let rows: &[Row] = &[
+            Row {
+                alias: ("m", "cd '/a/b'"),
+                argv: &["m"],
+                expect: &["cd", "/a/b"],
+            },
+            Row {
+                alias: ("m", "cd '/a b/c'"),
+                argv: &["m"],
+                expect: &["cd", "/a b/c"],
+            },
+            Row {
+                alias: ("m", r#"cd "/a b""#),
+                argv: &["m"],
+                expect: &["cd", "/a b"],
+            },
+            Row {
+                // POSIX embedded single quote: '/a'\''b' → /a'b
+                alias: ("m", r"cd '/a'\''b'"),
+                argv: &["m"],
+                expect: &["cd", "/a'b"],
+            },
+            Row {
+                // Unquoted values keep the historical splitting.
+                alias: ("ll", "ls -la"),
+                argv: &["ll", "src/"],
+                expect: &["ls", "-la", "src/"],
+            },
+            Row {
+                alias: ("grep", "grep --color=auto"),
+                argv: &["grep", "pat", "file"],
+                expect: &["grep", "--color=auto", "pat", "file"],
+            },
+            Row {
+                // Trailing argv appends AFTER a quoted replacement too.
+                alias: ("m", "cd '/a b'"),
+                argv: &["m", "extra"],
+                expect: &["cd", "/a b", "extra"],
+            },
+        ];
+
+        let mut failures: Vec<String> = Vec::new();
+        for (i, row) in rows.iter().enumerate() {
+            let a = alias_map(&[row.alias]);
+            let argv: Vec<String> = row.argv.iter().map(|s| s.to_string()).collect();
+            let got = expand_aliases(argv, &a);
+            if got != row.expect {
+                failures.push(format!(
+                    "row {i}: alias {:?} + argv {:?} → {:?}, expected {:?}",
+                    row.alias, row.argv, got, row.expect
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} alias tokenization rows failed:\n  - {}",
+            failures.len(),
+            failures.join("\n  - ")
+        );
     }
 }
