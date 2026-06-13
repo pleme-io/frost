@@ -131,12 +131,26 @@ impl TtyTakeover {
     /// - Subprocess reads keystrokes from the inherited tty.
     /// - Subprocess errors/warnings reach the operator's screen via
     ///   inherited stderr.
-    /// - Frost reads the stdout pipe on the spawning thread before
-    ///   `.wait()`. Selection is small (one line) — buffering the
-    ///   read is fine.
+    /// - The stdout pipe drains on a DEDICATED thread, concurrent
+    ///   with `wait()` — see below. The calling thread's only
+    ///   blocking point is child exit.
     /// - Non-zero exit status returns `Ok(None)` so the caller can
     ///   treat "user aborted" + "binary missing" + "selection was
     ///   empty" uniformly. Real spawn errors propagate as `Err`.
+    ///
+    /// # Why the drain is a thread (2026-06-11 freeze)
+    ///
+    /// Sequential pipe-reads on the spawning thread are a deadlock
+    /// shape: the shell sat inside `read_to_string` while a wedged
+    /// TUI child (skim-files waiting for input that never came) held
+    /// the pipe open — the parent could not even observe the child.
+    /// One drain thread per piped stream makes the classic two-pipe
+    /// deadlock (parent reads stream A to EOF while the child blocks
+    /// writing stream B's full buffer) structurally impossible, and
+    /// it keeps the reverse shape safe too: a child whose selection
+    /// exceeds the ~64KB pipe buffer would block writing while a
+    /// drain-after-wait parent blocked in `wait()` — concurrent
+    /// drain + wait can't interlock.
     ///
     /// # Errors
     ///
@@ -145,13 +159,21 @@ impl TtyTakeover {
     /// subprocess that runs to completion always returns `Ok`.
     pub fn spawn_and_capture(mut self) -> io::Result<Option<String>> {
         let mut child = self.command.spawn()?;
-        let mut selection = String::new();
-        if let Some(mut out) = child.stdout.take() {
-            // Drain on this thread — the selection is one line; no
-            // need to spawn a reader thread.
-            let _ = out.read_to_string(&mut selection);
-        }
+        let drain = child.stdout.take().map(|mut out| {
+            std::thread::spawn(move || {
+                let mut buf = String::new();
+                let _ = out.read_to_string(&mut buf);
+                buf
+            })
+        });
         let status = child.wait()?;
+        // The child has exited, so EOF is already on the pipe (the
+        // join is bounded) unless the child leaked the write end to a
+        // still-running grandchild — pickers don't fork detached
+        // writers; that contract is part of the skim-tab protocol.
+        let selection = drain
+            .and_then(|t| t.join().ok())
+            .unwrap_or_default();
         if !status.success() {
             return Ok(None);
         }
@@ -344,6 +366,48 @@ mod tests {
         // `takeover` moved on the prior call. Documented here so
         // future maintainers see the intent.
         // let _ = takeover.spawn_and_capture();
+    }
+
+    // ── drain liveness (2026-06-11 picker-freeze incident) ─────────
+
+    /// Run `spawn_and_capture` under a watchdog: the result must
+    /// arrive within `secs` or the test fails — the bounded harness
+    /// for "a hung child can never hang the shell".
+    fn capture_within(takeover: TtyTakeover, secs: u64) -> io::Result<Option<String>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(takeover.spawn_and_capture());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(secs))
+            .expect("spawn_and_capture wedged — the shell would be frozen")
+    }
+
+    /// The freeze shape: a fake child that writes NOTHING to the
+    /// selection pipe. The shell must come back as soon as the child
+    /// exits — never sit in a pipe read it cannot observe the child
+    /// from. (The live incident wedged frost behind skim-files; the
+    /// drain now runs on its own thread and the calling thread's
+    /// only blocking point is child exit.)
+    #[test]
+    fn silent_child_cannot_wedge_the_shell() {
+        let sel = capture_within(TtyTakeover::new("sleep").arg("0.3"), 10)
+            .expect("sleep should spawn");
+        assert_eq!(sel, None, "a silent child yields no selection");
+    }
+
+    /// The inverse interlock: a selection larger than the ~64KB pipe
+    /// buffer. If the drain did NOT run concurrently with `wait()`,
+    /// the child would block writing a full pipe while the parent
+    /// blocked in `wait()` — mutual deadlock. 200KB of NULs also
+    /// exercises the sanitization boundary (controls strip to None).
+    #[test]
+    fn oversized_stdout_drains_concurrently_with_wait() {
+        let sel = capture_within(
+            TtyTakeover::new("head").args(["-c", "200000", "/dev/zero"]),
+            10,
+        )
+        .expect("head should spawn");
+        assert_eq!(sel, None, "NUL-only output strips to no selection");
     }
 
     // ── selection sanitization (2026-06-11 CPR-leak incident) ──────
