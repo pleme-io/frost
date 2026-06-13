@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cargo_lock_sha256": "2a589325c5d77ce89321b9eabf42d912fa6d405bd2e259574dfc6dd468eea4f5",
+  "cargo_lock_sha256": "940e77d1112fbaca6a51dc1a97fb3298d9cd0a596cd82435fad8c1035b347d0e",
   "target_resolves": {
     "base": {
       "addr2line-0.25.1": {
@@ -2442,6 +2442,16 @@
             "tree": "target"
           },
           {
+            "name": "frost_builtins",
+            "package_key": "frost-builtins-0.1.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "frost_exec",
             "package_key": "frost-exec-0.1.0",
             "kind": "normal",
@@ -2483,7 +2493,7 @@
           },
           {
             "name": "ishou_tokens",
-            "package_key": "ishou-tokens-0.1.0-563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085",
+            "package_key": "ishou-tokens-0.1.3-e7b645dd9da1248444b9bdfd969a66afb0858915",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3772,7 +3782,7 @@
           "default"
         ]
       },
-      "ishou-tokens-0.1.0-563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085": {
+      "ishou-tokens-0.1.3-e7b645dd9da1248444b9bdfd969a66afb0858915": {
         "runtime_dependencies": [
           {
             "name": "irodori",
@@ -11044,7 +11054,7 @@
     "is_terminal_polyfill-1.70.2": {
       "edition": "2021"
     },
-    "ishou-tokens-0.1.0-563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085": {
+    "ishou-tokens-0.1.3-e7b645dd9da1248444b9bdfd969a66afb0858915": {
       "edition": "2024"
     },
     "itertools-0.13.0": {
@@ -11533,7 +11543,7 @@
     "gen-macros-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
     "gen-platform-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
     "gen-types-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
-    "ishou-tokens-0.1.0-563aebb7f61b5ee4e8b9e91ab4e54cee7c80d085": "sha256-+kzhHYtbo1lxEI9chtwFve5D/0nor38nMdEADf3nvZ4=",
+    "ishou-tokens-0.1.3-e7b645dd9da1248444b9bdfd969a66afb0858915": "sha256-Vr6anBUPdvFB1MZm9bDXtxmH9YEDm56xZMwHiHiNCbo=",
     "kanshou-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": "sha256-qxi/pBubzx4MfFDtJL4qLEoOSV43WF9Hc2VriRNlpCA=",
     "kanshou-derive-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": "sha256-qxi/pBubzx4MfFDtJL4qLEoOSV43WF9Hc2VriRNlpCA=",
     "reedline-0.42.0-c48c877410946dd9aadc3cab8d69983bc545a138": "sha256-EFYdWwYrGUXrb+QcYI5SFS/4oGLslKSqsUptiLqM5sY=",
