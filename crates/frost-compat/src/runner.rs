@@ -54,13 +54,41 @@ pub struct Summary {
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Run all tests in a parsed [`TestFile`] against the frost binary at `frost_path`.
+///
+/// Every case (plus `%prep` / `%clean`) executes in a per-FILE scratch
+/// directory, mirroring upstream ZTST's `$ZTST_tmp` isolation. Cases
+/// within one file deliberately share the scratch (prep creates the
+/// fixtures the cases consume); different files never share state.
+/// Before this, every spawned `frost -c` inherited the test binary's
+/// cwd — `crates/frost/` under cargo — and the zsh suite's fixture
+/// writes + `rm`-glob cleanups chewed up the REPO (Cargo.toml deleted,
+/// dozens of junk files) while parallel tier tests corrupted each
+/// other's fixtures.
 pub fn run_test_file(test_file: &TestFile, frost_path: &Path, verbose: bool) -> Vec<TestResult> {
+    let scratch = std::env::temp_dir().join(format!(
+        "frost-ztst-{}-{}",
+        std::process::id(),
+        test_file.name
+    ));
+    let _ = std::fs::remove_dir_all(&scratch);
+    if let Err(e) = std::fs::create_dir_all(&scratch) {
+        eprintln!(
+            "[scratch] WARNING: cannot create {}: {e}; running in process cwd",
+            scratch.display()
+        );
+    }
+    let cwd: Option<&Path> = if scratch.is_dir() {
+        Some(scratch.as_path())
+    } else {
+        None
+    };
+
     // Run %prep if present.
     if let Some(prep) = &test_file.prep {
         if verbose {
             eprintln!("[prep] running prep for {}", test_file.name);
         }
-        let prep_result = run_code(frost_path, prep, None);
+        let prep_result = run_code(frost_path, prep, None, cwd);
         match prep_result {
             RunOutcome::Completed {
                 exit_code, stderr, ..
@@ -87,7 +115,7 @@ pub fn run_test_file(test_file: &TestFile, frost_path: &Path, verbose: bool) -> 
     let mut results = Vec::with_capacity(test_file.tests.len());
 
     for (idx, test) in test_file.tests.iter().enumerate() {
-        let result = run_single_test(&test_file.name, idx, test, frost_path, verbose);
+        let result = run_single_test(&test_file.name, idx, test, frost_path, verbose, cwd);
         results.push(result);
     }
 
@@ -96,9 +124,10 @@ pub fn run_test_file(test_file: &TestFile, frost_path: &Path, verbose: bool) -> 
         if verbose {
             eprintln!("[clean] running cleanup for {}", test_file.name);
         }
-        let _ = run_code(frost_path, clean, None);
+        let _ = run_code(frost_path, clean, None, cwd);
     }
 
+    let _ = std::fs::remove_dir_all(&scratch);
     results
 }
 
@@ -109,6 +138,7 @@ fn run_single_test(
     test: &TestCase,
     frost_path: &Path,
     verbose: bool,
+    cwd: Option<&Path>,
 ) -> TestResult {
     // If the description contains PARSE ERROR, it was a parse failure.
     if test.description.starts_with("PARSE ERROR") {
@@ -122,7 +152,7 @@ fn run_single_test(
         };
     }
 
-    let outcome = run_code(frost_path, &test.code, test.stdin.as_deref());
+    let outcome = run_code(frost_path, &test.code, test.stdin.as_deref(), cwd);
 
     let (status, details) = match outcome {
         RunOutcome::Completed {
@@ -326,9 +356,14 @@ enum RunOutcome {
 }
 
 /// Run a code string via `frost -c "<code>"`, capturing output.
-fn run_code(frost_path: &Path, code: &str, stdin_input: Option<&str>) -> RunOutcome {
+/// `cwd` is the per-file scratch directory — fixture writes and
+/// `rm`-glob cleanups must never land in the harness process's cwd.
+fn run_code(frost_path: &Path, code: &str, stdin_input: Option<&str>, cwd: Option<&Path>) -> RunOutcome {
     let mut cmd = Command::new(frost_path);
     cmd.arg("-c").arg(code);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 

@@ -78,9 +78,18 @@ enum Section {
 }
 
 /// Parse a `.ztst` file at the given path into a [`TestFile`].
+///
+/// Read as raw bytes + lossy-converted: six upstream zsh suite files
+/// (A05execution, A08time, D02glob, D10nofork, K01nameref,
+/// K02parameter) intentionally contain invalid-UTF-8 bytes in test
+/// payloads. `read_to_string`'s UTF-8 requirement made those files
+/// unparseable wholesale — the affected CASES degrade to U+FFFD (and
+/// may fail individually under the ratchet), but every other case in
+/// the file must still run.
 pub fn parse_ztst(path: &Path) -> Result<TestFile, String> {
-    let content = std::fs::read_to_string(path)
+    let bytes = std::fs::read(path)
         .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let content = String::from_utf8_lossy(&bytes);
 
     let name = path
         .file_stem()
@@ -498,5 +507,23 @@ mod tests {
         let tf = parse_ztst(f.path()).unwrap();
         assert_eq!(tf.tests.len(), 1);
         assert_eq!(tf.tests[0].stdin.as_deref(), Some("hello from stdin"));
+    }
+
+    #[test]
+    fn parse_tolerates_invalid_utf8_bytes() {
+        // Six upstream zsh suite files (A05execution, A08time, D02glob,
+        // D10nofork, K01nameref, K02parameter) carry intentional
+        // invalid-UTF-8 bytes in test payloads. The parser must lossy-
+        // convert those CASES (U+FFFD) instead of refusing the whole
+        // file — refusal panicked the tier tests wholesale.
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(b"%test\n\n  echo ok\n>ok\n0:plain case\n\n  echo \xff\xfe\n>\xff\xfe\n0:latin-1 bytes case\n")
+            .unwrap();
+        let tf = parse_ztst(f.path()).expect("invalid UTF-8 must not refuse the file");
+        assert_eq!(tf.tests.len(), 2, "both cases parse: {tf:?}");
+        assert!(
+            tf.tests[1].code.contains('\u{FFFD}'),
+            "invalid bytes degrade to replacement chars in the affected case only"
+        );
     }
 }
