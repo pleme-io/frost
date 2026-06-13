@@ -1011,6 +1011,66 @@ fn resolve_mark_collision(name: &str, env: &ShellEnv) -> Option<mark::CommandRes
         .map(|path| mark::CommandResolution::PathBinary { path })
 }
 
+/// Baseline manifest of fleet + ubiquitous CLI binaries a `(defmark …)`
+/// name must never collide with. `resolve_mark_collision` is the live
+/// runtime backstop (it resolves against the real `$PATH`, builtins,
+/// and functions of the booting shell); this const is the *hermetic*
+/// surface a distribution rc (frostmourne) is checked against at build
+/// time — `marks_do_not_shadow_fleet_clis` asserts no authored mark
+/// name appears here regardless of what is installed on the test host.
+///
+/// A mark named after one of these would register a `cd …` alias that
+/// consumes argv[0] of every invocation — the 2026-06-11 incident where
+/// `(defmark :name "nix" …)` made `nix run .#rebuild` an ENOENT `cd`.
+/// Fleet-CLI marks carry the trailing-dash convention (`nix-`, `tend-`).
+pub const FLEET_CLIS: &[&str] = &[
+    // pleme-io fleet binaries (substrate apps + tools).
+    "nix",
+    "tend",
+    "sui",
+    "tatara",
+    "engenho",
+    "magma",
+    "kikai",
+    "kurage",
+    "frost",
+    "forge",
+    "feira",
+    "carve",
+    "galho",
+    "eclusa",
+    "cofre",
+    "kensa",
+    "seki",
+    "mado",
+    "tear",
+    "pangea",
+    "kindling",
+    // ubiquitous host commands an editor/dev box ships.
+    "code",
+    "git",
+    "ls",
+    "cd",
+    "cat",
+    "vim",
+    "cargo",
+    "nvim",
+    "kubectl",
+    "helm",
+    "flux",
+    "docker",
+];
+
+/// Does `name` collide with a known fleet/host CLI in the hermetic
+/// [`FLEET_CLIS`] manifest? PATH-independent — used by the rc-verify
+/// test so a distribution's marks can be vetted on any runner without
+/// depending on what happens to be installed. The trailing-dash mark
+/// convention (`nix-`) is collision-free here by construction.
+#[must_use]
+pub fn mark_shadows_fleet_cli(name: &str) -> bool {
+    FLEET_CLIS.contains(&name)
+}
+
 /// Classify a chord string for routing through the defbind pipeline.
 /// Returns the shape without running the full frost-zle classifier
 /// (which lives in a downstream crate). Whitespace-separated chord
@@ -2759,5 +2819,107 @@ mod tests {
         // not observe the excursion.
         std::env::set_current_dir(&prev_cwd).unwrap();
         let _ = std::fs::remove_dir_all(&target);
+    }
+
+    #[test]
+    fn marks_do_not_shadow_fleet_clis() {
+        // rc-verify check (NO SHELL): the canonical frostmourne mark
+        // manifest — and any distribution rc — must declare zero mark
+        // names that collide with a fleet/host CLI in FLEET_CLIS. A
+        // collision registers a `cd …` alias under the command's name
+        // and consumes argv[0] of every invocation (the 2026-06-11
+        // `nix run .#rebuild` → ENOENT-`cd` incident). The trailing-
+        // dash convention (`nix-`) is the fix; this matrix proves the
+        // shipped manifest obeys it.
+        //
+        // Mirrors frostmourne/lisp/03-marks.lisp exactly so a future
+        // edit there that reintroduces a bare CLI name fails CI here.
+        const FROSTMOURNE_MARK_NAMES: &[&str] = &[
+            "code-", "github", "pleme", "drzln", "nix-", "frost-", "mourne", "sub", "bm", "k8s",
+            "theory", "tend-", "sui-", "tatara-", "engenho-", "magma-", "pangea-", "cfg", "dl",
+        ];
+
+        let offenders: Vec<&str> = FROSTMOURNE_MARK_NAMES
+            .iter()
+            .copied()
+            .filter(|n| mark_shadows_fleet_cli(n))
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "these mark names shadow a fleet/host CLI — append a trailing dash: {offenders:?}"
+        );
+
+        // Guard the guard: the manifest must actually contain the
+        // load-bearing names, else the filter above is vacuous.
+        for must in ["nix", "tend", "code", "git", "cargo"] {
+            assert!(
+                mark_shadows_fleet_cli(must),
+                "FLEET_CLIS must list `{must}` for the shadow check to bite"
+            );
+        }
+        // And the dashed forms are NOT in the manifest, so they alias.
+        for safe in ["nix-", "tend-", "code-", "frost-"] {
+            assert!(
+                !mark_shadows_fleet_cli(safe),
+                "`{safe}` must be collision-free so the mark aliases"
+            );
+        }
+    }
+
+    #[test]
+    fn nix_mark_does_not_block_nix_cli_after_rc_load() {
+        // The named regression row: after rc load the alias table must
+        // have NO `nix` entry, so `nix run .#rebuild` reaches the nix
+        // binary. We synthesize a fake `nix` on a scratch PATH (the
+        // host need not have nix installed) and apply a bare-`nix`
+        // mark — resolve_mark_collision must find the binary and skip
+        // the alias, leaving the dashed `nix-` mark as the way in.
+        let bindir = std::env::temp_dir().join(format!("frost-nixcli-{}", std::process::id()));
+        let repodir = std::env::temp_dir().join(format!("frost-nixrepo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&bindir);
+        let _ = std::fs::remove_dir_all(&repodir);
+        std::fs::create_dir_all(&bindir).unwrap();
+        std::fs::create_dir_all(&repodir).unwrap();
+
+        // A fake executable named `nix` on the scratch PATH.
+        let fake_nix = bindir.join("nix");
+        std::fs::write(&fake_nix, b"#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&fake_nix, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let mut env = ShellEnv::new();
+        env.set_var("PATH", &bindir.to_string_lossy());
+
+        // Bare `nix` mark (the historical mistake) is skipped; dashed
+        // `nix-` mark (the fix) registers its alias.
+        let src = format!(
+            "(defmark :name \"nix\" :path \"{0}\")\n(defmark :name \"nix-\" :path \"{0}\")",
+            repodir.display()
+        );
+        let s = apply_source(&src, &mut env).unwrap();
+
+        assert_eq!(
+            env.aliases.get("nix"),
+            None,
+            "bare `nix` mark must NOT register an alias — `nix run` must reach the binary"
+        );
+        assert!(
+            env.aliases.contains_key("nix-"),
+            "the dashed `nix-` mark is collision-free and must alias"
+        );
+        assert!(
+            s.warnings.iter().any(|w| matches!(
+                w,
+                ApplyWarning::MarkShadowsCommand { name, .. } if name == "nix"
+            )),
+            "the skipped bare-nix mark must surface a typed warning, got {:?}",
+            s.warnings
+        );
+
+        let _ = std::fs::remove_dir_all(&bindir);
+        let _ = std::fs::remove_dir_all(&repodir);
     }
 }
