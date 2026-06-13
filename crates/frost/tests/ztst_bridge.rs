@@ -66,6 +66,39 @@ fn assert_threshold(name: &str, threshold_pct: f64) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Harness invariants
+// ═══════════════════════════════════════════════════════════════
+
+/// The suite must never touch the harness process's cwd. Before the
+/// per-file scratch dir, every spawned `frost -c` inherited
+/// `crates/frost/` as cwd and the zsh suite's fixture writes +
+/// `rm`-glob cleanups DELETED Cargo.toml and littered ~80 junk files
+/// into the repo on every full run.
+#[test]
+fn suite_cases_run_in_scratch_not_process_cwd() {
+    use std::io::Write as _;
+    let marker = "frost-ztst-cwd-isolation-marker";
+    let ztst = std::env::temp_dir().join(format!(
+        "frost-ztst-isolation-{}.ztst",
+        std::process::id()
+    ));
+    {
+        let mut f = std::fs::File::create(&ztst).unwrap();
+        // One case writes a marker file into ITS cwd; if isolation
+        // regresses, the marker lands next to this test binary's cwd.
+        writeln!(f, "%test\n\n  echo x > {marker}\n0:write a fixture file").unwrap();
+    }
+    let test_file = frost_compat::parse_ztst(&ztst).expect("inline ztst parses");
+    let results = frost_compat::run_test_file(&test_file, &frost_bin(), false);
+    assert_eq!(results.len(), 1);
+    assert!(
+        !std::path::Path::new(marker).exists(),
+        "fixture write leaked into the harness cwd — scratch isolation regressed"
+    );
+    let _ = std::fs::remove_file(&ztst);
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Tier 1 — Core shell (must pass for frost to be usable)
 //   Threshold starts at 0% and ratchets up as features land
 // ═══════════════════════════════════════════════════════════════
@@ -98,6 +131,7 @@ mod tier1 {
         assert_threshold("A07control", 0.0);
     }
     #[test]
+    #[ignore = "A08time.ztst not in the vendored zsh 5.9 suite (newer-zsh file); un-ignore when vendored"]
     fn a08_time() {
         assert_threshold("A08time", 0.0);
     }
@@ -224,6 +258,7 @@ mod tier3 {
         assert_threshold("D09brace", 0.0);
     }
     #[test]
+    #[ignore = "D10nofork.ztst not in the vendored zsh 5.9 suite (newer-zsh file); un-ignore when vendored"]
     fn d10_nofork() {
         assert_threshold("D10nofork", 0.0);
     }
@@ -240,10 +275,12 @@ mod tier3 {
         assert_threshold("E03posix", 0.0);
     }
     #[test]
+    #[ignore = "K01nameref.ztst not in the vendored zsh 5.9 suite (newer-zsh file); un-ignore when vendored"]
     fn k01_nameref() {
         assert_threshold("K01nameref", 0.0);
     }
     #[test]
+    #[ignore = "K02parameter.ztst not in the vendored zsh 5.9 suite (newer-zsh file); un-ignore when vendored"]
     fn k02_parameter() {
         assert_threshold("K02parameter", 0.0);
     }
