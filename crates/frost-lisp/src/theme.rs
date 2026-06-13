@@ -103,6 +103,46 @@ pub fn nord_default() -> ThemeSpec {
     }
 }
 
+/// **Borealis** — the prescribed fleet theme (dark variant
+/// `borealis-night`). Every slot is a BORN `ishou_tokens::BorealisPalette`
+/// token (never a hand-authored hex per the pleme-io law). Spec §7
+/// frost mapping:
+///
+/// * `command` = aurora_green (the dominant shell token).
+/// * `string` = ice_cyan (the DECLARED cross-surface departure — shell
+///   strings are cyan while editor strings are green, so two adjacent
+///   greens never merge).
+/// * `variable` = ice_teal (amber's load thinned).
+/// * `unknown_command` / `glob` = first_light.
+/// * `reserved` = solar_magenta · `operator` / `broken_path` = aurora_red.
+/// * `comment` = shadow1 · `hint` = shadow0 · `number` = ice_steel.
+#[must_use]
+pub fn borealis_night() -> ThemeSpec {
+    use ishou_tokens::BorealisPalette;
+    let p = BorealisPalette::night();
+    let tok = |name: &str| -> Option<String> {
+        Some(
+            p.get(name)
+                .unwrap_or_else(|| panic!("unknown Borealis token: {name}"))
+                .hex(),
+        )
+    };
+    ThemeSpec {
+        name: Some("borealis-night".into()),
+        command: tok("aurora_green"),
+        unknown_command: tok("first_light"),
+        string: tok("ice_cyan"),
+        variable: tok("ice_teal"),
+        reserved: tok("solar_magenta"),
+        operator: tok("aurora_red"),
+        comment: tok("shadow1"),
+        hint: tok("shadow0"),
+        broken_path: tok("aurora_red"),
+        glob: tok("first_light"),
+        number: tok("ice_steel"),
+    }
+}
+
 /// Gruvbox Dark — the second-most-popular terminal palette after
 /// Nord. Official color table from morhetz/gruvbox.
 pub fn gruvbox_dark() -> ThemeSpec {
@@ -166,6 +206,7 @@ pub fn catppuccin_mocha() -> ThemeSpec {
 pub fn preset_by_name(name: &str) -> Option<ThemeSpec> {
     match name {
         "nord" => Some(nord_default()),
+        "borealis" | "borealis-night" => Some(borealis_night()),
         "gruvbox" | "gruvbox-dark" => Some(gruvbox_dark()),
         "tokyo-night" | "tokyonight" | "tokyo" => Some(tokyo_night()),
         "catppuccin" | "catppuccin-mocha" | "mocha" => Some(catppuccin_mocha()),

@@ -1751,7 +1751,7 @@ fn main() {
                 Vec::new(),
                 Vec::new(),
                 std::collections::HashMap::new(),
-                frost_lisp::nord_default(),
+                frost_lisp::borealis_night(),
                 Vec::new(),
             )
         }
