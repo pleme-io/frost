@@ -133,12 +133,15 @@ fn evaluate_test(args: &[&str]) -> i32 {
         };
     }
 
-    // Binary operators
+    // Binary operators. POSIX 3-arg rule: a recognized binary primary
+    // in $2 wins; OTHERWISE `! expr` negates the two-arg test. The
+    // negation fallthrough must run when the op is unrecognized —
+    // returning 2 straight from the match broke `test ! -d /x`.
     if args.len() == 3 {
         let left = args[0];
         let op = args[1];
         let right = args[2];
-        return match op {
+        let r = match op {
             "=" | "==" => {
                 if left == right {
                     0
@@ -164,6 +167,10 @@ fn evaluate_test(args: &[&str]) -> i32 {
             "-ef" => same_file(left, right),
             _ => 2,
         };
+        if r != 2 || args[0] != "!" {
+            return r;
+        }
+        // fall through to the `! expr` negation below
     }
 
     // Negation: ! expr
@@ -258,6 +265,16 @@ mod tests {
     #[test]
     fn negation() {
         assert_eq!(evaluate_test(&["!", "hello"]), 1);
+    }
+    #[test]
+    fn negation_three_args_posix() {
+        // POSIX 3-arg rule: `! <unary> <arg>` negates the 2-arg test
+        // when $2 is not a binary primary. Regression: the binary-op
+        // match returned 2 before the `!` fallthrough could run.
+        assert_eq!(evaluate_test(&["!", "-d", "/nonexistent"]), 0);
+        assert_eq!(evaluate_test(&["!", "-d", "/tmp"]), 1);
+        // …but a recognized binary primary still wins over negation.
+        assert_eq!(evaluate_test(&["!", "=", "!"]), 0);
     }
     #[test]
     fn file_exists() {

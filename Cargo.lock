@@ -861,6 +861,7 @@ name = "frost-lisp"
 version = "0.1.0"
 dependencies = [
  "compact_str",
+ "frost-builtins",
  "frost-exec",
  "frost-lexer",
  "frost-options",

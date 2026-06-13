@@ -9,6 +9,7 @@ homepage.workspace = true
 description = "Bridge between tatara-lisp and frost shell state — Lisp-authored aliases, options, env vars, prompt, hooks, completions, and keybindings"
 
 [dependencies]
+frost-builtins = { workspace = true }
 frost-exec = { workspace = true }
 frost-lexer = { workspace = true }
 frost-parser = { workspace = true }
