@@ -77,6 +77,49 @@ pub fn shell_quote_path(path: &str) -> String {
     format!("'{escaped}'")
 }
 
+/// What a mark name resolves to on the command surface WITHOUT the
+/// cd-alias. A mark whose name resolves here would alias-swallow every
+/// invocation of that command (the 2026-06-11 incident: a mark named
+/// `nix` made `nix run …` unrunnable by construction), so apply skips
+/// the alias and surfaces this as the typed payload of
+/// [`crate::ApplyWarning::MarkShadowsCommand`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandResolution {
+    /// A frost builtin (e.g. `cd`, `echo`).
+    Builtin,
+    /// A shell function already registered in the environment.
+    Function,
+    /// An executable on `$PATH`, with the resolved absolute path.
+    PathBinary { path: String },
+}
+
+impl std::fmt::Display for CommandResolution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Builtin => write!(f, "builtin"),
+            Self::Function => write!(f, "shell function"),
+            Self::PathBinary { path } => write!(f, "{path}"),
+        }
+    }
+}
+
+/// First executable regular file named `name` in a `:`-separated
+/// `path_var`. Pure in its inputs (the PATH string is a parameter, not
+/// read from the process env) so tests control the search space.
+pub fn resolve_in_path(name: &str, path_var: &str) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    for dir in path_var.split(':').filter(|d| !d.is_empty()) {
+        let candidate = std::path::Path::new(dir).join(name);
+        let Ok(meta) = std::fs::metadata(&candidate) else {
+            continue;
+        };
+        if meta.is_file() && meta.permissions().mode() & 0o111 != 0 {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

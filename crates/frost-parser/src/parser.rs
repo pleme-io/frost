@@ -495,6 +495,17 @@ impl<'a> Parser<'a> {
                 redirects.push(self.parse_redirect());
             } else if self.at_word() {
                 words.push(self.parse_word());
+            } else if self.kind() == TokenKind::Bang
+                && !(words.is_empty() && assignments.is_empty())
+            {
+                // Mid-command `!` is a literal word in zsh script
+                // semantics: `test ! -d x`, `test a != b`. Command-
+                // position negation was already consumed by
+                // parse_pipeline, so a Bang here can only be argument
+                // text (history expansion is a REPL-layer concern,
+                // disabled in scripts). parse_word's adjacency merge
+                // joins a following `=` into one `!=` word.
+                words.push(self.parse_word());
             } else {
                 break;
             }
@@ -820,10 +831,13 @@ impl<'a> Parser<'a> {
 
         // Merge adjacent tokens (no whitespace) into the same word.
         // This handles cases like FOO=bar where the lexer splits on =,
-        // and brace expansions like a{1,2}b.
+        // and brace expansions like a{1,2}b. An adjacent Bang also
+        // joins (`a!=b`, `hi!` are one word in zsh script semantics —
+        // history expansion is a REPL-layer concern); it lands on the
+        // Literal fallback arm below.
         while self.pos < self.tokens.len()
             && self.peek().span.start == end_pos
-            && (self.at_word() || self.at_brace_in_word())
+            && (self.at_word() || self.at_brace_in_word() || self.kind() == TokenKind::Bang)
         {
             let next = self.advance().clone();
             end_pos = next.span.end;
@@ -1881,6 +1895,43 @@ mod tests {
     fn parse_bang() {
         let p = parse("! false");
         assert!(p.commands[0].list.first.bang);
+    }
+
+    #[test]
+    fn bang_is_literal_word_mid_command() {
+        // zsh script semantics: `!` after the command word is argument
+        // text, not pipeline negation (which parse_pipeline consumed)
+        // and not history expansion (a REPL-layer concern). Regression
+        // for `test ! -d x` / `test a != b` parsing as a truncated
+        // command + a bogus `-d` / `=` command (exit 127).
+        fn literal(word: &Word) -> String {
+            word.parts
+                .iter()
+                .map(|p| match p {
+                    WordPart::Literal(s) => s.as_str(),
+                    other => panic!("expected Literal, got {other:?}"),
+                })
+                .collect()
+        }
+        let rows: &[(&str, &[&str])] = &[
+            ("test ! -d /nonexistent", &["test", "!", "-d", "/nonexistent"]),
+            ("test a != b", &["test", "a", "!=", "b"]),
+            ("test a!=b", &["test", "a!=b"]),
+        ];
+        let mut failures: Vec<String> = Vec::new();
+        for (src, expect) in rows {
+            let p = parse(src);
+            let got: Vec<String> = first_simple(&p).words.iter().map(literal).collect();
+            if got != *expect {
+                failures.push(format!("{src:?} → {got:?}, expected {expect:?}"));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} bang-word rows failed:\n  - {}",
+            failures.len(),
+            failures.join("\n  - ")
+        );
     }
 
     #[test]

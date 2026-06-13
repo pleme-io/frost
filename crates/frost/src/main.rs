@@ -256,6 +256,18 @@ fn run_doctor(_initial_env: &frost_exec::ShellEnv) -> i32 {
         );
     }
 
+    // ── apply warnings ───────────────────────────────────────────
+    // Typed non-fatal conditions from rc apply — e.g. a defmark whose
+    // name shadows a command (alias skipped so the command stays
+    // runnable). Each one is an operator action item.
+    if !summary.warnings.is_empty() {
+        any_warnings = true;
+        let _ = writeln!(out, "\n{bold}apply warnings{reset}");
+        for w in &summary.warnings {
+            let _ = writeln!(out, "  {yellow}!{reset} {w}");
+        }
+    }
+
     // ── marks ────────────────────────────────────────────────────
     if !summary.marks.is_empty() {
         let _ = writeln!(out, "\n{bold}marks{reset}");
@@ -1677,6 +1689,12 @@ fn main() {
                     rc = %rc_path.display(),
                     "loaded frost-lisp rc file"
                 );
+            }
+            // Typed apply warnings (e.g. MarkShadowsCommand) — non-fatal
+            // but operator-visible at startup, same channel as rc load
+            // failures. `frost --doctor` repeats them with context.
+            for w in &summary.warnings {
+                eprintln!("frost: warning: {w}");
             }
             mcp_state.rc_path = Some(rc_path.clone());
             mcp_state.rc_loaded = true;

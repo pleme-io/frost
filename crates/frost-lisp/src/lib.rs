@@ -224,6 +224,40 @@ pub struct ApplySummary {
     /// counts into the outer; this dedicated counter just records
     /// "N defload forms were honored."
     pub loads: usize,
+
+    /// Typed warnings raised during apply — conditions that do NOT
+    /// abort the rc load but the operator must see. Surfaced at
+    /// startup (stderr) and by `frost --doctor`.
+    pub warnings: Vec<ApplyWarning>,
+}
+
+/// A non-fatal condition detected while applying rc source. Unlike
+/// [`LispError`] these never abort the load — the offending form is
+/// skipped or degraded and the shell still starts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApplyWarning {
+    /// A `(defmark …)` name resolves to an existing command (builtin,
+    /// shell function, or PATH binary). Registering the cd-alias would
+    /// swallow EVERY invocation of that command — the 2026-06-11
+    /// incident: a mark named `nix` turned `nix run …` into a failing
+    /// `cd`. The alias is skipped; the mark stays in
+    /// [`ApplySummary::marks`] + completion for non-aliased consumers.
+    MarkShadowsCommand {
+        name: String,
+        resolved: mark::CommandResolution,
+    },
+}
+
+impl std::fmt::Display for ApplyWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MarkShadowsCommand { name, resolved } => write!(
+                f,
+                "defmark `{name}` shadows an existing command ({resolved}); \
+                 cd-alias not registered — rename the mark (e.g. `{name}-`)"
+            ),
+        }
+    }
 }
 
 /// Trim + treat empty as absent. Used to coerce the `Option`-less
@@ -909,9 +943,23 @@ fn apply_source_with_context(
         tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
     for m in marks {
         let resolved = mark::expand_mark_path(&m.path);
-        let quoted = mark::shell_quote_path(&resolved);
-        env.aliases.insert(m.name.clone(), format!("cd {quoted}"));
-        summary.aliases += 1;
+        // Marks must not shadow commands. A cd-alias under the name of
+        // a builtin / function / PATH binary consumes argv[0] of every
+        // invocation — `(defmark :name "nix" …)` made `nix run …`
+        // unrunnable (2026-06-11). On collision: keep the mark + Tab
+        // entry (non-aliased consumers still work), skip the alias,
+        // surface a typed warning.
+        match resolve_mark_collision(&m.name, env) {
+            Some(shadowed) => summary.warnings.push(ApplyWarning::MarkShadowsCommand {
+                name: m.name.clone(),
+                resolved: shadowed,
+            }),
+            None => {
+                let quoted = mark::shell_quote_path(&resolved);
+                env.aliases.insert(m.name.clone(), format!("cd {quoted}"));
+                summary.aliases += 1;
+            }
+        }
         // Tab-menu description so `mark<Tab>` shows each bookmark
         // alongside its resolved path. completion_descriptions is
         // consulted by frost-complete at command position.
@@ -944,6 +992,23 @@ fn apply_source_with_context(
     }
 
     Ok(summary)
+}
+
+/// Resolve a mark name against the command surfaces a cd-alias would
+/// shadow, in lookup order: builtins, registered shell functions, then
+/// `$PATH` executables (the shell's own resolution order — aliases
+/// excluded because defmark IS the alias being vetted). `None` ⇒ the
+/// name is free and the alias is safe to register.
+fn resolve_mark_collision(name: &str, env: &ShellEnv) -> Option<mark::CommandResolution> {
+    if frost_builtins::default_builtins().contains(name) {
+        return Some(mark::CommandResolution::Builtin);
+    }
+    if env.functions.contains_key(name) {
+        return Some(mark::CommandResolution::Function);
+    }
+    env.get_var("PATH")
+        .and_then(|path_var| mark::resolve_in_path(name, path_var))
+        .map(|path| mark::CommandResolution::PathBinary { path })
 }
 
 /// Classify a chord string for routing through the defbind pipeline.
@@ -1560,10 +1625,14 @@ mod tests {
             .functions
             .get("__frost_hook_precmd")
             .expect("prompt command should register a precmd hook");
+        // The hook body is a parsed AST — argv words are separate
+        // Literal parts, so assert token-wise ("starship prompt" as a
+        // contiguous substring can never appear in the Debug form).
         let rendered = format!("{:?}", fn_def.body);
         assert!(
-            rendered.contains("starship prompt"),
-            "starship not in body: {rendered}"
+            rendered.contains(r#"Literal("starship")"#)
+                && rendered.contains(r#"Literal("prompt")"#),
+            "starship prompt argv not in body: {rendered}"
         );
         assert!(
             rendered.contains("PS1"),
@@ -2585,5 +2654,110 @@ mod tests {
         let err = load_rc(&outer, &mut env).unwrap_err();
         assert!(matches!(err, LispError::PkgPathMissing { .. }));
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Parse + execute shell `src` against `env` — the rc-to-executor
+    /// path the 2026-06-11 incident proved untested: marks were only
+    /// ever asserted as alias STRINGS, never run through
+    /// expand_aliases → cd → chdir.
+    fn exec_src(src: &str, env: &mut ShellEnv) -> i32 {
+        let tokens = frost_exec::tokenize(src);
+        let mut parser = frost_parser::Parser::new(&tokens);
+        let program = parser.parse();
+        frost_exec::Executor::new(env)
+            .execute_program(&program)
+            .unwrap()
+    }
+
+    #[test]
+    fn mark_shadowing_path_binary_is_not_aliased() {
+        // 2026-06-11 regression: `(defmark :name "nix" …)` registered
+        // a cd-alias that consumed argv[0] of every `nix …` command —
+        // the nix CLI became unrunnable by construction. A mark named
+        // after a PATH binary must NOT register the alias; the mark +
+        // Tab entry survive and a typed warning is surfaced.
+        let target = std::env::temp_dir().join(format!("frost-mark-shadow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&target);
+        std::fs::create_dir_all(&target).unwrap();
+
+        let mut env = ShellEnv::new(); // imports the real PATH — `ls` resolves
+        let src = format!(r#"(defmark :name "ls" :path "{}")"#, target.display());
+        let s = apply_source(&src, &mut env).unwrap();
+
+        assert_eq!(env.aliases.get("ls"), None, "shadowing mark must not alias");
+        assert_eq!(
+            s.marks.get("ls").map(String::as_str),
+            Some(target.to_string_lossy().as_ref()),
+            "mark registry entry must survive the skipped alias"
+        );
+        assert!(
+            s.completion_descriptions.contains_key("ls"),
+            "Tab entry must survive the skipped alias"
+        );
+        assert!(
+            s.warnings.iter().any(|w| matches!(
+                w,
+                ApplyWarning::MarkShadowsCommand { name, resolved: mark::CommandResolution::PathBinary { .. } } if name == "ls"
+            )),
+            "typed MarkShadowsCommand warning must be surfaced, got {:?}",
+            s.warnings
+        );
+
+        // Executing `ls` still runs the binary: exit 0 and $PWD did
+        // NOT jump to the mark target (the alias would have cd'd).
+        let pwd_before = env.get_var("PWD").map(str::to_string);
+        let status = exec_src("ls >/dev/null", &mut env);
+        assert_eq!(status, 0, "`ls` must reach the PATH binary");
+        assert_eq!(
+            env.get_var("PWD").map(str::to_string),
+            pwd_before,
+            "executing the shadowed name must not chdir"
+        );
+
+        let _ = std::fs::remove_dir_all(&target);
+    }
+
+    #[test]
+    fn defmark_alias_roundtrip_chdir_succeeds() {
+        // The missing execution-path test: register a mark via lisp
+        // source, type its name as a command, and prove the shell
+        // actually lands in the directory — physical cwd AND $PWD.
+        // (Quote-aware alias splicing is what makes this pass; the
+        // split_whitespace splice left literal quotes in argv and cd
+        // failed ENOENT.)
+        let target = std::env::temp_dir().join(format!(
+            "frost-mark-roundtrip-{} with space", // spaces exercise the quoted splice
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&target);
+        std::fs::create_dir_all(&target).unwrap();
+        let prev_cwd = std::env::current_dir().unwrap();
+
+        let mut env = ShellEnv::new();
+        let src = format!(
+            r#"(defmark :name "frostmarkroundtrip" :path "{}")"#,
+            target.display()
+        );
+        let s = apply_source(&src, &mut env).unwrap();
+        assert!(s.warnings.is_empty(), "unexpected warnings: {:?}", s.warnings);
+        assert!(env.aliases.contains_key("frostmarkroundtrip"));
+
+        let status = exec_src("frostmarkroundtrip", &mut env);
+        assert_eq!(status, 0, "mark word must execute as a successful cd");
+        assert_eq!(
+            env.get_var("PWD").map(str::to_string),
+            Some(target.to_string_lossy().into_owned()),
+            "$PWD must hold the mark target after the roundtrip"
+        );
+        assert_eq!(
+            std::env::current_dir().unwrap().canonicalize().unwrap(),
+            target.canonicalize().unwrap(),
+            "physical cwd must be the mark target after the roundtrip"
+        );
+
+        // Restore the process cwd — other tests in this binary must
+        // not observe the excursion.
+        std::env::set_current_dir(&prev_cwd).unwrap();
+        let _ = std::fs::remove_dir_all(&target);
     }
 }
