@@ -1105,6 +1105,7 @@ fn interactive(
     rc_completions: std::collections::HashMap<String, Vec<String>>,
     rc_binds: Vec<(String, String)>,
     rc_descriptions: std::collections::HashMap<String, String>,
+    rc_payloads: std::collections::HashMap<String, String>,
     rc_pickers: Vec<frost_lisp::PickerSpec>,
     rc_subcmds: Vec<frost_lisp::SubcmdSpec>,
     rc_flags: Vec<frost_lisp::FlagSpec>,
@@ -1132,6 +1133,7 @@ fn interactive(
         frost_complete::FrostCompleter::with_default_builtins()
             .with_arg_completions(rc_completions.clone())
             .with_descriptions(rc_descriptions)
+            .with_defcompletion_payloads(rc_payloads)
             .with_rich_completions(&rc_subcmds, &rc_flags, &rc_positionals)
             // wadachi (轍) frecency oracle: `cd wad<Tab>` offers
             // ranked dirs from the index — real visits plus dirs the
@@ -1674,6 +1676,7 @@ fn main() {
         rc_completions,
         rc_binds,
         rc_descriptions,
+        rc_payloads,
         rc_pickers,
         rc_subcmds,
         rc_flags,
@@ -1728,6 +1731,7 @@ fn main() {
                 summary.completion_map,
                 summary.bind_map,
                 summary.completion_descriptions,
+                summary.completion_payloads,
                 summary.pickers,
                 summary.subcmds,
                 summary.flags,
@@ -1745,6 +1749,7 @@ fn main() {
             (
                 std::collections::HashMap::new(),
                 Vec::new(),
+                std::collections::HashMap::new(),
                 std::collections::HashMap::new(),
                 Vec::new(),
                 Vec::new(),
@@ -1842,6 +1847,7 @@ fn main() {
             rc_completions,
             rc_binds,
             rc_descriptions,
+            rc_payloads,
             rc_pickers,
             rc_subcmds,
             rc_flags,

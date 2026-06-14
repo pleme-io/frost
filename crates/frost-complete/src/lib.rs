@@ -37,7 +37,31 @@ pub use forge::{
 pub use tree::{CompletionNode, CompletionTree, FlagNode, PositNode};
 // Re-export the Lisp-side spec types so consumers don't need a direct
 // frost-lisp dep for the common "wire specs into the completer" path.
-pub use frost_lisp::{FlagSpec, PositSpec, SubcmdSpec, ValueKind};
+pub use frost_lisp::{CompletionSpec, FlagSpec, PositSpec, SubcmdSpec, ValueKind};
+
+/// Parse a raw `(defcompletion …)` JSON payload — byte-identical to what
+/// the producer stores in the `__frost_complete_<command>` shell var — into
+/// the `(arg, description)` pairs the first-argument fallback offers. The
+/// spec's single `:description` is attached to every arg so the styled menu
+/// shows it next to each curated subcommand.
+///
+/// Returns `None` when the payload is empty or not valid `CompletionSpec`
+/// JSON, so a malformed var degrades to "no defcompletion candidates"
+/// rather than a panic. Pure over its input — unit-testable with a fixture
+/// JSON string, no live shell required.
+fn parse_defcompletion_payload(raw: &str) -> Option<Vec<(String, Option<String>)>> {
+    let spec: CompletionSpec = serde_json::from_str(raw).ok()?;
+    if spec.args.is_empty() {
+        return None;
+    }
+    let desc = spec.description;
+    Some(
+        spec.args
+            .into_iter()
+            .map(|arg| (arg, desc.clone()))
+            .collect(),
+    )
+}
 
 /// Ranked directory suggestions from beyond the local filesystem walk
 /// — e.g. wadachi's frecency index (real visits plus dirs the
@@ -67,6 +91,13 @@ pub struct FrostCompleter {
     /// / `(defposit …)` forms. Consulted first; a miss falls through
     /// to the flat `arg_completions` path above.
     tree: CompletionTree,
+    /// Raw `(defcompletion …)` JSON payloads keyed by command — exactly
+    /// the `__frost_complete_<command>` shell-var content. Consulted at
+    /// first-argument position for commands the rich tree does NOT know,
+    /// each curated arg offered with the spec's description. The broad
+    /// fallback between the rich tree (higher priority) and path/history
+    /// (lower). See [`parse_defcompletion_payload`].
+    defcompletion_payloads: HashMap<String, String>,
     /// Optional frecency/index oracle for `dir`-kind completion —
     /// see [`DirOracle`].
     dir_oracle: Option<DirOracle>,
@@ -79,6 +110,7 @@ impl FrostCompleter {
             arg_completions: HashMap::new(),
             command_descriptions: HashMap::new(),
             tree: CompletionTree::default(),
+            defcompletion_payloads: HashMap::new(),
             dir_oracle: None,
         }
     }
@@ -133,6 +165,19 @@ impl FrostCompleter {
     /// Install per-command descriptions (shown on Tab at command position).
     pub fn with_descriptions(mut self, map: HashMap<String, String>) -> Self {
         self.command_descriptions = map;
+        self
+    }
+
+    /// Install the raw `(defcompletion …)` JSON payloads (command → the
+    /// `__frost_complete_<command>` shell-var content). Consulted at
+    /// first-argument position for commands the rich `(defsubcmd …)` tree
+    /// does not cover — each curated subcommand is offered with the spec's
+    /// `:description`. The producer hands these straight through from
+    /// `frost_lisp::ApplySummary::completion_payloads`, so the consumer has
+    /// one typed loader regardless of whether the payload came from the var
+    /// or from the summary.
+    pub fn with_defcompletion_payloads(mut self, map: HashMap<String, String>) -> Self {
+        self.defcompletion_payloads = map;
         self
     }
 }
@@ -202,6 +247,51 @@ impl Completer for FrostCompleter {
                 );
             }
             return tree_sugs;
+        }
+
+        // `(defcompletion …)` first-argument fallback — the broad path for
+        // commands that have a curated subcommand list but NO rich
+        // `(defsubcmd …)` tree. Fires only at the FIRST argument position
+        // (the cursor's word is the first token past the command name, not
+        // a flag value or a later positional) and only when the rich tree
+        // doesn't already cover the command (it wins outright above). Each
+        // curated arg is offered with the spec's `:description`, so the
+        // styled menu shows `status   version control` etc. Prefix-filtered
+        // by the partial word; the `span` replaces exactly that word.
+        if let Some(cmd_name) = cmd_name
+            && !ctx.word.starts_with('-')
+            && !self.tree.knows(cmd_name)
+            && segment_is_first_argument(segment, cmd_name)
+            && let Some(pairs) = self.defcompletion_args(cmd_name)
+        {
+            let mut out: Vec<Suggestion> = pairs
+                .into_iter()
+                .filter(|(arg, _)| arg.starts_with(&ctx.word))
+                .map(|(value, description)| Suggestion {
+                    description,
+                    append_whitespace: true,
+                    style: None,
+                    extra: None,
+                    span,
+                    value,
+                })
+                .collect();
+            // Fold in filesystem candidates so a path argument typed at the
+            // same position still completes — the curated, description-
+            // bearing subcommands lead, filenames trail.
+            out.extend(
+                filename_candidates(&ctx.word)
+                    .into_iter()
+                    .map(|value| Suggestion {
+                        description: None,
+                        append_whitespace: !value.ends_with('/'),
+                        style: None,
+                        extra: None,
+                        span,
+                        value,
+                    }),
+            );
+            return out;
         }
 
         // Typed positional kinds for path-taking builtins — `cd` and
@@ -280,6 +370,25 @@ impl Completer for FrostCompleter {
 }
 
 impl FrostCompleter {
+    /// Curated `(defcompletion …)` first-argument candidates for `cmd` —
+    /// `(arg, description)` pairs from the command's JSON payload, or
+    /// `None` when no `defcompletion` covers it. The single typed seam
+    /// over the payload store: callers never touch the raw JSON or the
+    /// env var. Prefers an in-process payload (handed in by the REPL from
+    /// `ApplySummary::completion_payloads`); falls back to the
+    /// `__frost_complete_<cmd>` shell var so a payload that only reached
+    /// the env (e.g. exported into a child) is still honored. Pure parse
+    /// behind [`parse_defcompletion_payload`] — testable with a fixture.
+    fn defcompletion_args(&self, cmd: &str) -> Option<Vec<(String, Option<String>)>> {
+        if let Some(raw) = self.defcompletion_payloads.get(cmd)
+            && let Some(pairs) = parse_defcompletion_payload(raw)
+        {
+            return Some(pairs);
+        }
+        let raw = std::env::var(format!("__frost_complete_{cmd}")).ok()?;
+        parse_defcompletion_payload(&raw)
+    }
+
     /// Return rich completions from the tree if the command is
     /// known. Consumes the partial-line context; each suggestion
     /// carries the spec's description so reedline's menu shows it.
@@ -548,6 +657,19 @@ struct WordContext<'a> {
     /// the "logical line" after the last `;`, `|`, `&`, `&&`, or `||`).
     is_command_position: bool,
     _phantom: std::marker::PhantomData<&'a ()>,
+}
+
+/// True iff the cursor (whose current word has already been split off into
+/// `segment`'s tail) sits at the FIRST argument position of `cmd_name` —
+/// the segment up to the current word holds nothing but the command name.
+/// `segment` is the logical command's text up to (but not including) the
+/// current word, so when its only token is `cmd_name` the next word the
+/// user is typing is the first argument. Used to gate the `defcompletion`
+/// subcommand fallback so a curated first-arg list never leaks into a later
+/// positional.
+fn segment_is_first_argument(segment: &str, cmd_name: &str) -> bool {
+    let mut tokens = segment.split_whitespace();
+    tokens.next() == Some(cmd_name) && tokens.next().is_none()
 }
 
 /// First word of `line` (everything up to the first whitespace),
@@ -1103,5 +1225,148 @@ mod tests {
             "file kind must include directories so the user can descend: {values:?}"
         );
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // ─── defcompletion first-argument fallback ──────────────────────────
+
+    /// The exact JSON the producer stores in `__frost_complete_git` — a
+    /// serialized `CompletionSpec`. Used as a fixture so the tests exercise
+    /// the real byte shape, not a hand-tweaked variant.
+    fn git_payload() -> String {
+        serde_json::to_string(&CompletionSpec {
+            command: "git".into(),
+            args: vec![
+                "status".into(),
+                "diff".into(),
+                "log".into(),
+                "stash".into(),
+            ],
+            description: Some("version control".into()),
+        })
+        .unwrap()
+    }
+
+    fn git_completer() -> FrostCompleter {
+        let mut payloads = HashMap::new();
+        payloads.insert("git".to_string(), git_payload());
+        FrostCompleter::with_default_builtins().with_defcompletion_payloads(payloads)
+    }
+
+    #[test]
+    fn parse_defcompletion_payload_pairs_each_arg_with_description() {
+        let pairs = parse_defcompletion_payload(&git_payload()).expect("valid payload");
+        assert_eq!(pairs.len(), 4);
+        for (_, desc) in &pairs {
+            assert_eq!(desc.as_deref(), Some("version control"));
+        }
+        assert!(pairs.iter().any(|(a, _)| a == "status"));
+        assert!(pairs.iter().any(|(a, _)| a == "diff"));
+    }
+
+    #[test]
+    fn parse_defcompletion_payload_rejects_garbage_and_empty_args() {
+        assert!(parse_defcompletion_payload("not json").is_none());
+        assert!(parse_defcompletion_payload("").is_none());
+        // Valid spec but no args → no candidates (None, not an empty Vec).
+        let no_args =
+            serde_json::to_string(&CompletionSpec { command: "x".into(), args: vec![], description: None })
+                .unwrap();
+        assert!(parse_defcompletion_payload(&no_args).is_none());
+    }
+
+    #[test]
+    fn defcompletion_first_arg_offers_every_subcommand_with_description() {
+        let mut completer = git_completer();
+        // `git ` — cursor at the first argument, empty partial.
+        let out = completer.complete("git ", 4);
+        for sub in ["status", "diff", "log", "stash"] {
+            let s = out
+                .iter()
+                .find(|s| s.value == sub)
+                .unwrap_or_else(|| panic!("`{sub}` must be offered for `git `: {out:?}"));
+            assert_eq!(
+                s.description.as_deref(),
+                Some("version control"),
+                "`{sub}` must carry the spec description"
+            );
+            // The span replaces the (empty) partial word at the cursor.
+            assert_eq!(s.span, Span { start: 4, end: 4 });
+        }
+    }
+
+    #[test]
+    fn defcompletion_first_arg_prefix_filters_and_spans_the_partial() {
+        let mut completer = git_completer();
+        // `git st` — only `status` and `stash` share the `st` prefix.
+        let out = completer.complete("git st", 6);
+        let curated: Vec<&str> = out
+            .iter()
+            .filter(|s| s.description.as_deref() == Some("version control"))
+            .map(|s| s.value.as_str())
+            .collect();
+        assert!(curated.contains(&"status"), "expected status: {curated:?}");
+        assert!(curated.contains(&"stash"), "expected stash: {curated:?}");
+        assert!(!curated.contains(&"diff"), "diff must be filtered out: {curated:?}");
+        assert!(!curated.contains(&"log"), "log must be filtered out: {curated:?}");
+        // The span replaces the partial word `st` (offsets 4..6), so
+        // accepting a suggestion overwrites exactly what was typed.
+        for s in out.iter().filter(|s| curated.contains(&s.value.as_str())) {
+            assert_eq!(s.span, Span { start: 4, end: 6 });
+        }
+    }
+
+    #[test]
+    fn defcompletion_does_not_fire_past_the_first_argument() {
+        let mut completer = git_completer();
+        // `git status ` — the curated first-arg list must NOT leak into a
+        // later positional. No suggestion may carry the spec description.
+        let out = completer.complete("git status ", 11);
+        assert!(
+            out.iter().all(|s| s.description.as_deref() != Some("version control")),
+            "defcompletion subcommands must not reappear past arg 1: {out:?}"
+        );
+    }
+
+    #[test]
+    fn rich_subcmd_tree_wins_over_defcompletion() {
+        // Both systems describe `git`. The rich `(defsubcmd …)` tree must
+        // win — defcompletion is the broad fallback for commands LACKING a
+        // tree, never an override.
+        let mut payloads = HashMap::new();
+        payloads.insert("git".to_string(), git_payload());
+        let mut completer = FrostCompleter::with_default_builtins()
+            .with_defcompletion_payloads(payloads)
+            .with_rich_completions(
+                &[SubcmdSpec {
+                    path: "git".into(),
+                    name: "commit".into(),
+                    description: Some("record changes".into()),
+                }],
+                &[],
+                &[],
+            );
+        let out = completer.complete("git ", 4);
+        // The tree's `commit` (with its own description) is offered …
+        let commit = out
+            .iter()
+            .find(|s| s.value == "commit")
+            .expect("tree subcommand must be offered: {out:?}");
+        assert_eq!(commit.description.as_deref(), Some("record changes"));
+        // … and the defcompletion args (status/diff/log/stash) are NOT,
+        // because the tree path returns early before the fallback runs.
+        for sub in ["status", "diff", "log", "stash"] {
+            assert!(
+                out.iter().all(|s| s.value != sub),
+                "defcompletion `{sub}` must not appear when a tree covers git: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn segment_is_first_argument_only_when_segment_is_bare_command() {
+        assert!(segment_is_first_argument("git ", "git"));
+        assert!(segment_is_first_argument("git", "git"));
+        assert!(!segment_is_first_argument("git status ", "git"));
+        assert!(!segment_is_first_argument("git -c foo ", "git"));
     }
 }

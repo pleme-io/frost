@@ -152,6 +152,16 @@ pub struct ApplySummary {
     /// Shown in the completion menu at command position.
     pub completion_descriptions: std::collections::HashMap<String, String>,
 
+    /// command → the raw JSON `CompletionSpec` payload, byte-identical to
+    /// what is stored in the `__frost_complete_<command>` shell var. The
+    /// REPL hands this to `frost_complete::FrostCompleter` so the
+    /// `defcompletion` first-argument fallback can offer each arg paired
+    /// with the spec's description (the args↔description pairing that
+    /// `completion_map` + `completion_descriptions` lose by splitting).
+    /// Carries the same payload the env var holds so the consumer has one
+    /// typed loader regardless of whether it reads the var or this map.
+    pub completion_payloads: std::collections::HashMap<String, String>,
+
     /// Picker widgets from `(defpicker …)` forms. The REPL walks this
     /// list to (a) bind keys to the picker sentinels and (b) populate
     /// its dispatch table so hitting a key runs the right binary with
@@ -858,6 +868,9 @@ fn apply_source_with_context(
         let var = format!("__frost_complete_{}", c.command);
         let payload = serde_json::to_string(&c).unwrap_or_default();
         env.set_var(&var, &payload);
+        summary
+            .completion_payloads
+            .insert(c.command.clone(), payload);
         summary
             .completion_map
             .insert(c.command.clone(), c.args.clone());
