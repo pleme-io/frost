@@ -189,7 +189,27 @@ impl ZleEngine {
         // (add_completion_tab_binding) resolves to it; ColumnarMenu's
         // default name is "columnar_menu", which no binding references.
         let menu = ReedlineMenu::EngineCompleter(Box::new(
-            reedline::ColumnarMenu::default().with_name("completion_menu"),
+            reedline::ColumnarMenu::default()
+                .with_name("completion_menu")
+                // Vellum completion-menu styling — cohesive with the
+                // skim-tab pickers (fg+ #F4EFE2 bold / bg+ surface). The
+                // bare `ColumnarMenu::default()` inherited reedline's
+                // default selected style (a light-bg highlight) which read
+                // poorly on the dark parchment ground (operator report:
+                // "readability issue with all the autocomplete"). Now:
+                // unselected entries are calm dim-cream; the SELECTED entry
+                // is bright cream BOLD on a clearly-visible parchment
+                // surface; descriptions recede to shadow0.
+                .with_text_style(Style::new().fg(Color::Rgb(0xAD, 0xA5, 0x93))) // snow0 dim cream
+                .with_selected_text_style(
+                    Style::new()
+                        .bold()
+                        .fg(Color::Rgb(0xF4, 0xEF, 0xE2)) // snow3 bright cream
+                        .on(Color::Rgb(0x38, 0x34, 0x2A)), // night3 visible surface
+                )
+                .with_description_text_style(
+                    Style::new().fg(Color::Rgb(0x6E, 0x68, 0x57)), // shadow0 — recede
+                ),
         ));
         self.inner = std::mem::replace(&mut self.inner, Reedline::create())
             .with_completer(completer)
