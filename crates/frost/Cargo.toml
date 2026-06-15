@@ -24,6 +24,10 @@ frost-prompt = { workspace = true }
 frost-history = { workspace = true }
 frost-lisp = { workspace = true }
 frost-mcp = { workspace = true }
+# ishou-tokens — the fleet shell-error vocabulary (ShellSignals): warm-frost
+# Nord emoji per failure class with a Brazilian-warmth accent, so a failing
+# command speaks in the fleet's voice instead of a cold grey error.
+ishou-tokens = { workspace = true }
 # Kanshou — live process introspection. Frost opens a kanshou socket
 # exposing the live shell state (rc-load posture, prompt-render
 # state, pending VT response queries, current command, history file)

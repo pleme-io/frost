@@ -3,10 +3,51 @@ use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use clap::Parser as ClapParser;
+use ishou_tokens::{ShellSignal, ShellSignals, SignalMode};
 
 mod kanshou_state;
 
 use frost_zle::{EditModeKind, InputStatus, ReadLineOutcome, ZleEngine};
+
+/// Map a `frost-exec` error to its warm-frost [`ShellSignal`] class so
+/// the diagnostic is prefixed with the fleet's Nord-frost mark instead
+/// of a cold grey line. An `Exec` failure reads its errno (ENOENT after
+/// the PATH search = a genuine not-found; EACCES = permission; ENOEXEC =
+/// not a runnable binary); a pipe failure is the frozen-pipe mark.
+fn exec_error_class(e: &frost_exec::ExecError) -> ShellSignal {
+    use frost_exec::ExecError;
+    match e {
+        ExecError::CommandNotFound(_) => ShellSignal::CommandNotFound,
+        ExecError::Exec(errno) => match *errno as i32 {
+            2 => ShellSignal::CommandNotFound, // ENOENT on exec = not found
+            13 => ShellSignal::PermissionDenied, // EACCES
+            8 => ShellSignal::ExecFormat,      // ENOEXEC
+            n => ShellSignal::from_errno(n),
+        },
+        ExecError::Pipe(_) => ShellSignal::PipeFailed,
+        ExecError::Fork(_) | ExecError::Wait(_) | ExecError::Redirect(_) => ShellSignal::General,
+        ExecError::ControlFlow(_) => ShellSignal::General,
+    }
+}
+
+/// The warm-frost emoji mark for a shell-error class. Honors `NO_COLOR`
+/// (returns `""` so an operator who opts out gets the plain `frost: …`
+/// line unchanged).
+fn shell_mark(class: ShellSignal) -> &'static str {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return "";
+    }
+    ShellSignals::prescribed().render(class, SignalMode::Emoji)
+}
+
+/// The Brazilian-warmth accent (🌊 maré) for a friendly recovery coda,
+/// honoring `NO_COLOR`.
+fn shell_warmth() -> &'static str {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return "";
+    }
+    ShellSignals::prescribed().warmth().render(SignalMode::Emoji)
+}
 
 /// Bitmask of signals that fired since the last check. Set by the
 /// signal handler (which must be async-signal-safe — `fetch_or` on
@@ -839,16 +880,35 @@ fn run(input: &str, env: &mut frost_exec::ShellEnv) -> RunOutcome {
             RunOutcome::Exit(code)
         }
         Err(frost_exec::ExecError::CommandNotFound(name)) => {
-            eprintln!("frost: command not found: {name}");
+            // ❄️ a snowflake fell where the command should be — gone, frozen.
+            let mark = shell_mark(ShellSignal::CommandNotFound);
+            if mark.is_empty() {
+                eprintln!("frost: command not found: {name}");
+            } else {
+                eprintln!("{mark} frost: command not found: {name}");
+            }
             let suggestions = did_you_mean(&name, &known);
             if !suggestions.is_empty() {
-                eprintln!("frost: did you mean {}?", suggestions.join(", "));
+                // 🌊 maré — the warm Brazilian hand on the friendly suggestion:
+                // tudo bem, here's what you probably meant.
+                let warmth = shell_warmth();
+                let joined = suggestions.join(", ");
+                if warmth.is_empty() {
+                    eprintln!("frost: did you mean {joined}?");
+                } else {
+                    eprintln!("frost: did you mean {joined}? {warmth}");
+                }
             }
             // zsh convention for command-not-found is 127.
             RunOutcome::Completed(127)
         }
         Err(e) => {
-            eprintln!("frost: {e}");
+            let mark = shell_mark(exec_error_class(&e));
+            if mark.is_empty() {
+                eprintln!("frost: {e}");
+            } else {
+                eprintln!("{mark} frost: {e}");
+            }
             RunOutcome::Completed(1)
         }
     }
