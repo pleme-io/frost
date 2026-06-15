@@ -59,7 +59,32 @@ impl History {
     /// Load a history file. Missing files are treated as empty (not an
     /// error) so `frost` can bootstrap fresh `$HISTFILE`s.
     pub fn from_file(path: impl Into<PathBuf>) -> HistoryResult<Self> {
-        let backing = path.into();
+        Self::load_entries(path.into()).map(|(entries, backing)| Self {
+            entries,
+            backing: Some(backing),
+        })
+    }
+
+    /// Load a history file for **in-memory expansion only** — the entries
+    /// are read so `!`-expansion (`!!`, `!$`, `!str`, …) sees prior-session
+    /// commands, but [`push`](Self::push) NEVER writes back to disk.
+    ///
+    /// This is the single-writer discipline: frost lets *one* component own
+    /// the `$HISTFILE` (reedline's `FileBackedHistory`, which also drives
+    /// up/down-arrow navigation + the history hinter). A second eager
+    /// file-writer interleaving with reedline's drop/`sync()` rewrite
+    /// corrupts the file (lost + re-ordered entries — observed: `echo two`
+    /// vanishing, the most-recent command not landing last), which in turn
+    /// breaks Ctrl-R's "most recent on top" ordering. So this buffer reads
+    /// the file but is forbidden from writing it.
+    pub fn from_file_readonly(path: impl Into<PathBuf>) -> HistoryResult<Self> {
+        Self::load_entries(path.into()).map(|(entries, _)| Self {
+            entries,
+            backing: None,
+        })
+    }
+
+    fn load_entries(backing: PathBuf) -> HistoryResult<(Vec<String>, PathBuf)> {
         let mut entries = Vec::new();
         if backing.exists() {
             let content = std::fs::read_to_string(&backing)?;
@@ -70,10 +95,7 @@ impl History {
                 }
             }
         }
-        Ok(Self {
-            entries,
-            backing: Some(backing),
-        })
+        Ok((entries, backing))
     }
 
     pub fn len(&self) -> usize {
@@ -435,6 +457,50 @@ mod tests {
         let (out, changed) = expand("!!", &h).unwrap();
         assert_eq!(out, "cd /etc");
         assert!(changed);
+    }
+
+    /// Single-writer discipline: `from_file_readonly` loads existing entries
+    /// for `!`-expansion but `push` must NEVER write the file back. A second
+    /// eager writer racing reedline's `FileBackedHistory::sync()` corrupted
+    /// the on-disk order (lost + mis-ordered entries → Ctrl-R failed to put
+    /// the most-recent command on top). reedline is the sole writer; this
+    /// buffer is read-only on disk.
+    #[test]
+    fn readonly_buffer_never_writes_file() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("frost_history");
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            writeln!(f, "echo one").unwrap();
+            writeln!(f, "echo two").unwrap();
+        }
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let mut h = History::from_file_readonly(&path).unwrap();
+        // Loaded for expansion — sees prior-session commands.
+        assert_eq!(h.previous(), Some("echo two"));
+        // Push in-session commands; the file must stay byte-identical.
+        h.push("echo three").unwrap();
+        h.push("echo four").unwrap();
+        assert_eq!(h.previous(), Some("echo four")); // in-memory updated
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            before, after,
+            "from_file_readonly must not write the history file — reedline owns it"
+        );
+    }
+
+    /// By contrast, `from_file` IS file-backed (used where a single owner is
+    /// wanted). Kept as a guard so the two constructors stay distinct.
+    #[test]
+    fn from_file_buffer_does_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("frost_history");
+        let mut h = History::from_file(&path).unwrap();
+        h.push("echo persisted").unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("echo persisted"));
     }
 
     #[test]

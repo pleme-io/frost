@@ -1244,11 +1244,18 @@ fn interactive(
         .with_highlighter(highlighter)
         .with_history_hints(rc_theme.hint.as_deref())
         .with_bindings(rc_binds);
-    // Separate in-process history for `!` expansion — reedline owns the
-    // user-facing navigation buffer, frost-history owns the expansion
-    // buffer. They read the same file so `!!` sees the same commands the
-    // user could up-arrow to.
-    let mut history = frost_history::History::from_file(&history_path)
+    // Separate in-process history for `!` expansion. reedline owns the
+    // user-facing navigation buffer AND is the SOLE writer of $HISTFILE
+    // (up/down-arrow + the history hinter + Ctrl-R's most-recent-first feed
+    // all depend on its file). frost-history is a READ-ONLY mirror: it loads
+    // the same file at startup (so `!!` sees prior-session commands the user
+    // could up-arrow to) and is fed every in-session command via `push`, but
+    // it must NEVER write the file back. Two eager writers racing reedline's
+    // drop/`sync()` rewrite corrupted the file — lost + mis-ordered entries
+    // (`echo two` vanishing, the just-run command not landing last), which
+    // is exactly why Ctrl-R failed to surface the most-recent command on
+    // top. Single writer ⇒ correct order ⇒ correct Ctrl-R.
+    let mut history = frost_history::History::from_file_readonly(&history_path)
         .unwrap_or_else(|_| frost_history::History::new());
 
     // A reedline cursor-position-report (DSR / CPR — `ESC[6n`) timeout must
@@ -1471,6 +1478,15 @@ fn interactive(
                     continue;
                 }
                 let _ = history.push(to_run.clone());
+                // Flush reedline's history (the sole $HISTFILE writer) NOW,
+                // before we run the command, so a crash mid-command still
+                // leaves a complete, correctly-ordered trail — the eager
+                // crash-trail guarantee, routed through the single writer.
+                // reedline already saved the accepted line in submit_buffer;
+                // this persists it. Single-writer ⇒ Ctrl-R sees most-recent
+                // on top (frost-history's old eager append raced this write
+                // and corrupted the order).
+                zle.sync_history();
                 // `preexec` — after input is accepted, before execution.
                 run_hook("__frost_hook_preexec", env);
                 match run(&to_run, env) {

@@ -844,6 +844,7 @@ name = "frost-history"
 version = "0.1.0"
 dependencies = [
  "pretty_assertions",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -953,6 +954,7 @@ dependencies = [
  "nu-ansi-term",
  "pretty_assertions",
  "reedline",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 
