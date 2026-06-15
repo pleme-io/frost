@@ -118,12 +118,15 @@ pub fn nord_default() -> ThemeSpec {
 /// * `comment` = shadow1 · `hint` = shadow0 · `number` = ice_steel.
 #[must_use]
 pub fn borealis_night() -> ThemeSpec {
-    use ishou_tokens::BorealisPalette;
-    let p = BorealisPalette::night();
+    // Borealis was retired in favour of Vellum (the matte-Nord fleet
+    // theme); the BORN token names (aurora_green / ice_cyan / shadow0 …)
+    // carried over verbatim, so this stays a one-source palette read.
+    use ishou_tokens::VellumPalette;
+    let p = VellumPalette::vellum();
     let tok = |name: &str| -> Option<String> {
         Some(
             p.get(name)
-                .unwrap_or_else(|| panic!("unknown Borealis token: {name}"))
+                .unwrap_or_else(|| panic!("unknown Vellum token: {name}"))
                 .hex(),
         )
     };
