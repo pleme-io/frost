@@ -19,3 +19,4 @@ reedline = "0.42"
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 insta = { workspace = true }
+tempfile = "3.27.0"

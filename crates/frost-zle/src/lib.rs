@@ -374,6 +374,20 @@ impl ZleEngine {
             }
         }
     }
+
+    /// Flush reedline's in-memory history to its backing `$HISTFILE` now.
+    ///
+    /// reedline's `FileBackedHistory` otherwise only writes on `Drop`. Since
+    /// reedline is the **sole** writer of the history file (frost-history's
+    /// expansion buffer is read-only — see
+    /// [`frost_history::History::from_file_readonly`]), the REPL calls this
+    /// after every accepted command so a crashed shell still leaves a
+    /// complete, correctly-ordered trail — the eager-persistence guarantee
+    /// that frost-history's `push` used to provide, now routed through the
+    /// single writer so no two components race the same file.
+    pub fn sync_history(&mut self) {
+        let _ = self.inner.sync_history();
+    }
 }
 
 /// Which line-editing model to bind. Maps to zsh's `bindkey -v` / `-e`.
