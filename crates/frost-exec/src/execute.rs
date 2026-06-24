@@ -66,6 +66,17 @@ pub struct Executor<'env> {
     pub env: &'env mut ShellEnv,
     pub builtins: BuiltinRegistry,
     pub jobs: JobTable,
+    /// Suppression depth for ERR_EXIT (`set -e`). Raised while executing a
+    /// command whose failure is *tested* rather than *fatal*: if/while/until
+    /// conditions and the non-final operands of an `&&` / `||` list. Failures
+    /// at depth > 0 never abort the shell. Restored even through function
+    /// calls, so a failing function used as a tested command stays exempt.
+    cond_depth: u32,
+    /// Whether the most recently completed AND-OR list is ERR_EXIT-eligible:
+    /// its last *executed* pipeline was the syntactically-final element and
+    /// was not negated (`!`). Read at the complete-command boundary only on
+    /// the `Ok` path, where `execute_list` always sets it last.
+    errexit_eligible: bool,
 }
 
 impl<'env> Executor<'env> {
@@ -75,6 +86,8 @@ impl<'env> Executor<'env> {
             env,
             builtins: frost_builtins::default_builtins(),
             jobs: JobTable::new(),
+            cond_depth: 0,
+            errexit_eligible: false,
         }
     }
 
@@ -92,30 +105,90 @@ impl<'env> Executor<'env> {
         let status = self.execute_list(&cmd.list)?;
 
         if cmd.is_async {
+            // A backgrounded command never trips ERR_EXIT (its failure is
+            // asynchronous and not the foreground status). Matches zsh.
             self.env.exit_status = 0;
-            Ok(0)
-        } else {
-            self.env.exit_status = status;
-            Ok(status)
+            return Ok(0);
         }
-    }
 
-    fn execute_list(&mut self, list: &List) -> ExecResult {
-        let mut status = self.execute_pipeline(&list.first)?;
+        self.env.exit_status = status;
 
-        for (op, pipeline) in &list.rest {
-            match op {
-                ListOp::And if status == 0 => {
-                    status = self.execute_pipeline(pipeline)?;
-                }
-                ListOp::Or if status != 0 => {
-                    status = self.execute_pipeline(pipeline)?;
-                }
-                _ => {}
-            }
+        // ERR_EXIT (`set -e`): abort when the last command of an AND-OR list
+        // fails — unless it was negated (`!`), part of a tested condition, or
+        // a non-final `&&`/`||` operand (all of which run at cond_depth > 0).
+        // Behaviour matches zsh 5.9 (verified against the reference shell).
+        if status != 0
+            && self.cond_depth == 0
+            && self.errexit_eligible
+            && self.env.is_option_set(frost_options::ShellOption::ErrExit)
+        {
+            return Err(ExecError::ControlFlow(ControlFlow::Exit(status)));
         }
 
         Ok(status)
+    }
+
+    fn execute_list(&mut self, list: &List) -> ExecResult {
+        let n = list.rest.len();
+        let mut status = self.run_operand(&list.first, n == 0)?;
+        let mut last_bang = list.first.bang;
+        let mut last_final = n == 0;
+
+        for (idx, (op, pipeline)) in list.rest.iter().enumerate() {
+            let is_final = idx + 1 == n;
+            let run = match op {
+                ListOp::And => status == 0,
+                ListOp::Or => status != 0,
+            };
+            if run {
+                status = self.run_operand(pipeline, is_final)?;
+                last_bang = pipeline.bang;
+                last_final = is_final;
+            }
+        }
+
+        // ERR_EXIT eligibility: only the syntactically-final, non-negated
+        // operand counts. Written last so the complete-command boundary reads
+        // the correct value even after nested lists ran inside the operands.
+        self.errexit_eligible = last_final && !last_bang;
+        Ok(status)
+    }
+
+    /// Run one operand of an AND-OR list. Non-final operands execute in a
+    /// suppressed context (ERR_EXIT off) so their failure — including a
+    /// failing function body — never aborts the shell; only the final operand
+    /// is fatal. Matches zsh (`false && x`, `f || true` both continue).
+    fn run_operand(&mut self, pipeline: &Pipeline, is_final: bool) -> ExecResult {
+        if is_final {
+            return self.execute_pipeline(pipeline);
+        }
+        self.cond_depth += 1;
+        let r = self.execute_pipeline(pipeline);
+        self.cond_depth -= 1;
+        r
+    }
+
+    /// Run a condition list (an if/elif/while/until test) in a suppressed
+    /// context so a failing test never trips ERR_EXIT. `cond_depth` is
+    /// restored even when a command propagates control flow (return/break/…).
+    fn run_condition(&mut self, cmds: &[CompleteCommand]) -> ExecResult {
+        self.cond_depth += 1;
+        let mut status = 0;
+        let mut err = None;
+        for cmd in cmds {
+            match self.execute_complete_command(cmd) {
+                Ok(s) => status = s,
+                Err(e) => {
+                    err = Some(e);
+                    break;
+                }
+            }
+        }
+        self.cond_depth -= 1;
+        match err {
+            Some(e) => Err(e),
+            None => Ok(status),
+        }
     }
 
     // ── Pipeline ─────────────────────────────────────────────────
@@ -301,11 +374,8 @@ impl<'env> Executor<'env> {
     }
 
     fn execute_if(&mut self, clause: &IfClause) -> ExecResult {
-        // Evaluate condition
-        let mut cond_status = 0;
-        for cmd in &clause.condition {
-            cond_status = self.execute_complete_command(cmd)?;
-        }
+        // Evaluate condition (tested → ERR_EXIT-exempt).
+        let cond_status = self.run_condition(&clause.condition)?;
 
         if cond_status == 0 {
             let mut status = 0;
@@ -317,10 +387,7 @@ impl<'env> Executor<'env> {
 
         // Check elifs
         for (elif_cond, elif_body) in &clause.elifs {
-            let mut cond_status = 0;
-            for cmd in elif_cond {
-                cond_status = self.execute_complete_command(cmd)?;
-            }
+            let cond_status = self.run_condition(elif_cond)?;
             if cond_status == 0 {
                 let mut status = 0;
                 for cmd in elif_body {
@@ -379,10 +446,7 @@ impl<'env> Executor<'env> {
     fn execute_while(&mut self, clause: &WhileClause) -> ExecResult {
         let mut status = 0;
         'outer: loop {
-            let mut cond_status = 0;
-            for cmd in &clause.condition {
-                cond_status = self.execute_complete_command(cmd)?;
-            }
+            let cond_status = self.run_condition(&clause.condition)?;
             if cond_status != 0 {
                 break;
             }
@@ -411,10 +475,7 @@ impl<'env> Executor<'env> {
     fn execute_until(&mut self, clause: &UntilClause) -> ExecResult {
         let mut status = 0;
         'outer: loop {
-            let mut cond_status = 0;
-            for cmd in &clause.condition {
-                cond_status = self.execute_complete_command(cmd)?;
-            }
+            let cond_status = self.run_condition(&clause.condition)?;
             if cond_status == 0 {
                 break;
             }
@@ -957,9 +1018,7 @@ impl<'env> Executor<'env> {
 
         // `command -v NAME` / `command -V NAME` — a resolution query, not
         // execution (needs the registry + function table + PATH).
-        if mods.command_modifier
-            && matches!(argv.first().map(String::as_str), Some("-v" | "-V"))
-        {
+        if mods.command_modifier && matches!(argv.first().map(String::as_str), Some("-v" | "-V")) {
             let verbose = argv[0] == "-V";
             let target = argv.get(1).cloned();
             return Ok(self.command_resolve_query(target.as_deref(), verbose));
@@ -2126,6 +2185,8 @@ mod tests {
             env: &mut ShellEnv::new(),
             builtins: frost_builtins::default_builtins(),
             jobs: JobTable::new(),
+            cond_depth: 0,
+            errexit_eligible: false,
         };
         let word = literal_word("hello");
         assert_eq!(exec.expand_word(&word), "hello");
@@ -2235,10 +2296,8 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "frost-cd-test-{tag}-{}-{n}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("frost-cd-test-{tag}-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         std::fs::canonicalize(&dir).expect("canonicalize temp dir")
     }
@@ -2511,7 +2570,9 @@ mod tests {
 
     #[test]
     fn reserved_words_recognized() {
-        for kw in ["if", "then", "fi", "for", "while", "do", "done", "case", "function", "[["] {
+        for kw in [
+            "if", "then", "fi", "for", "while", "do", "done", "case", "function", "[[",
+        ] {
             assert!(is_reserved_word(kw), "{kw} should be reserved");
         }
         for not in ["cd", "echo", "ls", "foo", ""] {
