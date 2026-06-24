@@ -822,6 +822,7 @@ name = "frost-expand"
 version = "0.1.0"
 dependencies = [
  "compact_str",
+ "frost-glob",
  "frost-lexer",
  "frost-parser",
  "indexmap",
