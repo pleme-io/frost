@@ -626,6 +626,16 @@ impl<'a> Parser<'a> {
 
     // ── Word ───────────────────────────────────────────────────
 
+    /// Parse a single word for re-expansion of operator arguments.
+    ///
+    /// `frost-expand` calls this to recursively expand the *word* of a
+    /// `${var:-word}` / `${var:=word}` / `${var:?word}` form, where `word`
+    /// may itself contain `$other`, `${nested}`, `$(cmd)`, `$((expr))` and
+    /// quoting. Reusing the real word parser keeps a single expansion path.
+    pub fn parse_word_for_expansion(&mut self) -> Word {
+        self.parse_word()
+    }
+
     fn parse_word(&mut self) -> Word {
         let start_span = self.span();
         let mut parts = Vec::new();
