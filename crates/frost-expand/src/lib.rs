@@ -54,6 +54,23 @@ pub trait ExpandEnv {
     fn option_flags(&self) -> String {
         String::new()
     }
+    /// The current `$IFS` value, used by the `${=name}` word-splitting
+    /// flag. Defaults to the POSIX space/tab/newline set.
+    fn ifs(&self) -> String {
+        " \t\n".to_string()
+    }
+    /// Side-effect hook for `${name:=word}` / `${name=word}`: assign the
+    /// resolved default back into the environment. The default is a no-op
+    /// (read-only environments — e.g. the test mock — simply ignore the
+    /// writeback). The executor's bridge records the assignment and applies
+    /// it once expansion finishes (the trait itself stays `&self`).
+    fn assign_var(&self, _name: &str, _value: &str) {}
+    /// Side-effect hook for `${name:?word}` / `${name?word}`: when `name`
+    /// is unset/null, record that the current command must abort with the
+    /// (already-expanded) message. The default is a no-op. The executor's
+    /// bridge records the request and surfaces it as a non-zero exit after
+    /// expansion — matching zsh, which aborts a non-interactive shell.
+    fn request_abort(&self, _name: &str, _msg: &str) {}
 }
 
 /// Typed variable values visible to the expansion engine.
@@ -435,29 +452,25 @@ impl<'a> ExpandCtx<'a> {
                 // ${param:?word} — error if empty/unset
                 let check_empty = operator == Some(":?");
                 if self.env.get_var(param).is_none() || (check_empty && val.is_empty()) {
-                    let msg = if let Some(a) = arg {
-                        expand_word_to_string(a, self.env)
-                    } else {
-                        "parameter not set".to_string()
+                    let msg = match arg {
+                        Some(a) => expand_word_to_string(a, self.env),
+                        None => "parameter not set".to_string(),
                     };
-                    eprintln!("frost: {param}: {msg}");
+                    self.env.request_abort(param, &msg);
                     vec![String::new()]
                 } else {
                     vec![val]
                 }
             }
             Some(":=") | Some("=") => {
-                // ${param:=word} — assign default if empty/unset
+                // ${param:=word} — assign expanded default if empty/unset
                 let check_empty = operator == Some(":=");
                 if self.env.get_var(param).is_none() || (check_empty && val.is_empty()) {
-                    if let Some(a) = arg {
-                        let default = expand_word_to_string(a, self.env);
-                        // Note: we can't actually assign through the ExpandEnv trait
-                        // (it's read-only). The executor handles := assignment.
-                        vec![default]
-                    } else {
-                        vec![String::new()]
-                    }
+                    let default = arg
+                        .map(|a| expand_word_to_string(a, self.env))
+                        .unwrap_or_default();
+                    self.env.assign_var(param, &default);
+                    vec![default]
                 } else {
                     vec![val]
                 }
@@ -466,7 +479,7 @@ impl<'a> ExpandCtx<'a> {
                 // ${param##pattern} — remove longest prefix match
                 if let Some(a) = arg {
                     let pattern = expand_word_to_string(a, self.env);
-                    vec![trim_prefix(&val, &pattern, true)]
+                    vec![strip_glob_prefix(&val, &pattern, true)]
                 } else {
                     vec![val]
                 }
@@ -475,7 +488,7 @@ impl<'a> ExpandCtx<'a> {
                 // ${param#pattern} — remove shortest prefix match
                 if let Some(a) = arg {
                     let pattern = expand_word_to_string(a, self.env);
-                    vec![trim_prefix(&val, &pattern, false)]
+                    vec![strip_glob_prefix(&val, &pattern, false)]
                 } else {
                     vec![val]
                 }
@@ -484,7 +497,7 @@ impl<'a> ExpandCtx<'a> {
                 // ${param%%pattern} — remove longest suffix match
                 if let Some(a) = arg {
                     let pattern = expand_word_to_string(a, self.env);
-                    vec![trim_suffix(&val, &pattern, true)]
+                    vec![strip_glob_suffix(&val, &pattern, true)]
                 } else {
                     vec![val]
                 }
@@ -493,7 +506,7 @@ impl<'a> ExpandCtx<'a> {
                 // ${param%pattern} — remove shortest suffix match
                 if let Some(a) = arg {
                     let pattern = expand_word_to_string(a, self.env);
-                    vec![trim_suffix(&val, &pattern, false)]
+                    vec![strip_glob_suffix(&val, &pattern, false)]
                 } else {
                     vec![val]
                 }
@@ -510,11 +523,7 @@ impl<'a> ExpandCtx<'a> {
                     } else {
                         (arg_str.as_str(), "")
                     };
-                    if global {
-                        vec![val.replace(pat, rep)]
-                    } else {
-                        vec![val.replacen(pat, rep, 1)]
-                    }
+                    vec![glob_replace(&val, pat, rep, global)]
                 } else {
                     vec![val]
                 }
@@ -532,6 +541,20 @@ impl<'a> ExpandCtx<'a> {
         let raw = raw.trim();
         if raw.is_empty() {
             return vec![String::new()];
+        }
+
+        // ${=name…} — the `shwordsplit` flag. Expand the inner form normally,
+        // then split every field on `$IFS` — *even inside double quotes*,
+        // which is the entire reason the flag exists. Empty IFS-runs collapse
+        // (zsh: `"a  b"` → two words) and an empty value yields zero words.
+        if let Some(inner) = raw.strip_prefix('=') {
+            let fields = self.expand_dollar_brace_raw(inner);
+            let ifs = self.env.ifs();
+            let mut out = Vec::new();
+            for field in fields {
+                out.extend(split_on_ifs(&field, &ifs));
+            }
+            return out;
         }
 
         // ${#name} — length (string length or array element count)
@@ -616,33 +639,49 @@ impl<'a> ExpandCtx<'a> {
         // Otherwise fall through to operator handling
         let _ = effective_name_end; // used above
 
-        // Try to match operators in order of specificity
-        // ${name##pattern}
+        // Try to match operators in order of specificity. Pattern operands
+        // (`#`/`##`/`%`/`%%`/`/`/`//`) are themselves expanded (recursively)
+        // before matching, and matched through `frost_glob::match_pattern`
+        // so `*`, `?`, `[…]` glob metacharacters work — not just literals.
+        // ${name##pattern} — remove longest matching prefix
         if let Some(pat) = rest.strip_prefix("##") {
-            return vec![trim_prefix(&val, pat, true)];
+            return vec![strip_glob_prefix(&val, &self.expand_inline_word(pat), true)];
         }
-        // ${name#pattern} — note: # is already consumed by prefix check above for ${#name},
-        // but here name_end would be at the # in the operator position
+        // ${name#pattern} — remove shortest matching prefix
         if let Some(pat) = rest.strip_prefix('#') {
-            return vec![trim_prefix(&val, pat, false)];
+            return vec![strip_glob_prefix(&val, &self.expand_inline_word(pat), false)];
         }
-        // ${name%%pattern}
+        // ${name%%pattern} — remove longest matching suffix
         if let Some(pat) = rest.strip_prefix("%%") {
-            return vec![trim_suffix(&val, pat, true)];
+            return vec![strip_glob_suffix(&val, &self.expand_inline_word(pat), true)];
         }
-        // ${name%pattern}
+        // ${name%pattern} — remove shortest matching suffix
         if let Some(pat) = rest.strip_prefix('%') {
-            return vec![trim_suffix(&val, pat, false)];
+            return vec![strip_glob_suffix(&val, &self.expand_inline_word(pat), false)];
         }
-        // ${name//pattern/replacement}
+        // ${name//pattern/replacement} — replace all glob matches
         if let Some(rest) = rest.strip_prefix("//") {
             let (pat, rep) = split_first_slash(rest);
-            return vec![val.replace(pat, rep)];
+            let pat = self.expand_inline_word(pat);
+            let rep = self.expand_inline_word(rep);
+            return vec![glob_replace(&val, &pat, &rep, true)];
         }
-        // ${name/pattern/replacement}
+        // ${name/pattern/replacement} — replace first glob match. Supports the
+        // anchored zsh forms `/#pat/rep` (anchor at start) and `/%pat/rep`
+        // (anchor at end).
         if let Some(rest) = rest.strip_prefix('/') {
-            let (pat, rep) = split_first_slash(rest);
-            return vec![val.replacen(pat, rep, 1)];
+            let (pat_raw, rep_raw) = split_first_slash(rest);
+            let rep = self.expand_inline_word(rep_raw);
+            if let Some(pat) = pat_raw.strip_prefix('#') {
+                let pat = self.expand_inline_word(pat);
+                return vec![glob_replace_anchored(&val, &pat, &rep, SubAnchorRaw::Start)];
+            }
+            if let Some(pat) = pat_raw.strip_prefix('%') {
+                let pat = self.expand_inline_word(pat);
+                return vec![glob_replace_anchored(&val, &pat, &rep, SubAnchorRaw::End)];
+            }
+            let pat = self.expand_inline_word(pat_raw);
+            return vec![glob_replace(&val, &pat, &rep, false)];
         }
         // ${name:-word}
         if let Some(word) = rest.strip_prefix(":-") {
@@ -676,44 +715,40 @@ impl<'a> ExpandCtx<'a> {
                 vec![String::new()]
             };
         }
-        // ${name:=word}
+        // ${name:=word} — assign the expanded default back into `name`
         if let Some(word) = rest.strip_prefix(":=") {
             return if val.is_empty() {
-                vec![self.expand_inline_word(word)]
+                let default = self.expand_inline_word(word);
+                self.env.assign_var(name, &default);
+                vec![default]
             } else {
                 vec![val]
             };
         }
-        // ${name=word}
+        // ${name=word} — assign default back into `name` if unset (only)
         if let Some(word) = rest.strip_prefix('=') {
             return if self.env.get_var(name).is_none() {
-                vec![self.expand_inline_word(word)]
+                let default = self.expand_inline_word(word);
+                self.env.assign_var(name, &default);
+                vec![default]
             } else {
                 vec![val]
             };
         }
-        // ${name:?word}
+        // ${name:?word} — abort with the expanded message if empty/unset
         if let Some(word) = rest.strip_prefix(":?") {
             if val.is_empty() {
-                let msg = if word.is_empty() {
-                    "parameter not set"
-                } else {
-                    word
-                };
-                eprintln!("frost: {name}: {msg}");
+                let msg = self.error_message(word);
+                self.env.request_abort(name, &msg);
                 return vec![String::new()];
             }
             return vec![val];
         }
-        // ${name?word}
+        // ${name?word} — abort if unset (but not merely empty)
         if let Some(word) = rest.strip_prefix('?') {
             if self.env.get_var(name).is_none() {
-                let msg = if word.is_empty() {
-                    "parameter not set"
-                } else {
-                    word
-                };
-                eprintln!("frost: {name}: {msg}");
+                let msg = self.error_message(word);
+                self.env.request_abort(name, &msg);
                 return vec![String::new()];
             }
             return vec![val];
@@ -871,7 +906,9 @@ impl<'a> ExpandCtx<'a> {
                         self.env.get_var(name).is_none()
                     };
                     if empty_or_unset {
-                        expand_word(word, self.env).join("")
+                        let default = expand_word(word, self.env).join("");
+                        self.env.assign_var(name, &default);
+                        default
                     } else {
                         val
                     }
@@ -901,7 +938,7 @@ impl<'a> ExpandCtx<'a> {
                         } else {
                             msg
                         };
-                        eprintln!("frost: {name}: {msg}");
+                        self.env.request_abort(name, &msg);
                         String::new()
                     } else {
                         val
@@ -909,11 +946,11 @@ impl<'a> ExpandCtx<'a> {
                 }
                 ParamModifier::TrimPrefix { longest, pattern } => {
                     let pat = expand_word_to_string(pattern, self.env);
-                    trim_prefix(&val, &pat, *longest)
+                    strip_glob_prefix(&val, &pat, *longest)
                 }
                 ParamModifier::TrimSuffix { longest, pattern } => {
                     let pat = expand_word_to_string(pattern, self.env);
-                    trim_suffix(&val, &pat, *longest)
+                    strip_glob_suffix(&val, &pat, *longest)
                 }
                 ParamModifier::Substitute {
                     anchor,
@@ -926,21 +963,13 @@ impl<'a> ExpandCtx<'a> {
                         .map(|w| expand_word_to_string(w, self.env))
                         .unwrap_or_default();
                     match anchor {
-                        SubAnchor::All => val.replace(&pat, &rep),
-                        SubAnchor::First => val.replacen(&pat, &rep, 1),
+                        SubAnchor::All => glob_replace(&val, &pat, &rep, true),
+                        SubAnchor::First => glob_replace(&val, &pat, &rep, false),
                         SubAnchor::Start => {
-                            if val.starts_with(&pat) {
-                                format!("{rep}{}", &val[pat.len()..])
-                            } else {
-                                val
-                            }
+                            glob_replace_anchored(&val, &pat, &rep, SubAnchorRaw::Start)
                         }
                         SubAnchor::End => {
-                            if val.ends_with(&pat) {
-                                format!("{}{rep}", &val[..val.len() - pat.len()])
-                            } else {
-                                val
-                            }
+                            glob_replace_anchored(&val, &pat, &rep, SubAnchorRaw::End)
                         }
                     }
                 }
@@ -1067,15 +1096,153 @@ impl<'a> ExpandCtx<'a> {
         }
     }
 
-    /// Expand an inline word string (from operator arguments like ${var:-word}).
+    /// Expand the *word* argument of an operator like `${var:-word}`.
+    ///
+    /// The word is itself subject to the full expansion pipeline — zsh
+    /// recursively expands `$other`, `${nested}`, `$(cmd)`, `$((expr))` and
+    /// quoting inside the default/alternative/assign/error word, while
+    /// preserving every literal byte (including runs of whitespace) verbatim.
+    ///
+    /// We scan the raw word, copy literal runs unchanged, and for each
+    /// embedded expansion (`$…`, `${…}`, `$(…)`, `$((…))`, `` `…` ``) hand
+    /// the substring back to the real lexer + parser + expander. That keeps a
+    /// single expansion path (the parser owns all `$`-form parsing) and never
+    /// re-implements either a second parser or a second expander.
     fn expand_inline_word(&self, s: &str) -> String {
-        // Handle simple variable references in the word
-        if s.starts_with('$') {
-            let var_name = &s[1..];
-            return self.resolve_param(var_name);
+        // Fast path: nothing to expand (no `$`/backtick) — the word is its
+        // own literal value, whitespace and all.
+        if !s.contains(['$', '`']) {
+            return s.to_string();
         }
-        s.to_string()
+
+        let bytes = s.as_bytes();
+        let mut out = String::with_capacity(s.len());
+        let mut i = 0;
+        let mut lit_start = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b'$' || b == b'`' {
+                let end = expansion_extent(s, i);
+                if end > i {
+                    // Flush the literal run before this expansion (UTF-8 safe:
+                    // we only ever split on ASCII `$`/backtick boundaries).
+                    out.push_str(&s[lit_start..i]);
+                    out.push_str(&self.expand_segment(&s[i..end]));
+                    i = end;
+                    lit_start = end;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        out.push_str(&s[lit_start..]);
+        out
     }
+
+    /// Build the (expanded) message for a `${name:?word}` abort. zsh uses
+    /// the standard "parameter not set" text when the word is empty.
+    fn error_message(&self, word: &str) -> String {
+        if word.is_empty() {
+            "parameter not set".to_string()
+        } else {
+            self.expand_inline_word(word)
+        }
+    }
+
+    /// Expand a single self-contained expansion segment (`$x`, `${…}`,
+    /// `$(…)`, `$((…))`, `` `…` ``) through the real lexer + parser + engine.
+    fn expand_segment(&self, seg: &str) -> String {
+        let tokens = tokenize_str(seg);
+        let mut parser = frost_parser::Parser::new(&tokens);
+        let word = parser.parse_word_for_expansion();
+        let mut ctx = ExpandCtx {
+            env: self.env,
+            // Inherit quoting so a command sub inside a double-quoted default
+            // doesn't word-split.
+            in_double_quote: self.in_double_quote,
+        };
+        ctx.expand_word_parts(&word.parts).join("")
+    }
+}
+
+/// Lex a raw string into a token stream (mirrors `frost_exec::tokenize`,
+/// kept local so `frost-expand` doesn't depend on `frost-exec`).
+fn tokenize_str(input: &str) -> Vec<frost_lexer::Token> {
+    let mut lexer = frost_lexer::Lexer::new(input.as_bytes());
+    let mut tokens = Vec::new();
+    loop {
+        let tok = lexer.next_token();
+        let eof = tok.kind == frost_lexer::TokenKind::Eof;
+        tokens.push(tok);
+        if eof {
+            break;
+        }
+    }
+    tokens
+}
+
+/// Given that `s[start]` is `$` or `` ` ``, return the byte index one past the
+/// end of the single expansion that begins there. Returns `start` itself if
+/// `start` is a bare `$`/backtick that introduces no expansion (so the caller
+/// treats it as a literal).
+fn expansion_extent(s: &str, start: usize) -> usize {
+    let bytes = s.as_bytes();
+    if bytes[start] == b'`' {
+        // `cmd` — to the matching backtick (or end of string).
+        let mut j = start + 1;
+        while j < bytes.len() && bytes[j] != b'`' {
+            j += 1;
+        }
+        return (j + 1).min(bytes.len());
+    }
+    // bytes[start] == b'$'
+    let next = bytes.get(start + 1).copied();
+    match next {
+        Some(b'{') => balanced(bytes, start + 1, b'{', b'}'),
+        Some(b'(') => {
+            // `$((expr))` arithmetic or `$(cmd)` command sub — both close on
+            // the balanced paren run.
+            balanced(bytes, start + 1, b'(', b')')
+        }
+        // `$name` — an identifier or a single special parameter.
+        Some(c) if c.is_ascii_alphabetic() || c == b'_' => {
+            let mut j = start + 1;
+            while j < bytes.len()
+                && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+            {
+                j += 1;
+            }
+            j
+        }
+        Some(c) if matches!(c, b'?' | b'$' | b'!' | b'#' | b'*' | b'@' | b'-')
+            || c.is_ascii_digit() =>
+        {
+            start + 2
+        }
+        // Bare `$` (e.g. `$` at end, or `$ `) — not an expansion.
+        _ => start,
+    }
+}
+
+/// Return the byte index one past the matching closer for the opener at
+/// `bytes[open]`, scanning a balanced `open`/`close` run. Falls back to the
+/// end of the input on an unbalanced opener.
+fn balanced(bytes: &[u8], open: usize, open_ch: u8, close_ch: u8) -> usize {
+    let mut depth = 0i32;
+    let mut j = open;
+    while j < bytes.len() {
+        let b = bytes[j];
+        if b == open_ch {
+            depth += 1;
+        } else if b == close_ch {
+            depth -= 1;
+            if depth == 0 {
+                return j + 1;
+            }
+        }
+        j += 1;
+    }
+    bytes.len()
 }
 
 /// Split a string on the first unescaped `/`.
@@ -1088,72 +1255,169 @@ fn split_first_slash(s: &str) -> (&str, &str) {
 }
 
 // ── Pattern trimming helpers ────────────────────────────────────────
+//
+// All four pattern-op primitives route through `frost_glob::match_pattern`
+// — the one glob engine the shell already ships — so `*`, `?`, `[…]`,
+// `[!…]`, `[a-z]` and escapes behave identically here and in filename
+// globbing. We pass `dot_glob: true` so the filename-only leading-dot rule
+// (which has no meaning for parameter values) is disabled and `*` spans
+// every character (including `/`), matching zsh's `${path##*/}` semantics.
 
-/// Remove a glob pattern from the beginning of `s`.
-fn trim_prefix(s: &str, pattern: &str, longest: bool) -> String {
-    if pattern == "*" {
-        return if longest {
-            String::new()
-        } else {
-            s.to_string()
-        };
-    }
-
-    // Convert simple shell glob to prefix-matching
-    if let Some(suffix) = pattern.strip_prefix('*') {
-        // Pattern is *SUFFIX — find SUFFIX in s
-        if longest {
-            // Find last occurrence
-            if let Some(pos) = s.rfind(suffix) {
-                return s[pos + suffix.len()..].to_string();
-            }
-        } else {
-            // Find first occurrence
-            if let Some(pos) = s.find(suffix) {
-                return s[pos + suffix.len()..].to_string();
-            }
-        }
-        return s.to_string();
-    }
-
-    // Simple literal prefix
-    if s.starts_with(pattern) {
-        s[pattern.len()..].to_string()
-    } else {
-        s.to_string()
+/// Glob options for parameter pattern-ops: a pure glob match with the
+/// filename leading-dot guard switched off.
+fn pattern_op_opts() -> frost_glob::GlobOptions {
+    frost_glob::GlobOptions {
+        dot_glob: true,
+        case_insensitive: false,
     }
 }
 
-/// Remove a glob pattern from the end of `s`.
-fn trim_suffix(s: &str, pattern: &str, longest: bool) -> String {
-    if pattern == "*" {
-        return if longest {
-            String::new()
-        } else {
-            s.to_string()
-        };
-    }
+/// Char-boundary cut points of `s`, ascending (`0..=s.len()`).
+fn cut_points(s: &str) -> Vec<usize> {
+    let mut pts = vec![0];
+    pts.extend(s.char_indices().skip(1).map(|(i, _)| i));
+    pts.push(s.len());
+    pts
+}
 
-    if let Some(prefix) = pattern.strip_suffix('*') {
-        // Pattern is PREFIX* — find PREFIX in s
-        if longest {
-            if let Some(pos) = s.find(prefix) {
-                return s[..pos].to_string();
-            }
-        } else {
-            if let Some(pos) = s.rfind(prefix) {
-                return s[..pos].to_string();
-            }
+/// `${s#pat}` / `${s##pat}` — remove the shortest (or longest) prefix of `s`
+/// that matches the glob `pattern`. Returns `s` unchanged when nothing
+/// matches.
+fn strip_glob_prefix(s: &str, pattern: &str, longest: bool) -> String {
+    let opts = pattern_op_opts();
+    let cuts = cut_points(s);
+    // Shortest scans short→long and takes the first match; longest scans
+    // long→short and takes the first match.
+    let order: Box<dyn Iterator<Item = &usize>> = if longest {
+        Box::new(cuts.iter().rev())
+    } else {
+        Box::new(cuts.iter())
+    };
+    for &cut in order {
+        if frost_glob::match_pattern(pattern, &s[..cut], &opts) {
+            return s[cut..].to_string();
         }
+    }
+    s.to_string()
+}
+
+/// `${s%pat}` / `${s%%pat}` — remove the shortest (or longest) suffix of `s`
+/// that matches the glob `pattern`.
+fn strip_glob_suffix(s: &str, pattern: &str, longest: bool) -> String {
+    let opts = pattern_op_opts();
+    let cuts = cut_points(s);
+    // Shortest suffix = highest cut point first; longest suffix = lowest.
+    let order: Box<dyn Iterator<Item = &usize>> = if longest {
+        Box::new(cuts.iter())
+    } else {
+        Box::new(cuts.iter().rev())
+    };
+    for &cut in order {
+        if frost_glob::match_pattern(pattern, &s[cut..], &opts) {
+            return s[..cut].to_string();
+        }
+    }
+    s.to_string()
+}
+
+/// `${s/pat/rep}` (first) / `${s//pat/rep}` (all) — replace glob matches.
+///
+/// zsh matches leftmost-greedy: at each position the *longest* match wins,
+/// and scanning resumes after the replaced span (or advances one char on a
+/// zero-width or no match). An empty pattern matches nothing (zsh leaves the
+/// value unchanged) to avoid an infinite expansion.
+fn glob_replace(s: &str, pattern: &str, rep: &str, global: bool) -> String {
+    if pattern.is_empty() {
         return s.to_string();
     }
-
-    // Simple literal suffix
-    if s.ends_with(pattern) {
-        s[..s.len() - pattern.len()].to_string()
-    } else {
-        s.to_string()
+    let opts = pattern_op_opts();
+    let mut out = String::with_capacity(s.len());
+    let mut pos = 0;
+    let mut replaced = false;
+    while pos < s.len() {
+        if !(global || !replaced) {
+            break;
+        }
+        // Longest match anchored at `pos`.
+        let mut matched_end = None;
+        let tail = &s[pos..];
+        let mut ends: Vec<usize> = cut_points(tail).into_iter().map(|c| pos + c).collect();
+        ends.retain(|&e| e > pos); // non-empty spans only
+        for &end in ends.iter().rev() {
+            if frost_glob::match_pattern(pattern, &s[pos..end], &opts) {
+                matched_end = Some(end);
+                break;
+            }
+        }
+        if let Some(end) = matched_end {
+            out.push_str(rep);
+            pos = end;
+            replaced = true;
+        } else {
+            // Copy one char and advance.
+            let ch_len = s[pos..].chars().next().map_or(1, |c| c.len_utf8());
+            out.push_str(&s[pos..pos + ch_len]);
+            pos += ch_len;
+        }
     }
+    out.push_str(&s[pos..]);
+    out
+}
+
+/// Anchor for the zsh `${s/#pat/rep}` (start) / `${s/%pat/rep}` (end) forms.
+#[derive(Clone, Copy)]
+enum SubAnchorRaw {
+    Start,
+    End,
+}
+
+/// `${s/#pat/rep}` / `${s/%pat/rep}` — replace a single match anchored at the
+/// start or end of `s` (longest match at the anchor).
+fn glob_replace_anchored(s: &str, pattern: &str, rep: &str, anchor: SubAnchorRaw) -> String {
+    let opts = pattern_op_opts();
+    let cuts = cut_points(s);
+    match anchor {
+        SubAnchorRaw::Start => {
+            // Longest prefix match.
+            for &cut in cuts.iter().rev() {
+                if frost_glob::match_pattern(pattern, &s[..cut], &opts) {
+                    let mut out = String::with_capacity(rep.len() + s.len() - cut);
+                    out.push_str(rep);
+                    out.push_str(&s[cut..]);
+                    return out;
+                }
+            }
+        }
+        SubAnchorRaw::End => {
+            // Longest suffix match.
+            for &cut in cuts.iter() {
+                if frost_glob::match_pattern(pattern, &s[cut..], &opts) {
+                    let mut out = String::with_capacity(cut + rep.len());
+                    out.push_str(&s[..cut]);
+                    out.push_str(rep);
+                    return out;
+                }
+            }
+        }
+    }
+    s.to_string()
+}
+
+/// Split a string on `$IFS` characters, collapsing runs of IFS whitespace and
+/// dropping leading/trailing empties (zsh `shwordsplit` semantics).
+fn split_on_ifs(s: &str, ifs: &str) -> Vec<String> {
+    if ifs.is_empty() {
+        return if s.is_empty() {
+            Vec::new()
+        } else {
+            vec![s.to_string()]
+        };
+    }
+    let ifs_set: Vec<char> = ifs.chars().collect();
+    s.split(|c| ifs_set.contains(&c))
+        .filter(|f| !f.is_empty())
+        .map(|f| f.to_string())
+        .collect()
 }
 
 // ── ANSI-C quoting ($'...') helper ──────────────────────────────────
@@ -1625,24 +1889,64 @@ mod tests {
     }
 
     #[test]
-    fn trim_prefix_literal() {
-        assert_eq!(trim_prefix("hello_world", "hello_", false), "world");
+    fn strip_glob_prefix_literal() {
+        assert_eq!(strip_glob_prefix("hello_world", "hello_", false), "world");
     }
 
     #[test]
-    fn trim_suffix_literal() {
-        assert_eq!(trim_suffix("hello_world", "_world", false), "hello");
+    fn strip_glob_suffix_literal() {
+        assert_eq!(strip_glob_suffix("hello_world", "_world", false), "hello");
     }
 
     #[test]
-    fn trim_prefix_star() {
-        assert_eq!(trim_prefix("a/b/c", "*/", false), "b/c");
-        assert_eq!(trim_prefix("a/b/c", "*/", true), "c");
+    fn strip_glob_prefix_star() {
+        // `*` spans `/` for parameter pattern-ops (unlike filename globbing).
+        assert_eq!(strip_glob_prefix("a/b/c", "*/", false), "b/c");
+        assert_eq!(strip_glob_prefix("a/b/c", "*/", true), "c");
     }
 
     #[test]
-    fn trim_suffix_star() {
-        assert_eq!(trim_suffix("a/b/c", "/*", false), "a/b");
-        assert_eq!(trim_suffix("a/b/c", "/*", true), "a");
+    fn strip_glob_suffix_star() {
+        assert_eq!(strip_glob_suffix("a/b/c", "/*", false), "a/b");
+        assert_eq!(strip_glob_suffix("a/b/c", "/*", true), "a");
+    }
+
+    #[test]
+    fn strip_glob_prefix_class() {
+        // Character class in the pattern (was a literal-only path before).
+        assert_eq!(strip_glob_prefix("abc123", "[a-c]", false), "bc123");
+    }
+
+    #[test]
+    fn strip_glob_suffix_class() {
+        assert_eq!(strip_glob_suffix("abc123", "[0-9]", false), "abc12");
+    }
+
+    #[test]
+    fn glob_replace_class_all() {
+        assert_eq!(glob_replace("a1b2c3", "[0-9]", "_", true), "a_b_c_");
+    }
+
+    #[test]
+    fn glob_replace_first_only() {
+        assert_eq!(glob_replace("aXbXc", "X", "-", false), "a-bXc");
+    }
+
+    #[test]
+    fn glob_replace_anchored_start_end() {
+        assert_eq!(
+            glob_replace_anchored("abcabc", "abc", "X", SubAnchorRaw::Start),
+            "Xabc"
+        );
+        assert_eq!(
+            glob_replace_anchored("abcabc", "abc", "Y", SubAnchorRaw::End),
+            "abcY"
+        );
+    }
+
+    #[test]
+    fn split_on_ifs_collapses_runs() {
+        assert_eq!(split_on_ifs("a  b\tc", " \t\n"), vec!["a", "b", "c"]);
+        assert_eq!(split_on_ifs("", " \t\n"), Vec::<String>::new());
     }
 }
