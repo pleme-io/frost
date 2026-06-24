@@ -77,6 +77,12 @@ pub struct Executor<'env> {
     /// was not negated (`!`). Read at the complete-command boundary only on
     /// the `Ok` path, where `execute_list` always sets it last.
     errexit_eligible: bool,
+    /// A pending `${name:?word}` abort recorded during word expansion. The
+    /// expansion engine can't abort directly (its trait is read-only), so it
+    /// requests the abort and the command path surfaces it as a non-zero
+    /// `ControlFlow::Exit` at the next command boundary — matching zsh, which
+    /// aborts a non-interactive shell on an unset `:?` parameter.
+    expand_abort: Option<(String, String)>,
 }
 
 impl<'env> Executor<'env> {
@@ -88,6 +94,7 @@ impl<'env> Executor<'env> {
             jobs: JobTable::new(),
             cond_depth: 0,
             errexit_eligible: false,
+            expand_abort: None,
         }
     }
 
@@ -919,6 +926,10 @@ impl<'env> Executor<'env> {
                     .as_ref()
                     .map(|w| self.expand_word(w))
                     .unwrap_or_default();
+                // A `${y:?msg}` in the value (`x=${y:?msg}`) aborts *before*
+                // the target is assigned — zsh leaves `x` unset. Enforce the
+                // abort here, prior to any `set_var`.
+                self.enforce_expand_abort()?;
                 match assign.op {
                     AssignOp::Append => {
                         // name+=val — append to existing value
@@ -932,6 +943,10 @@ impl<'env> Executor<'env> {
                 }
             }
         }
+
+        // A `${name:?word}` elsewhere in the assignment list (array element,
+        // subscript) aborts before any command runs — surface it now.
+        self.enforce_expand_abort()?;
 
         if cmd.words.is_empty() {
             return Ok(0);
@@ -990,6 +1005,10 @@ impl<'env> Executor<'env> {
             }
             out
         };
+
+        // A `${name:?word}` in a command word (`echo ${x:?msg}`) aborts the
+        // command before it runs.
+        self.enforce_expand_abort()?;
 
         if argv.is_empty() {
             return Ok(0);
@@ -1502,18 +1521,20 @@ impl<'env> Executor<'env> {
 
     /// Expand a Word AST node into a string, resolving variables, tilde, etc.
     /// For multi-word results (arrays, `$@`), joins with space.
-    pub fn expand_word(&self, word: &Word) -> String {
+    pub fn expand_word(&mut self, word: &Word) -> String {
         let bridge = ExpandBridge::new(self.env);
         let parts = frost_expand::expand_word(word, &bridge);
+        self.apply_expand_effects(bridge.into_effects());
         parts.join("")
     }
 
     /// Expand a Word AST node into potentially multiple strings.
     ///
     /// Applies brace expansion after parameter/command substitution.
-    pub fn expand_word_multi(&self, word: &Word) -> Vec<String> {
+    pub fn expand_word_multi(&mut self, word: &Word) -> Vec<String> {
         let bridge = ExpandBridge::new(self.env);
         let parts = frost_expand::expand_word(word, &bridge);
+        self.apply_expand_effects(bridge.into_effects());
         // Apply brace expansion to each resulting word
         let mut result = Vec::new();
         for part in parts {
@@ -1521,6 +1542,43 @@ impl<'env> Executor<'env> {
             result.extend(expanded);
         }
         result
+    }
+
+    /// Apply the side effects an expansion requested: `${name:=word}`
+    /// writebacks land immediately; a `${name:?word}` abort is stashed for
+    /// the command boundary to surface (`take_expand_abort`). zsh applies the
+    /// writeback even when a later `:?` aborts, so assigns run first.
+    fn apply_expand_effects(&mut self, effects: ExpandEffects) {
+        for (name, value) in effects.assigns {
+            self.env.set_var(&name, &value);
+        }
+        if let Some((name, msg)) = effects.abort {
+            // Last writer doesn't clobber an earlier pending abort.
+            if self.expand_abort.is_none() {
+                self.expand_abort = Some((name, msg));
+            }
+        }
+    }
+
+    /// Take a pending `${name:?word}` abort, if expansion requested one. The
+    /// command-execution path calls this after expanding a command's words /
+    /// assignments and converts it into a non-zero `ControlFlow::Exit`,
+    /// matching zsh (which aborts a non-interactive shell).
+    fn take_expand_abort(&mut self) -> Option<(String, String)> {
+        self.expand_abort.take()
+    }
+
+    /// If word expansion requested a `${name:?word}` abort, print the
+    /// diagnostic and return the abort error so the caller stops the command
+    /// (and, non-interactively, the shell). Returns `Ok(())` when no abort is
+    /// pending.
+    fn enforce_expand_abort(&mut self) -> Result<(), ExecError> {
+        if let Some((name, msg)) = self.take_expand_abort() {
+            eprintln!("frost: {name}: {msg}");
+            self.env.exit_status = 1;
+            return Err(ExecError::ControlFlow(ControlFlow::Exit(1)));
+        }
+        Ok(())
     }
 
     /// Scan a word for `<(cmd)` / `>(cmd)` process substitutions. For each,
@@ -1963,20 +2021,64 @@ fn word_has_unquoted_glob(w: &Word) -> bool {
 
 // ── Bridge from ShellEnv to frost_expand::ExpandEnv ─────────────────
 
-/// Adapter that lets the expansion engine access `ShellEnv`.
+/// Side effects the expansion engine requests but cannot apply itself —
+/// the `ExpandEnv` trait is `&self`/read-only by design (so the test mock
+/// and every other consumer stay trivial). The executor drains these after
+/// expansion and applies them with `&mut self.env`.
+#[derive(Default)]
+struct ExpandEffects {
+    /// `${name:=word}` / `${name=word}` writebacks (name, expanded value).
+    assigns: Vec<(String, String)>,
+    /// `${name:?word}` / `${name?word}` abort request (name, expanded msg).
+    /// First request wins (matches zsh, which aborts on the first).
+    abort: Option<(String, String)>,
+}
+
+/// Adapter that lets the expansion engine access `ShellEnv`. Holds the
+/// requested side effects in an interior-mutable cell so the trait surface
+/// can stay `&self`.
 struct ExpandBridge<'a> {
     env: &'a ShellEnv,
+    effects: std::cell::RefCell<ExpandEffects>,
 }
 
 impl<'a> ExpandBridge<'a> {
     fn new(env: &'a ShellEnv) -> Self {
-        Self { env }
+        Self {
+            env,
+            effects: std::cell::RefCell::new(ExpandEffects::default()),
+        }
+    }
+
+    /// Consume the bridge and return the side effects it accumulated.
+    fn into_effects(self) -> ExpandEffects {
+        self.effects.into_inner()
     }
 }
 
 impl ExpandEnv for ExpandBridge<'_> {
     fn get_var(&self, name: &str) -> Option<&str> {
         self.env.get_var(name)
+    }
+
+    fn assign_var(&self, name: &str, value: &str) {
+        self.effects
+            .borrow_mut()
+            .assigns
+            .push((name.to_string(), value.to_string()));
+    }
+
+    fn request_abort(&self, name: &str, msg: &str) {
+        let mut effects = self.effects.borrow_mut();
+        if effects.abort.is_none() {
+            effects.abort = Some((name.to_string(), msg.to_string()));
+        }
+    }
+
+    fn ifs(&self) -> String {
+        self.env
+            .get_var("IFS")
+            .map_or_else(|| " \t\n".to_string(), |s| s.to_string())
     }
 
     fn get_var_value(&self, name: &str) -> Option<frost_expand::ExpandValue> {
@@ -2181,12 +2283,13 @@ mod tests {
     #[test]
     fn resolve_literal_word() {
         let env = ShellEnv::new();
-        let exec = Executor {
+        let mut exec = Executor {
             env: &mut ShellEnv::new(),
             builtins: frost_builtins::default_builtins(),
             jobs: JobTable::new(),
             cond_depth: 0,
             errexit_eligible: false,
+            expand_abort: None,
         };
         let word = literal_word("hello");
         assert_eq!(exec.expand_word(&word), "hello");
@@ -2196,7 +2299,7 @@ mod tests {
     fn expand_dollar_var() {
         let mut env = ShellEnv::new();
         env.set_var("FOO", "bar");
-        let exec = Executor::new(&mut env);
+        let mut exec = Executor::new(&mut env);
         let word = Word {
             parts: vec![WordPart::DollarVar("FOO".into())],
             span: Span::new(0, 4),
@@ -2208,7 +2311,7 @@ mod tests {
     fn expand_dollar_question() {
         let mut env = ShellEnv::new();
         env.exit_status = 42;
-        let exec = Executor::new(&mut env);
+        let mut exec = Executor::new(&mut env);
         let word = Word {
             parts: vec![WordPart::DollarVar("?".into())],
             span: Span::new(0, 2),
@@ -2220,7 +2323,7 @@ mod tests {
     fn expand_tilde() {
         let mut env = ShellEnv::new();
         env.set_var("HOME", "/users/test");
-        let exec = Executor::new(&mut env);
+        let mut exec = Executor::new(&mut env);
         let word = Word {
             parts: vec![WordPart::Tilde("".into())],
             span: Span::new(0, 1),
@@ -2232,7 +2335,7 @@ mod tests {
     fn expand_double_quoted_with_var() {
         let mut env = ShellEnv::new();
         env.set_var("NAME", "world");
-        let exec = Executor::new(&mut env);
+        let mut exec = Executor::new(&mut env);
         let word = Word {
             parts: vec![WordPart::DoubleQuoted(vec![
                 WordPart::Literal("hello ".into()),
@@ -2247,7 +2350,7 @@ mod tests {
     fn expand_positional_params() {
         let mut env = ShellEnv::new();
         env.positional_params = vec!["a".into(), "b".into(), "c".into()];
-        let exec = Executor::new(&mut env);
+        let mut exec = Executor::new(&mut env);
         let word = Word {
             parts: vec![WordPart::DollarVar("#".into())],
             span: Span::new(0, 2),
