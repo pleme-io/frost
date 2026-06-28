@@ -142,4 +142,43 @@ Loops decrement the level and re-raise if > 1.
 4. **Command substitution** — `$(cmd)`
 5. **Arithmetic expansion** — `$((expr))`
 6. **Quote removal** — strip remaining quotes
-7. *(Future: word splitting, glob expansion)*
+7. *(Future: glob expansion)*
+
+## Word splitting (zsh semantics — by design)
+
+frost targets **zsh 5.9 parity**, so it follows zsh's variable rules, **not**
+POSIX/bash. The load-bearing difference operators hit:
+
+> **An unquoted scalar `$var` is a single word — it is NOT split on `$IFS`.**
+> (`SH_WORD_SPLIT` is off by default, exactly as in zsh.)
+
+```sh
+K="kubectl --kubeconfig=/tmp/x.kube"
+$K get nodes
+# frost (and real zsh): "command not found: kubectl --kubeconfig=/tmp/x.kube"
+#                       — the whole expansion is argv[0]
+```
+
+This is not a bug; bash/POSIX would split here, zsh does not. The classic
+unquoted-`$var` footgun (filenames with spaces silently splitting into multiple
+arguments) is unrepresentable by default. Verified byte-identical to
+`/usr/bin/zsh 5.9` (`zsh --no-rcs -c '…'`).
+
+### Running a command stored in a variable
+
+Use one of zsh's explicit-split forms — pick by intent:
+
+| Idiom | Example | When |
+|-------|---------|------|
+| **Array (preferred)** | `K=(kubectl --kubeconfig=/tmp/x.kube); $K get nodes` | the value is a real argv; no re-splitting of embedded spaces |
+| **`${=var}` forced split** | `${=K} get nodes` | a scalar you want IFS-split this one time |
+| **`eval`** | `eval "$K get nodes"` | the string is a full command line to re-parse |
+
+Quoting always suppresses splitting: `"$K"` and `"${=K}"`… `"$K"` is one word;
+`"${=K}"` still splits (that is the whole point of the `=` flag).
+
+Implemented today: unquoted-array splitting, the `${=var}` flag (incl. inside
+double quotes), and `eval`. Known zsh-parity gaps (tracked, **not** the default
+footgun): the global `setopt shwordsplit` option is defined but not yet wired to
+the unquoted-scalar path, and the bare `$=var` shorthand is not lexed (use the
+brace form `${=var}`).
