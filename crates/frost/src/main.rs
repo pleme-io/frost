@@ -69,8 +69,59 @@ const TRAPPED_SIGNALS: &[libc::c_int] = &[
     libc::SIGWINCH,
 ];
 
+/// Signals whose POSIX default disposition is Term (terminate the
+/// process) among `TRAPPED_SIGNALS` — as opposed to `SIGWINCH`, whose
+/// default is Ignore. `install_signal_traps` intercepts all of
+/// `TRAPPED_SIGNALS` via a custom `sigaction` with `SA_RESTART`, which
+/// unconditionally overrides the OS default disposition *and* means a
+/// blocking syscall the signal interrupts (e.g. reedline/crossterm's
+/// read while idle at the prompt) is transparently restarted by the
+/// kernel rather than returning `EINTR` — so a "check pending signals
+/// between REPL iterations" drain alone cannot see a signal that
+/// arrives while idle at the prompt; the REPL never gets control back.
+/// Confirmed live 2026-07-10: 66 orphaned frost processes (PPID 1, no
+/// owning session, idle at a prompt) ignored plain `pkill`/SIGTERM
+/// entirely and required SIGKILL, accumulating ~25,000 held file
+/// descriptors each and contributing to a fleet-wide file-descriptor
+/// exhaustion incident. `signal_forwarder` below terminates
+/// synchronously, inside the handler, for exactly these signals when
+/// no trap claims them — no syscall return required — restoring the
+/// default terminate behavior unconditionally; a user trap still wins.
+const DEFAULT_TERMINATES: &[libc::c_int] =
+    &[libc::SIGTERM, libc::SIGHUP, libc::SIGUSR1, libc::SIGUSR2];
+
+/// Bitmask mirroring which `DEFAULT_TERMINATES` signals currently have
+/// a live `(deftrap :signal ...)` handler registered in
+/// `env.functions`. Synced from `env` (never touched from signal
+/// context) so the async-signal-safe handler below can consult it with
+/// a lock-free atomic load instead of touching a `HashMap`.
+static TRAPPED_BY_USER: AtomicU64 = AtomicU64::new(0);
+
+/// Recompute [`TRAPPED_BY_USER`] from `env.functions`. Call after rc
+/// load and once per REPL iteration so a trap registered live at the
+/// prompt (not just from rc.lisp) takes effect for the next signal.
+fn sync_trapped_signals(env: &frost_exec::ShellEnv) {
+    let mut mask = 0u64;
+    for &sig in DEFAULT_TERMINATES {
+        let name = frost_exec::trap::signal_number_to_name(sig);
+        if env.functions.contains_key(&format!("__frost_trap_{name}")) {
+            mask |= 1u64 << sig;
+        }
+    }
+    TRAPPED_BY_USER.store(mask, Ordering::SeqCst);
+}
+
 extern "C" fn signal_forwarder(sig: libc::c_int) {
-    // Only async-signal-safe operations here. Atomic fetch_or is fine.
+    // Only async-signal-safe operations here: atomic ops and `_exit`
+    // are fine; `HashMap` lookups and `std::process::exit` (which runs
+    // atexit/Drop-adjacent cleanup) are not.
+    if sig > 0
+        && (sig as usize) < 64
+        && DEFAULT_TERMINATES.contains(&sig)
+        && TRAPPED_BY_USER.load(Ordering::SeqCst) & (1u64 << sig) == 0
+    {
+        unsafe { libc::_exit(128 + sig) };
+    }
     if sig > 0 && (sig as usize) < 64 {
         PENDING_SIGNALS.fetch_or(1u64 << sig, Ordering::SeqCst);
     }
@@ -92,7 +143,10 @@ fn install_signal_traps() {
 
 /// Drain the pending-signal bitmask and fire any rc-authored traps.
 /// Called between REPL iterations so traps see a well-defined shell
-/// state rather than interrupting mid-execution.
+/// state rather than interrupting mid-execution. The untrapped
+/// terminate-by-default case is handled synchronously in
+/// `signal_forwarder` itself (see `DEFAULT_TERMINATES`); the branch
+/// below is a defensive fallback for the trapped case only.
 fn check_pending_traps(env: &mut frost_exec::ShellEnv) {
     let pending = PENDING_SIGNALS.swap(0, Ordering::SeqCst);
     if pending == 0 {
@@ -109,6 +163,13 @@ fn check_pending_traps(env: &mut frost_exec::ShellEnv) {
         let fn_name = format!("__frost_trap_{name}");
         if env.functions.contains_key(&fn_name) {
             let _ = run(&fn_name, env);
+        } else if DEFAULT_TERMINATES.contains(&sig) {
+            // Defensive fallback: signal_forwarder should have already
+            // _exit'd for the untrapped case, so reaching this arm
+            // means the trap was deregistered between signal delivery
+            // and this drain. Still honor the POSIX default rather
+            // than swallowing it.
+            std::process::exit(128 + sig);
         }
     }
 }
@@ -1180,6 +1241,9 @@ fn interactive(
         libc::signal(libc::SIGINT, libc::SIG_IGN);
     }
     install_signal_traps();
+    // env already carries every rc-authored `(deftrap ...)` — load_rc
+    // ran before interactive() was called.
+    sync_trapped_signals(env);
 
     let history_path = frost_zle::default_history_path();
     let zle_base = match ZleEngine::new(&history_path, 10_000) {
@@ -1276,6 +1340,9 @@ fn interactive(
         // Drain and dispatch any signals delivered while we were
         // waiting / running. Fires `deftrap`-authored handlers.
         check_pending_traps(env);
+        // Re-sync so a trap registered live at this prompt (not just
+        // rc.lisp) is honored by signal_forwarder for the next signal.
+        sync_trapped_signals(env);
 
         // `precmd` hook — runs before the next prompt is drawn. Authored
         // via `(defhook :event "precmd" :body …)` in the rc file.
