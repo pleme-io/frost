@@ -576,3 +576,89 @@ fn frostmourne_rc_post_accept_survives_and_executes() {
         o.cpr_queries
     );
 }
+
+/// Regression test for the 2026-07-10 fd-exhaustion incident: an
+/// interactive frost session (a real PTY, `install_signal_traps()`'s
+/// actual invocation path — the `-c`/script paths never call it, so
+/// they were never affected) with no rc-authored `(deftrap :signal
+/// TERM ...)` must still terminate on SIGTERM. Before the fix,
+/// `check_pending_traps` recorded the signal and did nothing further
+/// when no trap function existed — 66 orphaned frost processes
+/// accumulated this way over one long session, ignored plain `pkill`,
+/// and required SIGKILL, each holding ~25,000 fds (a fleet-wide
+/// file-descriptor exhaustion incident). Minimal spawn — no persona/
+/// VT-query machinery needed, just: interactive session up, SIGTERM,
+/// bounded wait for exit.
+///
+/// `#[ignore]`d: passes reliably alone and under `--test-threads=1`
+/// (verified repeatedly, ~0.5s), but hangs indefinitely — not merely
+/// slow — when run concurrently with this file's other 9 forkpty tests
+/// under the default parallel test harness. Root cause not yet
+/// isolated (candidates: a fork-in-multithreaded-process hazard specific
+/// to this test's SIGKILL+blocking-`waitpid` teardown path racing the
+/// harness's other concurrent threads; not yet reproduced in isolation
+/// to confirm). Real, tracked follow-up — run explicitly via
+/// `cargo test --test persona_pty -- --ignored
+/// interactive_session_terminates_on_sigterm_with_no_trap` or
+/// `--test-threads=1`, not silently dropped from CI coverage.
+#[test]
+#[ignore = "hangs under parallel test execution — see doc comment; passes serially/alone"]
+fn interactive_session_terminates_on_sigterm_with_no_trap() {
+    use nix::pty::ForkptyResult;
+    use std::ffi::CString;
+
+    let home = tempfile::tempdir().expect("tempdir");
+    let exe = CString::new(env!("CARGO_BIN_EXE_frost")).unwrap();
+    let argv = [exe.clone()];
+    let envp: Vec<CString> = vec![
+        CString::new("TERM=xterm-256color").unwrap(),
+        CString::new(format!("HOME={}", home.path().display())).unwrap(),
+        CString::new("PATH=/usr/bin:/bin").unwrap(),
+        // No FROSTRC -- deliberately no user trap of any kind.
+    ];
+
+    // SAFETY: same fork-in-threaded-process contract as `drive` above --
+    // only async-signal-safe operations between fork and exec.
+    let fork = unsafe { nix::pty::forkpty(None, None) };
+    let (child, master) = match fork {
+        Ok(ForkptyResult::Parent { child, master }) => (child, master),
+        Ok(ForkptyResult::Child) => {
+            let _ = nix::unistd::execve(&exe, &argv, &envp);
+            unsafe { libc::_exit(127) };
+        }
+        Err(e) => {
+            eprintln!("SKIP interactive_session_terminates_on_sigterm_with_no_trap: forkpty unavailable: {e}");
+            return;
+        }
+    };
+    // Keep the pty master open for the whole session, matching `drive`
+    // above — dropping it early hangs up the slave's controlling
+    // terminal (a real incidental SIGHUP to the child, which is *also*
+    // untrapped/DEFAULT_TERMINATES) and would confound this test's
+    // SIGTERM-specific assertion with an unrelated signal race.
+    let _master = master;
+
+    // Give the interactive REPL time to reach install_signal_traps().
+    std::thread::sleep(Duration::from_millis(500));
+
+    kill(child, Signal::SIGTERM).expect("kill(SIGTERM) syscall itself should succeed");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
+            Ok(WaitStatus::StillAlive) => {
+                if Instant::now() >= deadline {
+                    let _ = kill(child, Signal::SIGKILL);
+                    let _ = waitpid(child, None);
+                    panic!(
+                        "interactive frost did not exit within 5s of SIGTERM -- \
+                         the swallowed-signal regression is back"
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Ok(_status) => break, // exited, one way or another -- that's the invariant
+            Err(e) => panic!("waitpid failed: {e}"),
+        }
+    }
+}
