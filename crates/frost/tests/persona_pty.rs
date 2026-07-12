@@ -31,6 +31,29 @@
 //! - Host-died-mid-session: a host that answers, then goes permanently mute
 //!   (mado's attach thread exiting, a daemon restart) must degrade to the
 //!   mute contract, not kill the guest. → `answer_then_mute_midsession_survives`.
+//! - fd-exhaustion / kernel-exit-teardown stall (2026-07-12): the SIGTERM
+//!   regression test (`interactive_session_terminates_on_sigterm_with_no_trap`)
+//!   appeared to hang under this file's default parallel execution. Real,
+//!   evidenced findings, none of them a defect in this file's fork/exec/
+//!   signal code or in frost's production signal handling: (1) the
+//!   workstation it was authored on was independently carrying 62
+//!   orphaned PRE-FIX frost processes (the very bug the test guards
+//!   against) that had driven the kernel's system-wide file table to its
+//!   ceiling — cleared, unrelated to the test's own logic; (2) live
+//!   `ps -o state` sampling through reproduced stalls caught the SIGTERM'd
+//!   child sitting in macOS's `Es` ("trying to exit") state at 0% CPU for
+//!   a long time (120s+ observed) before the kernel posted its exit
+//!   status, correlated with a `taskgated-helper` process spinning up — a
+//!   kernel-level delay finalizing an externally-signaled process's exit,
+//!   NOT bounded by any timeout tried. Precisely characterized by
+//!   invocation shape: `cargo test -p frost --test persona_pty` (this
+//!   file alone) was 100% reliable across 15+ runs in every configuration;
+//!   `cargo test --workspace` (60+ prior frost subprocess spawns from
+//!   other test files) reproduced the stall 4/4 attempts. See
+//!   `interactive_session_terminates_on_sigterm_with_no_trap`'s doc
+//!   comment for the full account, the bounded watchdog shipped as
+//!   honest defense-in-depth (not a claimed fix), and the recommended
+//!   invocation for a trustworthy signal.
 //!
 //! The no-freeze-under-mute invariant went LIVE with the pleme-io reedline
 //! fork (CPR as optimization, never a liveness dependency): under Mute the
@@ -590,24 +613,105 @@ fn frostmourne_rc_post_accept_survives_and_executes() {
 /// VT-query machinery needed, just: interactive session up, SIGTERM,
 /// bounded wait for exit.
 ///
-/// `#[ignore]`d: passes reliably alone and under `--test-threads=1`
-/// (verified repeatedly, ~0.5s), but hangs indefinitely — not merely
-/// slow — when run concurrently with this file's other 9 forkpty tests
-/// under the default parallel test harness. Root cause not yet
-/// isolated (candidates: a fork-in-multithreaded-process hazard specific
-/// to this test's SIGKILL+blocking-`waitpid` teardown path racing the
-/// harness's other concurrent threads; not yet reproduced in isolation
-/// to confirm). Real, tracked follow-up — run explicitly via
-/// `cargo test --test persona_pty -- --ignored
-/// interactive_session_terminates_on_sigterm_with_no_trap` or
-/// `--test-threads=1`, not silently dropped from CI coverage.
+/// 2026-07-12 investigation (was `#[ignore]`d as "hangs under parallel
+/// execution, root cause not yet isolated"). Multiple real findings,
+/// none of them a defect in this test's fork/exec/signal-handling logic
+/// nor in frost's production fix:
+///
+/// 1. The workstation this was verified on (`ryn`) was independently
+///    carrying 62 ORPHANED frost processes at the time — confirmed
+///    `PPID == 1`, every one still running the PRE-FIX binary this very
+///    test guards against — that had driven the kernel's system-wide
+///    file table to its ceiling (`sysctl kern.num_files` at 16,776,780
+///    of a 16,777,216 `kern.maxfiles`, with `bash`/`cargo`/`ld` all
+///    failing outright on a literal `ENFILE`). Clearing those 62 orphans
+///    was necessary before anything in this file would even build. The
+///    orphans exist *because* the deployed system binary predates the
+///    2026-07-10 fix (`5214254`); a `nix run .#rebuild` on `ryn` retires
+///    that legacy accumulation.
+///
+/// 2. Independent of (1) — the real, still-open finding. Live
+///    `ps -o state` sampling through multiple reproduced stalls caught
+///    the SIGTERM'd child sitting in macOS's `Es` ("trying to exit")
+///    state at 0% CPU for a long time — the parent's non-blocking
+///    `waitpid` is correct and simply hasn't been told by the kernel
+///    that the child is done yet; this is a kernel-level exit-teardown
+///    delay, not a userspace bug. A `taskgated-helper` process was
+///    observed spinning up at the same moment. A targeted warm-up (pay
+///    the exact fork+exec+SIGTERM+wait cycle once, synchronously, up
+///    front) was tried and did NOT eliminate it, so it isn't a simple
+///    per-binary validation cache.
+///
+///    Precisely characterized by invocation shape, not just "after a
+///    rebuild": `cargo test -p frost --test persona_pty` (this file
+///    alone, the way the fix's own regression-test instructions name)
+///    was **100% reliable** across 15+ runs in every configuration tried
+///    — isolated, `--test-threads=1`, the full 10-test default-parallel
+///    file, doubled to 20 concurrent forkpty sessions across two
+///    processes, immediately after a fresh rebuild, repeatedly. `cargo
+///    test --workspace` (which runs `integration.rs`, `frostmourne_rc.rs`,
+///    and `param_expansion.rs` — collectively 60+ frost subprocess
+///    spawns — immediately before this file) reproduced the stall on
+///    every attempt (4/4), with the child observed still in `Es` past
+///    120s wall-clock before being force-killed. The most plausible
+///    mechanism: those 60+ prior frost spawns queue enough signature-
+///    validation work (each one an exec of the same not-yet-fully-
+///    trusted debug binary) that by the time this test's own
+///    externally-signaled child needs the kernel to finalize its exit,
+///    the backlog hasn't drained — and, per the isolated-run evidence
+///    above, no timeout this file can pick is guaranteed to outwait it.
+///
+/// Given (2) is real, evidenced, but NOT closed — no timeout tried here
+/// (including 120s) reliably bounds the `--workspace` case, so this is
+/// reported honestly rather than papered over with a bigger number —
+/// this test ships un-ignored (the direct, targeted invocation is 100%
+/// reliable, and the invariant it guards is real and worth covering)
+/// wrapped in a bounded watchdog on a background thread, so a stall
+/// fails THIS test alone with a diagnostic instead of wedging the whole
+/// binary or CI job forever. Practical guidance: run this test via
+/// `cargo test -p frost --test persona_pty` (with or without a name
+/// filter) when you need a trustworthy signal; a `cargo test --workspace`
+/// run tripping this one test specifically is a known, tracked,
+/// open environment issue on heavily-loaded macOS hosts — check that
+/// before treating it as a regression. Follow-up worth doing later:
+/// `dtrace`/`log stream`-level tracing of `amfid`/`taskgated` during a
+/// live `--workspace` repro to pin the exact kernel-side queue.
 #[test]
-#[ignore = "hangs under parallel test execution — see doc comment; passes serially/alone"]
 fn interactive_session_terminates_on_sigterm_with_no_trap() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(sigterm_no_trap_probe());
+    });
+    match rx.recv_timeout(Duration::from_secs(30)) {
+        Ok(Ok(())) => {}
+        Ok(Err(msg)) => panic!("{msg}"),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!(
+            "interactive_session_terminates_on_sigterm_with_no_trap: probe \
+             thread did not complete within 30s (normal runtime is well \
+             under 5s). This is a KNOWN, tracked macOS kernel-exit-teardown \
+             stall (see this test's doc comment) most reliably triggered by \
+             `cargo test --workspace` -- rerun via `cargo test -p frost \
+             --test persona_pty` alone, which was 100% reliable in this \
+             investigation, before treating this as a real regression."
+        ),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => panic!(
+            "interactive_session_terminates_on_sigterm_with_no_trap: probe \
+             thread panicked without sending a result"
+        ),
+    }
+}
+
+/// The probe body proper, run on a background thread by the `#[test]`
+/// above so a stall anywhere in this path fails loudly via the
+/// watchdog's `recv_timeout` instead of hanging the whole test binary.
+/// Returns `Ok(())` for both "exited as expected" and "forkpty
+/// unavailable, skipped" (matching `drive`'s SKIP convention above);
+/// `Err(String)` carries a diagnostic for the outer test to panic with.
+fn sigterm_no_trap_probe() -> Result<(), String> {
     use nix::pty::ForkptyResult;
     use std::ffi::CString;
 
-    let home = tempfile::tempdir().expect("tempdir");
+    let home = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     let exe = CString::new(env!("CARGO_BIN_EXE_frost")).unwrap();
     let argv = [exe.clone()];
     let envp: Vec<CString> = vec![
@@ -627,8 +731,11 @@ fn interactive_session_terminates_on_sigterm_with_no_trap() {
             unsafe { libc::_exit(127) };
         }
         Err(e) => {
-            eprintln!("SKIP interactive_session_terminates_on_sigterm_with_no_trap: forkpty unavailable: {e}");
-            return;
+            eprintln!(
+                "SKIP interactive_session_terminates_on_sigterm_with_no_trap: \
+                 forkpty unavailable: {e}"
+            );
+            return Ok(());
         }
     };
     // Keep the pty master open for the whole session, matching `drive`
@@ -641,24 +748,35 @@ fn interactive_session_terminates_on_sigterm_with_no_trap() {
     // Give the interactive REPL time to reach install_signal_traps().
     std::thread::sleep(Duration::from_millis(500));
 
-    kill(child, Signal::SIGTERM).expect("kill(SIGTERM) syscall itself should succeed");
+    kill(child, Signal::SIGTERM)
+        .map_err(|e| format!("kill(SIGTERM) syscall itself should succeed: {e}"))?;
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // 20s (vs. the original 5s): wide enough to absorb the kernel-exit-
+    // teardown stall documented above in the common case it's brief,
+    // while still bounded so a GENUINE regression (signal truly
+    // swallowed forever) fails this test rather than hanging it forever.
+    // Not a claimed guarantee -- see the doc comment above: NO bound
+    // tried, up to 120s, reliably covered the `--workspace` case.
+    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
             Ok(WaitStatus::StillAlive) => {
                 if Instant::now() >= deadline {
                     let _ = kill(child, Signal::SIGKILL);
                     let _ = waitpid(child, None);
-                    panic!(
-                        "interactive frost did not exit within 5s of SIGTERM -- \
-                         the swallowed-signal regression is back"
+                    return Err(
+                        "interactive frost did not exit within 20s of SIGTERM -- \
+                         either the swallowed-signal regression is back, or \
+                         this is the known macOS kernel-exit-teardown stall \
+                         (see this test's doc comment) exceeding even a \
+                         generous bound"
+                            .to_string(),
                     );
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Ok(_status) => break, // exited, one way or another -- that's the invariant
-            Err(e) => panic!("waitpid failed: {e}"),
+            Ok(_status) => return Ok(()), // exited, one way or another -- that's the invariant
+            Err(e) => return Err(format!("waitpid failed: {e}")),
         }
     }
 }
