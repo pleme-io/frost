@@ -72,11 +72,14 @@ serde_json = "1"
 sha2 = "0.10"
 blake3 = "1.8"
 
-# Tatara Rust+Lisp authoring — pinned to a known-good rev so the derive
-# macro shape is stable across frost rebuilds. Uses HTTPS so the Nix
-# daemon can vendor via access-tokens.conf without needing an SSH key
-# inside its sandbox.
-tatara-lisp = { git = "https://github.com/pleme-io/tatara", rev = "a1062f8069bb336a87cb9b2c68a85885665e3234" }
+# Tatara Rust+Lisp authoring — the canonical published crate. The
+# retired pleme-io/tatara git source is `publish = false` on both halves;
+# pleme-io/tatara-lisp is the single implementation, on crates.io, so the
+# Nix daemon vendors it from the registry with no token or SSH key.
+# The derive macros are re-exported RENAMED by the lib
+# (`DeriveTataraDomain` / `DeriveKeywordSexp`) — never name
+# `tatara-lisp-derive` as a dependency here.
+tatara-lisp = "0.3.3"
 
 # ishou-tokens — fleet design + keybind atlas. FleetKeybinds is the
 # typed source for every chord in rc.lisp; (defbind :intent :history-picker)

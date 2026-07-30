@@ -1,6 +1,27 @@
 {
-  "schema_version": 1,
-  "cargo_lock_sha256": "ec25042d50ea0152b1d9b668f257a04d8866ecb7fd2b6388e22081d227553165",
+  "schema_version": 2,
+  "cargo_lock_sha256": "e39eff7d91b6c4df6e0d30a99238d0a4a17a4ef571435bd3b1ecb24cb255ac3c",
+  "manifest_sha256": {
+    "Cargo.toml": "2c746e2189d366abe4bc2c0ac8d831d0aaf19b12c5572b5ccfc503c767c778a5",
+    "crates/frost-builtins/Cargo.toml": "9c3f46cf0585359618f321ca7f27e1a17f8728b6247848a6936e3d85c8d998a7",
+    "crates/frost-compat/Cargo.toml": "fbab5dc8909d4a076781da9c7f708165e0c88364c5e43cdc9bd25652ab2ccbd9",
+    "crates/frost-complete/Cargo.toml": "4cb9cae288430552cd6c21236cb29b5d06f77b8cf0407c3a30b0a4117763bb3e",
+    "crates/frost-config/Cargo.toml": "307cf3eca853368ea11e1c2f383688f9495d672065231567f834b0085bfdc0ae",
+    "crates/frost-exec/Cargo.toml": "302f03fdda09a80021dc042b63fd85fcb8b78daeb948bb0ba0ca8fdf9366343c",
+    "crates/frost-expand/Cargo.toml": "52c8d99215fc84165b0db9c49644fefe9747e66a35c13a90ef91a9c3a346c6d9",
+    "crates/frost-glob/Cargo.toml": "f321f663121511bbcfbd4f89d6382d28d5aaf54ddf873aa2f27b191229bc8148",
+    "crates/frost-history/Cargo.toml": "39b5926b3093320850fa05797fc9fcf38fa8f6eba9bbdb0adb1739974e8a2693",
+    "crates/frost-lexer/Cargo.toml": "2e528be42bba85d0a9e433eccbb69dc661b9794384efee71ceb8d857cc0ab4ec",
+    "crates/frost-lisp/Cargo.toml": "6619475d394af270b1c2493180a99d92bd3cdd575c1ceefb81ac227c025c631f",
+    "crates/frost-mcp/Cargo.toml": "7e4311c686d8a78cb0d23d87fe82a829077da3221ff3b2008044a6a9b3c99045",
+    "crates/frost-options/Cargo.toml": "cbac9f001eee767aea01ffb7b5355e45bfc1b43c96e66e13441a015999809531",
+    "crates/frost-parser/Cargo.toml": "0d04ae5241dc5bf3563252adf6d02f7c0eae0734669c1f1ad87115cc3b3fdaa9",
+    "crates/frost-prompt/Cargo.toml": "24b173373611041c9c712e2fbb87e70180343c20064b7fee7e6e545ec098d88c",
+    "crates/frost-spec/Cargo.toml": "082c08dec4f2603084515d6bc2f80ea9d654c017813db35d7e1d8ef90067ef44",
+    "crates/frost-verify/Cargo.toml": "1fb16dccf197f8336e93383d21eac2e38b5053e3e21750661d37a1ff10ecd677",
+    "crates/frost-zle/Cargo.toml": "59050ce2c47bd730fbd4ac8881e149fa29aa9abf8f5cf60b49966e41d87f8aab",
+    "crates/frost/Cargo.toml": "ff6537ebfe86d48e1f047632a658e990a4fbb8d2871c55e6fefa89a0fe67913c"
+  },
   "target_resolves": {
     "base": {
       "addr2line-0.25.1": {
@@ -2564,7 +2585,7 @@
           },
           {
             "name": "tatara_lisp",
-            "package_key": "tatara-lisp-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234",
+            "package_key": "tatara-lisp-0.3.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2793,7 +2814,7 @@
           },
           {
             "name": "tatara_lisp",
-            "package_key": "tatara-lisp-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234",
+            "package_key": "tatara-lisp-0.3.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6929,7 +6950,7 @@
           "visit-mut"
         ]
       },
-      "tatara-lisp-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": {
+      "tatara-lisp-0.3.3": {
         "runtime_dependencies": [
           {
             "name": "blake3",
@@ -6965,7 +6986,7 @@
           },
           {
             "name": "tatara_lisp_derive",
-            "package_key": "tatara-lisp-derive-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234",
+            "package_key": "tatara-lisp-derive-0.3.3",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6989,7 +7010,7 @@
           "default"
         ]
       },
-      "tatara-lisp-derive-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": {
+      "tatara-lisp-derive-0.3.3": {
         "runtime_dependencies": [
           {
             "name": "proc_macro2",
@@ -11530,10 +11551,10 @@
     "syn-2.0.117": {
       "edition": "2021"
     },
-    "tatara-lisp-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": {
+    "tatara-lisp-0.3.3": {
       "edition": "2021"
     },
-    "tatara-lisp-derive-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": {
+    "tatara-lisp-derive-0.3.3": {
       "edition": "2021",
       "proc_macro": true
     },
@@ -11687,9 +11708,7 @@
     "shigoto-gate-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
     "shigoto-retry-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
     "shigoto-scheduler-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
-    "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
-    "tatara-lisp-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": "sha256-5Lv0gja4VgaOiRf8HxhZQYmj9/HAcZeb0kNhiukgTWU=",
-    "tatara-lisp-derive-0.2.0-a1062f8069bb336a87cb9b2c68a85885665e3234": "sha256-5Lv0gja4VgaOiRf8HxhZQYmj9/HAcZeb0kNhiukgTWU="
+    "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc="
   },
   "flake_metadata": {}
 }
