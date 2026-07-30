@@ -2346,8 +2346,9 @@ dependencies = [
 
 [[package]]
 name = "tatara-lisp"
-version = "0.2.0"
-source = "git+https://github.com/pleme-io/tatara?rev=a1062f8069bb336a87cb9b2c68a85885665e3234#a1062f8069bb336a87cb9b2c68a85885665e3234"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27a7c753fd91475ae3385fcac0840599eff0649166f6a832f50bb1c573660d5c"
 dependencies = [
  "blake3",
  "serde",
@@ -2358,8 +2359,9 @@ dependencies = [
 
 [[package]]
 name = "tatara-lisp-derive"
-version = "0.2.0"
-source = "git+https://github.com/pleme-io/tatara?rev=a1062f8069bb336a87cb9b2c68a85885665e3234#a1062f8069bb336a87cb9b2c68a85885665e3234"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c928e303f68959965bec794883acfebb93cd3267e4641502d28454bf73440baa"
 dependencies = [
  "proc-macro2",
  "quote",
