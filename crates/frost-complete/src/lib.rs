@@ -795,36 +795,52 @@ fn command_candidates(builtins: &[String], partial: &str) -> Vec<String> {
 
     if let Ok(path) = std::env::var("PATH") {
         for dir in path.split(':').filter(|p| !p.is_empty()) {
-            let d = Path::new(dir);
-            let Ok(entries) = std::fs::read_dir(d) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if !name_str.starts_with(partial) {
-                    continue;
-                }
-                // Executable-bit check — cheap best-effort; if the
-                // filesystem won't tell us, include it anyway.
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    if let Ok(meta) = entry.metadata() {
-                        if !meta.is_file() {
-                            continue;
-                        }
-                        if meta.permissions().mode() & 0o111 == 0 {
-                            continue;
-                        }
-                    }
-                }
-                out.insert(name_str.into_owned());
-            }
+            executables_in(Path::new(dir), partial, &mut out);
         }
     }
 
     out.into_iter().collect()
+}
+
+/// Insert every executable in `dir` whose name starts with `partial`.
+///
+/// Split out of [`command_candidates`] so the symlink-resolution contract is
+/// testable without mutating the process-global `PATH`.
+fn executables_in(dir: &Path, partial: &str, out: &mut BTreeSet<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with(partial) {
+            continue;
+        }
+        // Executable-bit check — cheap best-effort; if the filesystem won't
+        // tell us, include it anyway.
+        //
+        // MUST follow symlinks. `DirEntry::metadata()` is `lstat` on Unix, so
+        // a symlink reports `is_file() == false` and every link gets skipped —
+        // and on a Nix system EVERY binary on PATH is a symlink into the store
+        // (measured 2026-08-01: 642/642 entries in
+        // /etc/profiles/per-user/<u>/bin), so the operator's entire toolchain
+        // was invisible at command position: `ten<Tab>` did not offer `tend`.
+        // `Path::metadata` is `stat` and resolves the link, matching what an
+        // exec would actually do.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = entry.path().metadata() {
+                if !meta.is_file() {
+                    continue;
+                }
+                if meta.permissions().mode() & 0o111 == 0 {
+                    continue;
+                }
+            }
+        }
+        out.insert(name_str.into_owned());
+    }
 }
 
 fn filename_candidates(partial: &str) -> Vec<String> {
@@ -1017,6 +1033,53 @@ mod tests {
         assert!(with_dot[0].ends_with(".hidden"));
 
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// A `bin/` of symlinks pointing into a `store/` — the Nix profile shape.
+    /// Returns the `bin/` dir. `mode` is applied to the *target*.
+    #[cfg(unix)]
+    fn symlink_bin(tag: &str, name: &str, mode: u32) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("frost-complete-{tag}-{}", std::process::id()));
+        let (store, bin) = (root.join("store"), root.join("bin"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        let target = store.join(name);
+        std::fs::write(&target, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode)).unwrap();
+        std::os::unix::fs::symlink(&target, bin.join(name)).unwrap();
+        bin
+    }
+
+    /// A symlinked executable — which on a Nix system is EVERY executable on
+    /// `PATH` (measured: 642/642) — must be offered at command position.
+    /// `DirEntry::metadata()` is `lstat`, so the pre-fix code skipped the
+    /// operator's entire profile and `ten<Tab>` offered nothing for `tend`.
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_executables_are_offered_at_command_position() {
+        let bin = symlink_bin("symlink-exec", "tendlike", 0o755);
+        let mut out = BTreeSet::new();
+        executables_in(&bin, "ten", &mut out);
+        assert!(
+            out.contains("tendlike"),
+            "a symlinked executable must be offered; got {out:?}"
+        );
+    }
+
+    /// Following the link must not mean trusting it — a symlink to a
+    /// non-executable is still rejected.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_to_a_non_executable_is_still_rejected() {
+        let bin = symlink_bin("symlink-noexec", "tendnote", 0o644);
+        let mut out = BTreeSet::new();
+        executables_in(&bin, "ten", &mut out);
+        assert!(
+            out.is_empty(),
+            "a symlink to a non-executable must not be offered; got {out:?}"
+        );
     }
 
     #[test]
