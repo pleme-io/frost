@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "e39eff7d91b6c4df6e0d30a99238d0a4a17a4ef571435bd3b1ecb24cb255ac3c",
+  "cargo_lock_sha256": "d6d4714ae2c12145bbd4dbd004c21b3a50c2b80000d7c704c125282b0184795a",
   "manifest_sha256": {
     "Cargo.toml": "2c746e2189d366abe4bc2c0ac8d831d0aaf19b12c5572b5ccfc503c767c778a5",
     "crates/frost-builtins/Cargo.toml": "9c3f46cf0585359618f321ca7f27e1a17f8728b6247848a6936e3d85c8d998a7",
@@ -2320,7 +2320,7 @@
           },
           {
             "name": "pleme_io_wadachi",
-            "package_key": "pleme-io-wadachi-0.1.4",
+            "package_key": "pleme-io-wadachi-0.1.6",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4698,7 +4698,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "pleme-io-wadachi-0.1.4": {
+      "pleme-io-wadachi-0.1.6": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -4746,6 +4746,28 @@
             "tree": "target"
           },
           {
+            "name": "notify",
+            "package_key": "notify-8.2.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "notify",
+            "package_key": "notify-8.2.0",
+            "kind": "normal",
+            "features": [
+              "macos_fsevent"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": "cfg(target_os = \"macos\")",
+            "tree": "target"
+          },
+          {
             "name": "rusqlite",
             "package_key": "rusqlite-0.32.1",
             "kind": "normal",
@@ -4771,7 +4793,7 @@
           },
           {
             "name": "wadachi_spec",
-            "package_key": "wadachi-spec-0.1.4",
+            "package_key": "wadachi-spec-0.1.6",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -8034,7 +8056,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "wadachi-spec-0.1.4": {
+      "wadachi-spec-0.1.6": {
         "runtime_dependencies": [
           {
             "name": "chrono",
@@ -11338,7 +11360,7 @@
     "pkg-config-0.3.33": {
       "edition": "2018"
     },
-    "pleme-io-wadachi-0.1.4": {
+    "pleme-io-wadachi-0.1.6": {
       "edition": "2024",
       "binaries": [
         {
@@ -11671,7 +11693,7 @@
     "vte-0.14.1": {
       "edition": "2021"
     },
-    "wadachi-spec-0.1.4": {
+    "wadachi-spec-0.1.6": {
       "edition": "2024"
     },
     "walkdir-2.5.0": {
