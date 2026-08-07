@@ -1,6 +1,6 @@
 # meguri (巡り) — the typed shell cycle
 
-**Status: DESIGN (2026-08-07).** Grounded in a measured latency + differential-parity
+**Status: BORDER SHIPPED, MIGRATION PARTIAL (2026-08-07).** Grounded in a measured latency + differential-parity
 recon of the shipped frostmourne stack on ryn. Nothing in this document is
 implemented yet; every tier claim below is a claim about the *destination*, and the
 ledger in §5 says so per row. A named follow-up is not a shipped follow-up.
@@ -15,6 +15,16 @@ substrate rather than a place or a flow (NAMING.md L1). Collision-checked across
 `~/code/github/pleme-io`: zero hits.
 
 ---
+
+> **Update, same day.** The algebra in §3 is now real code:
+> `crates/frost-lisp/src/meguri.rs` (closed `Beat`/`Fact`/`Act`/`BeatSpec`,
+> derived `spawn_cost()`, 8 tests) plus `integration::beats()` as the
+> migration seam. direnv is the one converted beat. **The migration is
+> partial and stays honestly labelled:** `IntegrationRecipe`'s
+> `*_body: Option<&str>` fields still carry shell for unconverted
+> integrations, and `(defhook :body "…")` is still available to operators —
+> so §5's ledger rows describing the destination remain the destination, not
+> a description of today.
 
 ## 1. The problem, stated as measurements
 
