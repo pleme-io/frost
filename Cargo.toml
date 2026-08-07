@@ -111,5 +111,22 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # read_line (incident 2026-06-10 — lost/unanswered CPR killed or froze the
 # shell). Fork repo created GitOps-natively by the (wedge-fixed) rio
 # operator from org.yaml; upstream v0.42.0 + the painter patch.
+#
+# ── THIS LINE IS WHY frost NEEDS A REPO-LEVEL `BOT_PAT` SECRET ──────────
+# The fork repo is PRIVATE, and so is frost. pleme-io is on the GitHub Free
+# plan, where an ORG secret reaches PUBLIC repos only — so `secrets.BOT_PAT`
+# arrives EMPTY in every private repo's workflow, and `pleme-io/actions/
+# git-credentials` falls back to `GITHUB_TOKEN`, which is scoped to THIS repo
+# alone. `cargo metadata` then 404s on the fork and the failure reads as
+# "Repository not found", never as "missing credential":
+#
+#   remote: Repository not found.
+#   error: failed to load source for dependency `reedline`
+#
+# That killed gen-spec's "Repair and commit" step on run 31219940848 — the
+# autoheal could not regenerate Cargo.gen.lock at all. The fix is a
+# REPO-level BOT_PAT (set 2026-08-07; the workaround pangea-operator already
+# carries). Deleting that secret re-breaks CI while every local build stays
+# green, because a workstation's own git credentials cover the fork.
 [patch.crates-io]
 reedline = { git = "https://github.com/pleme-io/reedline" }
