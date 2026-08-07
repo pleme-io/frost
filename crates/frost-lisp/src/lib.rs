@@ -280,14 +280,41 @@ fn non_empty(s: &str) -> Option<&str> {
     if t.is_empty() { None } else { Some(t) }
 }
 
+/// Read one Lisp document and macroexpand it, ONCE — the single gateway
+/// from source text into the apply pipeline.
+///
+/// Every pass below consumes the `&[Sexp]` this returns. That is the whole
+/// point: the apply pipeline is ~24 independent per-form-type projections
+/// over the SAME document, and each one used to call `compile_typed(src)`,
+/// which is `read` + a fresh `Expander` + a full `expand_program` walk +
+/// a keyword filter that keeps one form type and discards the rest.
+///
+/// On the live frostmourne rc (1358 forms) that was 24 lexes, 24 parses and
+/// **32,592 form expansions to keep 1358**, every pass starting from a cold
+/// macro cache — measured at ~24 ms of every single shell start, and flat at
+/// ~13 µs per form regardless of which form type the pass wanted, which is
+/// the signature of re-parsing rather than of applying.
+///
+/// Reading `read` and `expand_program` apart here, rather than reaching for
+/// `compile_typed`, is what makes the one-pass shape expressible at all;
+/// the typed projection it leaves behind is
+/// `tatara_lisp::compile_typed_from_expanded`.
+fn read_and_expand(src: &str) -> LispResult<Vec<tatara_lisp::Sexp>> {
+    let forms = tatara_lisp::read(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    tatara_lisp::Expander::new()
+        .expand_program(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))
+}
+
 /// Parse a Lisp source string and apply every recognized form to `env`.
 ///
-/// Forms with unknown keywords are silently ignored (tatara-lisp's
-/// `compile_typed` filters by keyword, so mixing `defalias`/`defopts`/
-/// `defenv` in the same file is expected).
+/// Forms with unknown keywords are silently ignored (the typed projection
+/// filters by keyword, so mixing `defalias`/`defopts`/`defenv` in the same
+/// file is expected).
 pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
+    let forms = read_and_expand(src)?;
     apply_source_with_context(
-        src,
+        &forms,
         env,
         None,
         &mut std::collections::HashSet::new(),
@@ -304,8 +331,22 @@ pub fn apply_source(src: &str, env: &mut ShellEnv) -> LispResult<ApplySummary> {
 /// The map is pre-scanned BEFORE recursion descends so an inner
 /// file's `defload` can resolve against an outer-scope lock that
 /// hasn't been processed yet in source order.
+///
+/// **Takes already-read, already-macroexpanded `forms`, never source text.**
+/// That is a load-bearing signature, not a convenience: while this function
+/// took `&str`, every one of its ~24 passes had a `src` in scope and adding
+/// a 25th pass meant writing a 25th `compile_typed(src)` — a full re-parse
+/// nobody could see the cost of, because it looked exactly like its 24
+/// neighbours. With `&[Sexp]` there is no source text in scope to re-parse,
+/// so the 25th pass is a projection or it does not compile. Every pass below
+/// is `tatara_lisp::compile_typed_from_expanded(forms)`; each new form type
+/// costs one keyword filter over a slice that was read once.
+///
+/// The recursion (`defsource`, `defload`) genuinely enters new documents, so
+/// it reads and expands each inner file exactly once via [`read_and_expand`]
+/// — one document, one parse, still.
 fn apply_source_with_context(
-    src: &str,
+    forms: &[tatara_lisp::Sexp],
     env: &mut ShellEnv,
     rc_dir: Option<&std::path::Path>,
     visited: &mut std::collections::HashSet<std::path::PathBuf>,
@@ -324,8 +365,8 @@ fn apply_source_with_context(
     // Inner recursion will extend the same map with its own locks,
     // so by the time we reach this file's `defload` pass below, every
     // lock reachable in the apply tree is visible.
-    let pre_locks: Vec<LockedPkgSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let pre_locks: Vec<LockedPkgSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for l in pre_locks {
         locked_pkgs.insert(l.name.clone(), l);
     }
@@ -335,8 +376,8 @@ fn apply_source_with_context(
     // primitive forms in THIS file can override sourced ones — last
     // writer still wins on aliases / env / prompt. Hook bodies
     // compose either way thanks to the hook pass's accumulation.
-    let sources: Vec<SourceSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let sources: Vec<SourceSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for s in sources {
         let resolved = resolve_source_path(&s.path, rc_dir);
         let canonical = match std::fs::canonicalize(&resolved) {
@@ -369,9 +410,15 @@ fn apply_source_with_context(
             path: canonical.display().to_string(),
             source: e,
         })?;
+        let inner_forms = read_and_expand(&inner_src)?;
         let inner_dir = canonical.parent().map(|p| p.to_path_buf());
-        let inner_summary =
-            apply_source_with_context(&inner_src, env, inner_dir.as_deref(), visited, locked_pkgs)?;
+        let inner_summary = apply_source_with_context(
+            &inner_forms,
+            env,
+            inner_dir.as_deref(),
+            visited,
+            locked_pkgs,
+        )?;
         merge_summary(&mut summary, inner_summary);
     }
 
@@ -380,8 +427,8 @@ fn apply_source_with_context(
     // outer summary identically. Lookup hits the shared `locked_pkgs`
     // map populated above; missing entries surface as `UnknownPkg`
     // so a typo in a `defload` is loud rather than silent.
-    let loads: Vec<LoadSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let loads: Vec<LoadSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for ld in loads {
         let lock = locked_pkgs
             .get(&ld.pkg)
@@ -413,9 +460,15 @@ fn apply_source_with_context(
             path: canonical.display().to_string(),
             source: e,
         })?;
+        let inner_forms = read_and_expand(&inner_src)?;
         let inner_dir = canonical.parent().map(std::path::Path::to_path_buf);
-        let inner_summary =
-            apply_source_with_context(&inner_src, env, inner_dir.as_deref(), visited, locked_pkgs)?;
+        let inner_summary = apply_source_with_context(
+            &inner_forms,
+            env,
+            inner_dir.as_deref(),
+            visited,
+            locked_pkgs,
+        )?;
         merge_summary(&mut summary, inner_summary);
         summary.loads += 1;
     }
@@ -426,8 +479,8 @@ fn apply_source_with_context(
     // counts the forms and retains the typed records so consumers
     // (CLIs, debugging widgets, `frost --print-packages`) can ask the
     // shell what packages declared themselves.
-    let manifests: Vec<PkgSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let manifests: Vec<PkgSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     summary.packages = manifests.len();
     summary.declared_packages = manifests;
 
@@ -438,8 +491,8 @@ fn apply_source_with_context(
     // land in env.aliases alongside user-authored ones and (b) hook /
     // precmd contributions can be merged in the existing consolidation
     // loops below.
-    let integrations: Vec<IntegrationSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let integrations: Vec<IntegrationSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     let mut integration_hooks: std::collections::HashMap<&'static str, Vec<String>> =
         std::collections::HashMap::new();
     let mut integration_prompt_commands: Vec<String> = Vec::new();
@@ -500,16 +553,16 @@ fn apply_source_with_context(
     }
 
     // Aliases
-    let aliases: Vec<AliasSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let aliases: Vec<AliasSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for a in aliases {
         env.aliases.insert(a.name, a.value);
         summary.aliases += 1;
     }
 
     // Shell options
-    let opts: Vec<OptionSetSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let opts: Vec<OptionSetSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for o in opts {
         for name in &o.enable {
             let opt = frost_options::Options::from_name(name)
@@ -526,8 +579,8 @@ fn apply_source_with_context(
     }
 
     // Environment variables (with optional export).
-    let envs: Vec<EnvSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let envs: Vec<EnvSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for e in envs {
         env.set_var(&e.name, &e.value);
         summary.env_vars += 1;
@@ -543,8 +596,8 @@ fn apply_source_with_context(
     // the same variable (last-writer-wins consistent with aliases).
     // Tilde / $VAR expansion runs on :file so the stored HISTFILE is
     // the absolute path.
-    let histories: Vec<HistorySpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let histories: Vec<HistorySpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for h in histories {
         if let Some(file) = &h.file {
             let resolved = mark::expand_mark_path(file);
@@ -602,8 +655,8 @@ fn apply_source_with_context(
     // against the already-set env vars above. Falls back to
     // `std::env::var` for vars frost doesn't own internally (e.g.
     // `HOME` set by the login session).
-    let paths: Vec<PathSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let paths: Vec<PathSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for p in paths {
         // Build a per-form var snapshot covering everything referenced
         // in the spec. Cheap — path specs name a handful of variables.
@@ -634,8 +687,8 @@ fn apply_source_with_context(
     // `:command` is set, we also synthesize a `precmd` hook that runs
     // the command and assigns its stdout to PS1 — clean starship /
     // oh-my-posh / any-prompt-generator integration.
-    let prompts: Vec<PromptSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let prompts: Vec<PromptSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     let mut synthetic_precmd: Option<String> = None;
     for p in prompts {
         if let Some(ps1) = &p.ps1 {
@@ -696,8 +749,8 @@ fn apply_source_with_context(
     // platform notifier. Multiple forms compose (e.g. notify at 30s
     // with "quick build" title AND notify at 5min with "long build"
     // title) since hook-composition stacks them.
-    let notifies: Vec<NotifySpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let notifies: Vec<NotifySpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for n in notifies {
         let body = n.synthesize_precmd_body();
         match &mut synthetic_precmd {
@@ -720,8 +773,8 @@ fn apply_source_with_context(
     // frost-native hook that captures FROST_GIT_BRANCH/FROST_CMD_DURATION
     // runs BEFORE starship reads them (file load order: 20-hooks before
     // 63-tools-starship).
-    let hooks: Vec<HookSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let hooks: Vec<HookSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     let mut hook_bodies: std::collections::HashMap<&'static str, String> =
         std::collections::HashMap::new();
     for h in hooks {
@@ -766,8 +819,8 @@ fn apply_source_with_context(
     // Signal traps — validate the signal name, then register the body as
     // a function under `__frost_trap_<SIGNAL>`. Runtime dispatch (actual
     // signal delivery → function invocation) lands in a follow-up.
-    let traps: Vec<TrapSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let traps: Vec<TrapSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for t in traps {
         let is_pseudo = frost_exec::trap::PseudoSignal::from_name(&t.signal).is_some();
         let is_real = frost_exec::trap::signal_name_to_number(&t.signal).is_some();
@@ -791,8 +844,8 @@ fn apply_source_with_context(
     // literal). Unknown intent → typed error so rc.lisp typos surface
     // loudly instead of silently dropping the binding.
     let fleet_keybinds = ishou_tokens::FleetKeybinds::prescribed();
-    let binds: Vec<BindSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let binds: Vec<BindSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     let mut chord_prefixes_emitted: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     for mut b in binds {
@@ -862,8 +915,8 @@ fn apply_source_with_context(
     // under a variable `__frost_complete_<COMMAND>`. Keeps the runtime
     // side trivially consumable from frost-complete without a new
     // dependency on frost-lisp.
-    let completions: Vec<CompletionSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let completions: Vec<CompletionSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for c in completions {
         let var = format!("__frost_complete_{}", c.command);
         let payload = serde_json::to_string(&c).unwrap_or_default();
@@ -888,14 +941,14 @@ fn apply_source_with_context(
     // `(defflag …)` / `(defposit …)` (rich tree) in the same rc, and
     // everything composes — frost-complete consults both the flat map
     // and the tree, preferring tree-aware candidates when they match.
-    let subcmds: Vec<SubcmdSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let subcmds: Vec<SubcmdSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     summary.subcmds = subcmds;
-    let flags: Vec<FlagSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let flags: Vec<FlagSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     summary.flags = flags;
-    let positionals: Vec<PositSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let positionals: Vec<PositSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     summary.positionals = positionals;
 
     // Pickers — each spec registers a reedline keybinding that fires a
@@ -908,8 +961,8 @@ fn apply_source_with_context(
     // Atlas-intent resolution: same as defbind — if `:intent` is set,
     // the chord comes from FleetKeybinds; unknown intent is a typed
     // error.
-    let pickers: Vec<PickerSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let pickers: Vec<PickerSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for mut p in pickers {
         match resolve_intent(non_empty(&p.intent), &fleet_keybinds) {
             IntentResolution::Chord(chord) => p.key = chord.to_string(),
@@ -933,8 +986,8 @@ fn apply_source_with_context(
     // keyword but declarative: one form per function, body is shell
     // source. Registered under the user-visible name in `env.functions`
     // so everything else (aliasing, calls from hooks, completion) sees it.
-    let funcs: Vec<FunctionSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let funcs: Vec<FunctionSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for f in funcs {
         install_body_as_function(env, &f.name, &f.body);
         summary.functions += 1;
@@ -943,8 +996,8 @@ fn apply_source_with_context(
     // Fish-style abbreviations — collected for the REPL's submit-time
     // expander. Later forms win (last-writer-wins consistent with
     // aliases).
-    let abbreviations: Vec<AbbrSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let abbreviations: Vec<AbbrSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for a in abbreviations {
         summary.abbreviations.insert(a.name, a.expansion);
     }
@@ -954,8 +1007,8 @@ fn apply_source_with_context(
     // absolute path. Also stash in the summary's `marks` map for
     // downstream consumers, and seed completion_descriptions so the
     // Tab menu shows `name → /resolved/path` for each bookmark.
-    let marks: Vec<MarkSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let marks: Vec<MarkSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for m in marks {
         let resolved = mark::expand_mark_path(&m.path);
         // Marks must not shadow commands. A cd-alias under the name of
@@ -993,8 +1046,8 @@ fn apply_source_with_context(
     // preset seeds the merge BEFORE the user's slot overrides —
     // so `(deftheme :name "gruvbox-dark" :hint "#FF0000")` gives
     // you gruvbox with a red hint.
-    let themes: Vec<ThemeSpec> =
-        tatara_lisp::compile_typed(src).map_err(|e| LispError::Parse(e.to_string()))?;
+    let themes: Vec<ThemeSpec> = tatara_lisp::compile_typed_from_expanded(forms)
+        .map_err(|e| LispError::Parse(e.to_string()))?;
     for t in themes {
         // If the name maps to a preset, pull the preset in first
         // (under the existing theme), then overlay the user's
@@ -1287,13 +1340,14 @@ pub fn load_rc(path: impl AsRef<Path>, env: &mut ShellEnv) -> LispResult<ApplySu
         path: path.display().to_string(),
         source: e,
     })?;
+    let forms = read_and_expand(&src)?;
     let rc_dir = path.parent();
     let mut visited = std::collections::HashSet::new();
     if let Ok(canonical) = std::fs::canonicalize(path) {
         visited.insert(canonical);
     }
     let mut locked_pkgs = std::collections::HashMap::new();
-    apply_source_with_context(&src, env, rc_dir, &mut visited, &mut locked_pkgs)
+    apply_source_with_context(&forms, env, rc_dir, &mut visited, &mut locked_pkgs)
 }
 
 /// Resolve the default rc file path — `$FROSTRC` if set, else
@@ -2035,6 +2089,54 @@ mod tests {
         unsafe {
             std::env::remove_var("X_MARK_TEST_HOME");
         }
+    }
+
+    /// Macro-authored rc forms still reach their passes.
+    ///
+    /// This is the seal on the single-parse cutover. Before it, every pass
+    /// called `compile_typed(src)`, which ran its own `read` + its own fresh
+    /// `Expander` — so macroexpansion happened 24 times and each pass was
+    /// self-sufficient. Now expansion happens exactly once, in
+    /// `read_and_expand`, and every pass consumes its output. If that single
+    /// expansion is ever dropped or moved after the passes, a hand-written
+    /// `(defalias …)` keeps working and only macro-authored forms go
+    /// silently missing — the quietest possible regression. This test is the
+    /// thing that would not be quiet.
+    ///
+    /// It also pins that expansion runs BEFORE the passes rather than
+    /// per-pass: `alias-pair` is defined once and expanded twice, and both
+    /// expansions must land in the same `ApplySummary`.
+    #[test]
+    fn macro_authored_forms_survive_the_single_expansion_pass() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defmacro alias-pair (n v)
+              `(defalias :name ,n :value ,v))
+            (alias-pair "ll" "ls -la")
+            (defalias :name "hand" :value "written")
+            (alias-pair "gs" "git status")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+
+        assert_eq!(
+            env.aliases.get("ll").map(String::as_str),
+            Some("ls -la"),
+            "a macro-authored defalias must reach the alias pass"
+        );
+        assert_eq!(
+            env.aliases.get("gs").map(String::as_str),
+            Some("git status"),
+            "the second expansion of the same macro must land too"
+        );
+        assert_eq!(
+            env.aliases.get("hand").map(String::as_str),
+            Some("written"),
+            "hand-written forms must be unaffected by expansion"
+        );
+        assert_eq!(
+            s.aliases, 3,
+            "expanded + hand-written forms are counted alike, got {s:?}"
+        );
     }
 
     #[test]

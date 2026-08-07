@@ -79,7 +79,10 @@ blake3 = "1.8"
 # The derive macros are re-exported RENAMED by the lib
 # (`DeriveTataraDomain` / `DeriveKeywordSexp`) — never name
 # `tatara-lisp-derive` as a dependency here.
-tatara-lisp = "0.3.3"
+# 0.3.41 is the floor, not a preference: it is the first release carrying
+# `compile_typed_from_expanded`, the already-expanded input posture
+# `frost-lisp`'s rc loader binds to. Below it the loader does not compile.
+tatara-lisp = "0.3.41"
 
 # ishou-tokens — fleet design + keybind atlas. FleetKeybinds is the
 # typed source for every chord in rc.lisp; (defbind :intent :history-picker)
