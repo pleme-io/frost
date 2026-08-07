@@ -105,8 +105,30 @@ fi"#,
             aliases: &[],
             precmd_body: None,
             preexec_body: None,
-            // `direnv export` detects .envrc and re-sources its output.
-            // We use the bash export (frost runs the output via eval).
+            // `direnv export` re-sources .envrc. This still goes through
+            // `eval` of direnv's BASH-format output, which works only because
+            // frost implements `$'…'` as of 2026-08-07 — before that it failed
+            // silently on every line and .envrc variables never applied at all.
+            //
+            // The typed replacement EXISTS and is tested:
+            // `frost_builtins::direnv::DirenvApply` (`__frost_direnv_apply`)
+            // runs `direnv export json` and applies the delta natively, with no
+            // eval and no shell. It is deliberately NOT wired here yet — its
+            // ENTER path is correct and its LEAVE path is not. Measured: after
+            // `cd` out of a directory, `direnv export json` from the builtin
+            // returns the LOAD delta again rather than the leave-delta of
+            // nulls, so an .envrc variable survives leaving its own tree.
+            //
+            // Ruled out while chasing it, so nobody re-walks these: the child
+            // DOES inherit the exported DIRENV_* state (verified with `env`),
+            // and frost's `cd` DOES change the process cwd (verified: a child
+            // `/bin/pwd` reports the new directory). Something else in the
+            // DIRENV_DIFF/DIRENV_WATCHES round-trip differs from what bash's
+            // own eval produces.
+            //
+            // Shipping the swap in that state would trade a working
+            // integration for a leaking one, so the shell form stays until the
+            // leave path is understood.
             chpwd_body: Some(r#"eval "$(direnv export bash 2>/dev/null)""#),
             env: &[],
             prompt_command: None,

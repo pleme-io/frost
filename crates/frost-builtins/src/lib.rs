@@ -20,6 +20,7 @@ mod read;
 mod set;
 mod source;
 mod test;
+mod direnv;
 mod true_false;
 
 use std::collections::HashMap;
@@ -216,6 +217,7 @@ pub fn default_builtins() -> BuiltinRegistry {
     let mut reg = BuiltinRegistry::new();
 
     // Core I/O
+    reg.register(Box::new(direnv::DirenvApply));
     reg.register(Box::new(true_false::True));
     reg.register(Box::new(true_false::False));
     reg.register(Box::new(echo::Echo));
