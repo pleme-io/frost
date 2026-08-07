@@ -30,6 +30,8 @@ pub enum ParseError {
 pub struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
+    /// Recovered syntax errors, in source order. See `ast::Program::syntax_errors`.
+    syntax_errors: Vec<String>,
 }
 
 /// Where a piece sits inside the word being assembled.
@@ -44,12 +46,19 @@ enum WordPos {
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: &'a [Token]) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            syntax_errors: Vec::new(),
+        }
     }
 
     pub fn parse(&mut self) -> Program {
         let commands = self.parse_program();
-        Program { commands }
+        Program {
+            commands,
+            syntax_errors: std::mem::take(&mut self.syntax_errors),
+        }
     }
 
     // ── Helpers ────────────────────────────────────────────────
@@ -114,9 +123,17 @@ impl<'a> Parser<'a> {
         )
     }
 
+    /// Consume `kind`, or RECORD a syntax error and skip one token.
+    ///
+    /// Recovery is deliberate — an interactive shell should still produce a
+    /// usable AST from a half-typed line. Recording it is the part that was
+    /// missing: silent recovery made `while true` (no `do`) recover into an
+    /// infinite loop with an empty body, which the executor then ran forever.
     fn expect(&mut self, kind: TokenKind) {
         if !self.eat(kind) {
-            // Best-effort: skip the unexpected token and continue
+            let found = self.kind();
+            self.syntax_errors
+                .push(format!("expected {kind:?}, found {found:?}"));
             self.advance();
         }
     }
@@ -912,7 +929,7 @@ impl<'a> Parser<'a> {
                 parts.push(WordPart::ArithSub(CompactString::from(expr)));
             }
             TokenKind::Backtick => {
-                parts.push(WordPart::CommandSub(Box::new(Program { commands: vec![] })));
+                parts.push(WordPart::CommandSub(Box::new(Program::default())));
             }
             // Glob metacharacters must preserve their WordPart::Glob tag so
             // the executor can recognize the word as needing filesystem
@@ -2561,5 +2578,83 @@ mod tests {
             &p.commands[0].list.first.commands[0],
             Command::If(_)
         ));
+    }
+}
+
+#[cfg(test)]
+mod syntax_error_recording {
+    use super::*;
+
+    fn parse_src(src: &str) -> crate::ast::Program {
+        let toks = frost_lexer::tokenize(src.as_bytes());
+        Parser::new(&toks).parse()
+    }
+
+    /// The receipt. `while true` with no `do` used to recover into
+    /// `While { condition: [true], body: [] }` — a valid infinite loop with an
+    /// empty body — and the executor ran it forever. zsh 5.9, bash and dash all
+    /// reject the input. Recovery still happens; it is no longer silent.
+    #[test]
+    fn unterminated_while_records_a_syntax_error() {
+        let p = parse_src("while true\n");
+        assert!(
+            !p.syntax_errors.is_empty(),
+            "a missing `do` must be recorded, not silently recovered"
+        );
+    }
+
+    /// The other half, and the one that actually matters: a well-formed program
+    /// must record NOTHING. Without this, "record every mismatch" could be
+    /// satisfied by recording always, and the refusal in `frost_exec::execute`
+    /// would reject every script.
+    #[test]
+    fn well_formed_input_records_nothing() {
+        for src in [
+            "while true; do echo x; done\n",
+            "echo done\n",
+            "if true; then echo y; fi\n",
+            "for i in 1 2 3; do echo $i; done\n",
+            "case x in y) echo z ;; esac\n",
+            "f() { echo hi; }\n",
+        ] {
+            let p = parse_src(src);
+            assert!(
+                p.syntax_errors.is_empty(),
+                "well-formed input recorded errors: {src:?} -> {:?}",
+                p.syntax_errors
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_rc_parses_clean {
+    use super::*;
+
+    /// THE GATE ON THE REFUSAL. `frost_exec::execute` refuses to run a program
+    /// with recorded syntax errors, so if the shipped rc had any — silently
+    /// recovered and unnoticed for who knows how long — that refusal would
+    /// brick every shell on the machine.
+    ///
+    /// Skips rather than fails when the store path is absent (a Linux CI runner
+    /// has no /nix/store copy of this rc), because a check that cannot run
+    /// should say so, not go green.
+    #[test]
+    fn the_shipped_frostmourne_rc_has_no_recovered_syntax_errors() {
+        const RC: &str =
+            "/nix/store/jmvklqqzydxrdiyb8bsjxi1d8i78i8q1-frostmourne-rc.lisp/share/frostmourne/rc.lisp";
+        let Ok(src) = std::fs::read_to_string(RC) else {
+            eprintln!("SKIP: {RC} not present on this host");
+            return;
+        };
+        let toks = frost_lexer::tokenize(src.as_bytes());
+        let p = Parser::new(&toks).parse();
+        assert!(
+            p.syntax_errors.is_empty(),
+            "the shipped rc records {} syntax errors; refusing to execute it \
+             would brick the shell. First few: {:?}",
+            p.syntax_errors.len(),
+            &p.syntax_errors[..p.syntax_errors.len().min(5)]
+        );
     }
 }

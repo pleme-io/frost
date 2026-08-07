@@ -909,6 +909,31 @@ enum RunOutcome {
     Exit(i32),
 }
 
+/// `run`, but a recovered syntax error is FATAL.
+///
+/// The parser recovers from a token mismatch and carries on, which is right
+/// for the REPL — a half-typed line should still give a usable AST. It is
+/// wrong for a script: `while true` with no `do` recovers into an infinite
+/// loop with an empty body, and the shell hangs forever with no diagnostic.
+/// zsh 5.9, bash and dash all refuse that input; so does this.
+///
+/// Exit 2 is POSIX's status for a shell syntax error, and matches bash.
+///
+/// Only the three non-interactive entries use this (`-c`, a script file,
+/// piped stdin). The REPL deliberately keeps silent recovery.
+fn run_script(input: &str, env: &mut frost_exec::ShellEnv) -> RunOutcome {
+    let tokens = tokenize(input);
+    let mut parser = frost_parser::Parser::new(&tokens);
+    let program = parser.parse();
+    if !program.syntax_errors.is_empty() {
+        for e in &program.syntax_errors {
+            eprintln!("frost: syntax error: {e}");
+        }
+        return RunOutcome::Completed(2);
+    }
+    run(input, env)
+}
+
 fn run(input: &str, env: &mut frost_exec::ShellEnv) -> RunOutcome {
     let tokens = tokenize(input);
     let mut parser = frost_parser::Parser::new(&tokens);
@@ -2054,10 +2079,10 @@ fn main() {
         if changed {
             println!("{cmd_expanded}");
         }
-        unwrap_outcome(run(&cmd_expanded, &mut env))
+        unwrap_outcome(run_script(&cmd_expanded, &mut env))
     } else if let Some(path) = &cli.file {
         match std::fs::read_to_string(path) {
-            Ok(source) => unwrap_outcome(run(&source, &mut env)),
+            Ok(source) => unwrap_outcome(run_script(&source, &mut env)),
             Err(e) => {
                 eprintln!("frost: {path}: {e}");
                 1
@@ -2148,7 +2173,7 @@ fn main() {
         // Non-interactive stdin (e.g., `frost < script.sh`) — slurp it.
         let mut buf = String::new();
         if std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).is_ok() {
-            unwrap_outcome(run(&buf, &mut env))
+            unwrap_outcome(run_script(&buf, &mut env))
         } else {
             1
         }
