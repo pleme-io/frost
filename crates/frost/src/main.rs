@@ -2071,6 +2071,21 @@ fn main() {
         // Best-effort: failure to write is non-fatal (read-only home,
         // hostile container) — frost interactive session still runs.
         if let Some(dir) = frost_mcp::default_state_dir() {
+            // ── sweep dead shells' leftovers first ───────────────────
+            // Every interactive frost bound `mcp-<pid>.sock` and wrote
+            // `state-<pid>.json`, and nothing ever removed either, so the
+            // directory grew without bound — 346 entries here on
+            // 2026-08-07, accumulating since June. `mcp_state_teardown`
+            // below handles a graceful exit; this sweep handles the rest
+            // (a crash, a `kill -9`, a closed terminal), because no exit
+            // path runs for those. Conservative by construction: a pid we
+            // cannot prove dead is treated as alive, and our own pid is
+            // never swept. Best-effort, before the write so our fresh
+            // snapshot is never a candidate.
+            let swept = frost_mcp::reap_dead(&dir, std::process::id(), &pid_is_alive);
+            if swept > 0 {
+                tracing::debug!(swept, "frost-mcp reaped dead shells' state files");
+            }
             if let Err(e) = mcp_state.write_snapshot(&dir) {
                 tracing::debug!(error = %e, "frost-mcp snapshot write failed");
             }
@@ -2177,6 +2192,49 @@ fn run_exit_trap(env: &mut frost_exec::ShellEnv) {
     if env.functions.contains_key(name) {
         let _ = run(name, env);
     }
+    // This function is the shell's single graceful-termination funnel —
+    // every `process::exit` that matters routes through it — so the MCP
+    // file teardown rides here rather than being hand-repeated at each of
+    // the seven exit sites, where the eighth would inevitably miss it.
+    mcp_state_teardown();
+}
+
+/// Remove this process's `mcp-<pid>.sock` + `state-<pid>.json` on the way
+/// out. Absent files are a no-op, so calling it from a `-c` run (which
+/// creates neither) costs three failed `unlink`s and nothing else.
+///
+/// Cannot touch another live shell: pids are unique among running
+/// processes, so `mcp-<our pid>.sock` is ours by definition.
+fn mcp_state_teardown() {
+    if let Some(dir) = frost_mcp::default_state_dir() {
+        frost_mcp::remove_process_files(&dir, std::process::id());
+    }
+}
+
+/// Is `pid` a running process? The liveness predicate the state-dir sweep
+/// injects.
+///
+/// `kill(pid, 0)` sends no signal and only performs the permission +
+/// existence check. **Deliberately conservative**: only a hard `ESRCH` (no
+/// such process) counts as dead. `EPERM` means the process exists but is
+/// not ours to signal, and any other errno is unknown — both report alive,
+/// because deleting a live shell's socket severs its MCP channel while
+/// leaving one extra file costs nothing.
+fn pid_is_alive(pid: u32) -> bool {
+    // pid 0 addresses the whole process group on Unix — never a shell, and
+    // never something to probe.
+    let Ok(raw) = i32::try_from(pid) else {
+        return true;
+    };
+    if raw <= 0 {
+        return true;
+    }
+    // SAFETY: `kill` with signal 0 performs no delivery; it is the POSIX
+    // existence check and has no effect on the target process.
+    if unsafe { libc::kill(raw, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 #[cfg(test)]
