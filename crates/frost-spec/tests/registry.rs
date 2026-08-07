@@ -4,7 +4,7 @@ use frost_spec::{BuiltinSpec, OptionSpec};
 
 #[test]
 fn both_domains_register_and_resolve() {
-    frost_spec::register_all();
+    frost_spec::register_all().expect("frost owns defbuiltin + defoption");
 
     let keywords = tatara_lisp::domain::registered_keywords();
     assert!(

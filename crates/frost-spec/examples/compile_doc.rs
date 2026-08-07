@@ -5,7 +5,7 @@
 use frost_spec::{BuiltinSpec, OptionSpec};
 
 fn main() {
-    frost_spec::register_all();
+    frost_spec::register_all().expect("frost owns defbuiltin + defoption");
 
     let builtins_src = r#"
         (defbuiltin :name "true"  :exit-code 0)
