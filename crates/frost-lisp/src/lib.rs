@@ -36,6 +36,7 @@ mod completion;
 mod env;
 mod function;
 mod history;
+pub mod meguri;
 mod hook;
 mod integration;
 mod intent;

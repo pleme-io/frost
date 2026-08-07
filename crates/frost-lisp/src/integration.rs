@@ -57,6 +57,36 @@ pub struct IntegrationRecipe {
     pub functions: &'static [(&'static str, &'static str)],
 }
 
+/// The meguri [`BeatSpec`]s an integration declares, if it has been converted.
+///
+/// This is the **migration seam**, and it is deliberately additive rather than
+/// a replacement: a converted integration declares typed acts here, an
+/// unconverted one still carries `*_body` shell above. Both are honest about
+/// what they are, and `beats()` is what makes the difference inspectable —
+/// `spawn_cost()` over these is a real per-beat budget, where a shell body's
+/// cost is unknowable without reading it.
+///
+/// See `meguri::Act` for why `Publish` cannot fork.
+pub fn beats(tool: &str) -> Vec<crate::meguri::BeatSpec> {
+    use crate::meguri::{Act, Beat, BeatSpec, EnvDeltaProvider};
+    match tool {
+        // The converted one. `eval "$(direnv export bash 2>/dev/null)"` became
+        // one declared act with a counted cost.
+        "direnv" => vec![BeatSpec {
+            beat: Beat::Chpwd,
+            acts: vec![Act::ApplyEnvDelta {
+                provider: EnvDeltaProvider::DirenvJson,
+            }],
+        }],
+        // Not yet converted — zoxide's chpwd is a `command -v` guard plus a
+        // `zoxide add`, and starship/atuin contribute prompt commands and
+        // aliases. Listed as empty rather than omitted so a reader can tell
+        // "no typed beats" from "unknown tool".
+        "zoxide" | "starship" | "atuin" => Vec::new(),
+        _ => Vec::new(),
+    }
+}
+
 /// Lookup table. Keep recipes minimal — the canonical "what does each
 /// integration want"? If a user needs more, they can append primitive
 /// forms in their rc. Ordering: recipe fires BEFORE any user forms in
@@ -189,5 +219,58 @@ mod tests {
         let r = lookup_integration("zoxide").unwrap();
         assert!(r.chpwd_body.is_some());
         assert!(r.chpwd_body.unwrap().contains("zoxide add"));
+    }
+}
+
+#[cfg(test)]
+mod meguri_seam {
+    use super::*;
+
+    /// The direnv chpwd beat is declared, and its cost is ONE — the provider's
+    /// own child. This is the regression pin on the conversion: if somebody
+    /// reintroduces an `eval` or a second spawn, the number moves.
+    #[test]
+    fn direnv_chpwd_is_one_declared_child() {
+        let b = beats("direnv");
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].beat, crate::meguri::Beat::Chpwd);
+        assert_eq!(b[0].spawn_cost(), 1);
+    }
+
+    /// Every tool the registry knows must answer `beats()` — empty is a valid
+    /// answer ("not converted"), a panic or a missing arm is not. Keeps the
+    /// two tables from drifting as integrations are converted one at a time.
+    #[test]
+    fn every_known_integration_answers_beats() {
+        for tool in KNOWN_INTEGRATIONS {
+            let _ = beats(tool);
+            assert!(
+                lookup_integration(tool).is_some(),
+                "{tool} is in KNOWN_INTEGRATIONS but has no recipe"
+            );
+        }
+    }
+
+    /// A converted integration must not ALSO carry a shell body for the same
+    /// beat — that would be two sources of truth for one hook, and the shell
+    /// one would win silently at install time.
+    #[test]
+    fn a_converted_beat_has_no_competing_shell_body() {
+        let recipe = lookup_integration("direnv").expect("direnv recipe");
+        for b in beats("direnv") {
+            match b.beat {
+                crate::meguri::Beat::Chpwd => assert!(
+                    recipe.chpwd_body.is_none()
+                        || recipe.chpwd_body == Some("__frost_direnv_apply"),
+                    "direnv declares a typed chpwd beat AND a competing shell body"
+                ),
+                crate::meguri::Beat::Precmd => {
+                    assert!(recipe.precmd_body.is_none(), "competing precmd body")
+                }
+                crate::meguri::Beat::Preexec => {
+                    assert!(recipe.preexec_body.is_none(), "competing preexec body")
+                }
+            }
+        }
     }
 }
