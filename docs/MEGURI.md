@@ -1,9 +1,12 @@
 # meguri (巡り) — the typed shell cycle
 
-**Status: BORDER SHIPPED, MIGRATION PARTIAL (2026-08-07).** Grounded in a measured latency + differential-parity
-recon of the shipped frostmourne stack on ryn. Nothing in this document is
-implemented yet; every tier claim below is a claim about the *destination*, and the
-ledger in §5 says so per row. A named follow-up is not a shipped follow-up.
+**Status: BORDER SHIPPED, MIGRATION PARTIAL (2026-08-07).** Grounded in a measured
+latency + differential-parity recon of the shipped frostmourne stack on ryn. The
+BORDER — the closed `Beat`/`Fact`/`Act` algebra and the derived spawn budget of §3
+and §4 — is implemented (`crates/frost-lisp/src/meguri.rs`, 8 tests). The
+MIGRATION is not: one beat is converted, and everything else still carries shell.
+So §5's ledger rows remain claims about the *destination*, not descriptions of
+today, and a named follow-up is still not a shipped follow-up.
 
 *Meguri* (巡り, "a going-around") — the round the shell makes once per command:
 accept the line → stamp → execute → gather what happened → paint the next prompt.
