@@ -1,0 +1,176 @@
+;; frost :: hang-sweep
+;; ───────────────────
+;; Feeds a corpus of adversarial inputs to a frost binary and fails if ANY of
+;; them fails to terminate. Not a parity check — it does not care what frost
+;; prints, only that it stops printing it.
+;;
+;; ── Why a separate tool from the differential corpus
+;;
+;; `crates/frost/tests/zsh_differential.rs` asserts frost's output matches
+;; zsh's. That is the right check for behaviour and the wrong one for
+;; termination, because a row that hangs makes the SUITE hang, and a suite
+;; that hangs reads as "slow CI" long before it reads as "the shell is
+;; broken". On 2026-08-07 the baseline could not complete a
+;; `cargo test --workspace` run at all for exactly this reason.
+;;
+;; ── The class this exists to catch
+;;
+;; Three inputs were found, all by accident, that wedged the SHIPPED shell
+;; forever — no output, no error, no CPU, no exit:
+;;
+;;   echo done                       a reserved word in argument position
+;;   echo "$(echo "$(echo deep)")"   nested dquotes inside a command sub
+;;   a script ending in a lone \     lex_word consumed zero bytes
+;;
+;; The first is the one that should worry anybody: `echo done` is not an
+;; adversarial input. It is a line a person types. It hung, presumably since
+;; the reserved-word table was written, and nothing in the test suite could
+;; have found it because nothing was looking for non-termination as a
+;; property distinct from wrongness.
+;;
+;; Root cause was one shape in three costumes: a parse or lex loop that stops
+;; consuming input without reaching Eof. The lexer half is now guarded
+;; structurally (a cursor-did-not-move check in `frost_lexer::tokenize`); this
+;; sweep is the empirical half — the guard says the class cannot recur, and
+;; this says whether the guard is telling the truth. On its first run it found
+;; a FOURTH instance the guard does not cover (see `while true` below).
+;;
+;; ── Honest tier
+;;
+;; only-mitigated. This is a finite hand-written corpus, so it proves nothing
+;; about inputs it does not contain — it is a sweep, not a proof. Real
+;; coverage of "every input terminates" wants a property-based generator
+;; (frost has neither proptest nor a fuzz target today; that is the named
+;; next step, not something this file claims). What this DOES give is a
+;; standing floor: every input that ever wedged the shell is in here, so a
+;; regression to a known-bad shape is caught by a check that fails in seconds.
+;;
+;; Usage:
+;;   tatara-script tools/hang-sweep.tlisp [path-to-frost]
+;;   tatara-script --test tools/hang-sweep.tlisp
+
+;; Per-input ceiling. Every row here is trivial work — the slowest legitimate
+;; one is a couple of subprocess spawns — so five seconds is enormously
+;; generous and anything exceeding it is wedged, not slow.
+(define timeout-secs 5)
+
+;; ── The corpus ─────────────────────────────────────────────────────────
+;;
+;; Rows marked RECEIPT actually wedged a shipped or in-flight binary; the rest
+;; are neighbours of those shapes, included because each receipt was found
+;; only after somebody happened to type it.
+(define corpus (list
+  ;; RECEIPT — reserved word in argument position (shipped, wedged forever)
+  "echo done"
+  "echo then"
+  "echo fi"
+  "echo do"
+  "echo esac"
+  "echo while"
+  "echo if"
+  "echo in"
+  "echo elif"
+  "echo else"
+  "x=done; echo $x"
+  "echo adone"
+  "echo done done"
+
+  ;; RECEIPT — nested double quotes inside a command substitution
+  "echo \"$(echo \"$(echo deep)\")\""
+  "echo \"$(echo \"a b\")\""
+  "v=\"$(printf %s \"x\")\"; echo $v"
+  ;; RECEIPT — the in-flight regression: eval + nested-dquote cmdsub
+  "eval \"$(printf %s \"export D=1\")\"; echo $D"
+  "eval \"$(echo echo ok)\""
+
+  ;; RECEIPT — trailing lone backslash (lexer consumed zero bytes)
+  "echo \\"
+  "echo a \\"
+  "x=\\"
+
+  ;; Unterminated constructs — must ERROR, never spin. `while true` is the
+  ;; FOURTH hang, found by this file on its first run: zsh 5.9 exits 0, bash
+  ;; says "syntax error: unexpected end of file", dash says "end of file
+  ;; unexpected (expecting \"do\")" — frost spins. It localises the gap: the
+  ;; cursor guard covers the LEXER, the parser's compound-body loop has no
+  ;; equivalent.
+  "echo \"unterminated"
+  "echo 'unterminated"
+  "echo $(echo unterminated"
+  "echo ${unterminated"
+  "echo $'unterminated"
+  "if true; then"
+  "for i in 1 2 3; do"
+  "case x in"
+  "while true"
+  "f() {"
+
+  ;; nesting depth
+  "echo $(echo $(echo $(echo deep)))"
+  "echo \"${a:-\"${b:-x}\"}\""
+  "echo $(( (1 + (2 * (3 - 1)))))"
+
+  ;; degenerate inputs
+  ""
+  "   "
+  "\n\n\n"
+  "# just a comment"
+  ";"
+  "&&"
+
+  ;; expansion edge shapes
+  "echo ${}"
+  "echo $"
+  "echo ${a[}"
+  "echo $'\\'"
+  "echo \"$\""
+  "a=1; echo ${a%%}"))
+
+;; ── One input, bounded ─────────────────────────────────────────────────
+;;
+;; `timeout` is used rather than a wall-clock measurement because a wedged
+;; child must be REAPED, not merely noticed: an unkilled spinner survives the
+;; sweep and goes on eating a core. Exit 124 is timeout(1)'s signal that it
+;; killed the child, which is exactly the condition being tested.
+(define (hangs? shell src)
+  (let* ((path "/tmp/frost-hang-sweep-row.sh")
+         (_ (write-file path src))
+         (r (exec-capture "timeout" (string-format "{}" timeout-secs) shell path))
+         (status (alist-get r :status)))
+    (= status 124)))
+
+(define (check shell src)
+  (if (hangs? shell src)
+      (begin
+        (log-error (string-format "HANG on input: <<{}>>" src))
+        1)
+      0))
+
+(define (run-sweep shell)
+  (let* ((results (map (fn (src) (check shell src)) corpus))
+         (hangs (foldl + 0 results))
+         (n (count corpus)))
+    (println (string-format "hang-sweep: {} inputs, {} hung" n hangs))
+    (if (> hangs 0)
+        (begin
+          (log-error "A hang is not a slow test. The shell stops responding entirely.")
+          (log-error "Root shape is always the same: a parse/lex loop that stops")
+          (log-error "consuming input without reaching Eof. See frost_lexer::tokenize's")
+          (log-error "cursor-did-not-move guard, and note it covers the LEXER only.")
+          1)
+        (begin (println "no input wedged the shell") 0))))
+
+(exit (run-sweep (or (argv-get 0) "frost")))
+
+(deftest corpus-carries-every-known-receipt
+  ;; The inputs that actually wedged a shipped binary must never leave this
+  ;; corpus — they are the only rows with proof behind them.
+  (assert (member? corpus "echo done") "the reserved-word receipt")
+  (assert (member? corpus "echo \"$(echo \"$(echo deep)\")\"") "the nested-dquote receipt")
+  (assert (member? corpus "echo \\") "the lone-backslash receipt")
+  (assert (member? corpus "while true") "the compound-body receipt"))
+
+(deftest corpus-is-not-empty
+  ;; A sweep over an empty corpus passes while proving nothing — the vacuous
+  ;; shape that makes a green check worse than no check.
+  (assert (> (count corpus) 30) "corpus must be substantive"))
