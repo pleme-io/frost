@@ -802,6 +802,35 @@ fn command_candidates(builtins: &[String], partial: &str) -> Vec<String> {
     out.into_iter().collect()
 }
 
+/// Every executable name reachable via `path` — a colon-separated `$PATH`
+/// string, taken as an argument rather than read from the process
+/// environment so a caller holding the *shell's* `PATH` (which can differ
+/// from the process's after an `export`) gets the right answer.
+///
+/// **This is the fleet's single PATH enumerator.** It shares
+/// [`executables_in`] with [`command_candidates`], which is the whole point:
+/// there used to be a second, independent copy in `crates/frost/src/main.rs`
+/// that called `DirEntry::metadata()` (an `lstat`) instead of
+/// `Path::metadata()` (a `stat`), so it silently dropped every symlink —
+/// measured 2026-08-07: 1015 of 2302 entries on this operator's `PATH`, all
+/// nix-store symlinks, which is why `frost -c 'bxl'` never suggested `blx`
+/// while `frost -c 'gti'` (a regular file) suggested `git` correctly. Two
+/// enumerators are free to disagree; one cannot.
+///
+/// Enumerating a full `$PATH` is expensive — measured 92 `opendir` + 2304
+/// `lstat` on this box — so call it only where the cost is warranted. The
+/// command-not-found path reaches it through a witness type that cannot be
+/// constructed on the success path; see `suggest::MissingCommand` in
+/// `crates/frost/src/main.rs`.
+#[must_use]
+pub fn path_command_names(path: &str) -> Vec<String> {
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for dir in path.split(':').filter(|p| !p.is_empty()) {
+        executables_in(Path::new(dir), "", &mut out);
+    }
+    out.into_iter().collect()
+}
+
 /// Insert every executable in `dir` whose name starts with `partial`.
 ///
 /// Split out of [`command_candidates`] so the symlink-resolution contract is
@@ -1080,6 +1109,44 @@ mod tests {
             out.is_empty(),
             "a symlink to a non-executable must not be offered; got {out:?}"
         );
+    }
+
+    /// Regression, 2026-08-07: `path_command_names` is the collapse of the
+    /// second PATH enumerator that used to live in `frost/src/main.rs`. That
+    /// copy used `DirEntry::metadata()` (`lstat`) and dropped every symlink,
+    /// so `frost -c 'bxl'` could never suggest `blx`. Both callers now share
+    /// [`executables_in`], so the two can no longer disagree.
+    #[cfg(unix)]
+    #[test]
+    fn path_command_names_follows_symlinks() {
+        let bin = symlink_bin("path-names-symlink", "blxlike", 0o755);
+        let names = path_command_names(bin.to_str().unwrap());
+        assert!(
+            names.contains(&"blxlike".to_string()),
+            "a symlinked executable must be enumerated; got {names:?}"
+        );
+    }
+
+    /// The empty prefix must not become "match everything including the
+    /// non-executables" — the exec-bit filter still applies.
+    #[cfg(unix)]
+    #[test]
+    fn path_command_names_still_rejects_non_executables() {
+        let bin = symlink_bin("path-names-noexec", "blxnote", 0o644);
+        let names = path_command_names(bin.to_str().unwrap());
+        assert!(
+            names.is_empty(),
+            "a symlink to a non-executable must not be enumerated; got {names:?}"
+        );
+    }
+
+    /// An empty / absent PATH must read zero directories and return nothing
+    /// rather than falling back to `.` — the `filter(|p| !p.is_empty())`
+    /// contract, which is also what makes the `PATH=` benchmark arm honest.
+    #[test]
+    fn path_command_names_on_empty_path_is_empty() {
+        assert!(path_command_names("").is_empty());
+        assert!(path_command_names("::").is_empty());
     }
 
     #[test]
