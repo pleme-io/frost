@@ -15,6 +15,36 @@
 //!
 //! Rows in `ROWS` must match. Rows in `KNOWN_DIVERGENCES` are recorded, run
 //! (so they must still not hang or crash), and reported — never asserted.
+//!
+//! ## The measured record for this corpus (2026-08-07)
+//!
+//! **26/93 rows matched before this work; 93/93 after, with zero timeouts.**
+//! The before figure was taken by copying this file into a clean worktree at
+//! `c3434ca` and running it there, so it is a like-for-like count rather than
+//! a recollection.
+//!
+//! Commit `0963f9b`'s message says "all 12 differential rows match zsh". That
+//! is **wrong and understates the work by ~8x** — 12 was the size of the
+//! hand-run spot-check used to sanity-check the change before committing, not
+//! the corpus. Recorded here rather than by rewriting a pushed shared branch.
+//! Two further things that commit omits, both verified against the shipped
+//! binary afterwards:
+//!
+//! **Three hangs already in the SHIPPED shell**, none introduced by this work:
+//!
+//! | input | cause |
+//! |---|---|
+//! | `echo done` — any reserved word as an argument | `at()` fell back to matching a plain `Word`'s TEXT, position-blind, so `echo` consumed zero words and the parser produced endless empty commands |
+//! | `echo "$(echo "$(echo deep)")"` | `lex_double_quoted` scanned to the next unescaped `"`, ending the token at the third quote and stranding `)` at command position |
+//! | a script ending in a lone `\` | `lex_word` consumed ZERO bytes (`\` is a metacharacter with nothing left to escape) |
+//!
+//! The first is the one worth remembering: `echo done` wedged the shell
+//! forever, and it had presumably always done so.
+//!
+//! The baseline could not complete a `cargo test --workspace` run at all — it
+//! hung in `param_expansion::shwordsplit_empty_yields_nothing`. That test now
+//! passes, which is why a full-suite comparison against the old tree is not
+//! available and only per-crate runs are cited.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
