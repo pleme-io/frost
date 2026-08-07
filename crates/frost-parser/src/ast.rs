@@ -1,9 +1,32 @@
 use compact_str::CompactString;
 use frost_lexer::Span;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Program {
     pub commands: Vec<CompleteCommand>,
+    /// Syntax errors the parser recovered from, in source order.
+    ///
+    /// ## Why this exists, and why it is not `Result`
+    ///
+    /// `Parser::expect` recovers from a token mismatch by skipping and
+    /// carrying on, which is right for an interactive shell — it lets a
+    /// half-typed line still produce a usable AST. What was wrong is that the
+    /// recovery was SILENT: the `ParseError` type existed and was never once
+    /// constructed, so a syntax error and a correct parse were indistinguishable
+    /// to every caller.
+    ///
+    /// That is not a cosmetic gap. `while true` with no `do` recovered into
+    /// `While { condition: [true], body: [] }` — a syntactically-valid infinite
+    /// loop with an empty body — and the executor ran it forever. zsh 5.9, bash
+    /// and dash all reject that input outright. It was found by
+    /// `tools/hang-sweep.tlisp`, which looks for non-termination as a property
+    /// distinct from wrongness.
+    ///
+    /// So recovery is kept and the evidence is recorded alongside it: a
+    /// non-empty vec means the program is not what the author wrote, and a
+    /// non-interactive caller refuses to run it (POSIX puts a shell script's
+    /// syntax-error exit at 2, which is what `frost_exec::execute` returns).
+    pub syntax_errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
