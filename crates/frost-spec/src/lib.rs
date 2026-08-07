@@ -38,7 +38,19 @@ pub use option::OptionSpec;
 
 /// Register all frost domain specs in the global tatara registry.
 /// Call once at process startup.
-pub fn register_all() {
-    tatara_lisp::domain::register::<BuiltinSpec>();
-    tatara_lisp::domain::register::<OptionSpec>();
+///
+/// A refusal means some other type in the linked binary already claims
+/// `defbuiltin` or `defoption`. The incumbent keeps the keyword, so
+/// frost's handler is simply never reached — and discarding the refusal
+/// here would make that silent, which is precisely the defect
+/// `register`'s `Result` was introduced to kill. Propagated instead: the
+/// caller decides, and the error names both the incumbent type and the
+/// challenger.
+///
+/// # Errors
+/// Returns the first [`KeywordCollision`](tatara_lisp::KeywordCollision)
+/// if either keyword is already held by a different type.
+pub fn register_all() -> Result<(), tatara_lisp::KeywordCollision> {
+    tatara_lisp::domain::register::<BuiltinSpec>()?;
+    tatara_lisp::domain::register::<OptionSpec>()
 }
