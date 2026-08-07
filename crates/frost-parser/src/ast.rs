@@ -156,6 +156,16 @@ pub enum WordPart {
     Literal(CompactString),
     SingleQuoted(CompactString),
     DoubleQuoted(Vec<WordPart>),
+    /// `$'…'` — ANSI-C quoting. Carries the RAW body with escapes still
+    /// encoded; `frost_expand::expand_ansi_c` decodes them.
+    ///
+    /// A distinct variant rather than a pre-decoded `SingleQuoted` because
+    /// the two differ where it matters: this one is the only quoted form
+    /// whose *value* is a function of its text, and keeping the decode on
+    /// the expansion side keeps the parser purely syntactic. It behaves like
+    /// `SingleQuoted` everywhere else — one field, no expansion inside, no
+    /// splitting or globbing after.
+    AnsiCQuoted(CompactString),
     DollarVar(CompactString),
     DollarBrace {
         param: CompactString,

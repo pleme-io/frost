@@ -154,18 +154,22 @@ impl<'src> Lexer<'src> {
         TokenKind::SingleQuoted
     }
 
+    /// Lex `"…"`.
+    ///
+    /// The closing quote is found by [`crate::matching_close`], **not** by
+    /// scanning for the next unescaped `"`. Inside double quotes a `$(…)`,
+    /// `${…}` or `` `…` `` opens a fresh quoting context, so
+    /// `"$(printf %s "x")"` closes at the LAST quote. Scanning naively ended
+    /// the token at the third quote, which left `)` stranded at command
+    /// position and spun the parser forever (`echo "$(echo "$(echo deep)")"`
+    /// hung the shell; diagnosed 2026-08-07).
     fn lex_double_quoted(&mut self) -> TokenKind {
-        self.cursor.advance(); // skip opening "
-        loop {
-            match self.cursor.advance() {
-                Some(b'"') => break,
-                Some(b'\\') => {
-                    self.cursor.advance(); // skip escaped char
-                }
-                Some(_) => continue,
-                None => break, // unterminated
-            }
-        }
+        let open = self.cursor.pos();
+        let end = crate::matching_close(self.src, open);
+        // `matching_close` never returns less than `open`, and returns
+        // `open` only for a non-opener — which cannot happen here. Take the
+        // max anyway so the cursor can only ever move forward.
+        self.cursor.skip(end.max(open + 1) - open);
         self.command_position = false;
         TokenKind::DoubleQuoted
     }
@@ -425,6 +429,7 @@ impl<'src> Lexer<'src> {
     }
 
     fn lex_word(&mut self) -> TokenKind {
+        let word_start = self.cursor.pos();
         loop {
             self.cursor.eat_while(|b| !is_meta(b));
             // Handle backslash escape in words: \c makes c literal
@@ -440,6 +445,23 @@ impl<'src> Lexer<'src> {
                 }
             }
             break;
+        }
+        // Nothing consumed: the byte here is a metacharacter that
+        // `next_token` did not dispatch and `eat_while` will not eat, so the
+        // cursor would not move and `next_token` would hand back a
+        // zero-width Word forever — every tokenize loop in the tree then
+        // spins. Measured 2026-08-07: a script ending `echo \` wedged frost
+        // with no output. Today `\` is the only such byte; consuming
+        // unconditionally keeps the guard true for any future one.
+        if self.cursor.pos() == word_start {
+            let b = self.cursor.advance();
+            // A lone `\` at end of input is a line continuation with nothing
+            // to continue onto. zsh discards it — `echo \` prints an empty
+            // line, not a backslash — so end the token stream here rather
+            // than inventing a literal `\` word.
+            if b == Some(b'\\') && self.cursor.is_eof() {
+                return TokenKind::Eof;
+            }
         }
         let was_command = self.command_position;
         self.command_position = false;
@@ -512,20 +534,47 @@ fn is_meta(b: u8) -> bool {
     )
 }
 
-/// Tokenize an entire source string into a Vec of tokens.
-#[allow(dead_code)] // Tatara-lisp/debug tooling calls this; the runtime uses the streaming API.
+/// Tokenize an entire source into a `Vec` ending in exactly one
+/// [`TokenKind::Eof`].
+///
+/// **This is the only sanctioned drain-to-Eof loop.** Six hand-rolled copies
+/// of it used to live across the tree, none of which could survive a lexer
+/// that stopped advancing — and one did (a lone trailing `\`, fixed in
+/// `lex_word` above). The guard here is the belt to that fix's braces: if two
+/// consecutive tokens end at the same offset the cursor is stuck, so we stop
+/// and synthesize the `Eof` the caller's grammar requires. Termination is
+/// therefore unconditional, independent of any lexer change.
+#[must_use]
 pub fn tokenize(src: &[u8]) -> Vec<Token> {
     let mut lexer = Lexer::new(src);
     let mut tokens = Vec::new();
+    let mut last_end: Option<u32> = None;
     loop {
         let tok = lexer.next_token();
-        let is_eof = tok.kind == TokenKind::Eof;
-        tokens.push(tok);
-        if is_eof {
+        if tok.kind == TokenKind::Eof {
+            tokens.push(tok);
             break;
         }
+        // Cursor-did-not-move check — the explicit advance proof.
+        if last_end == Some(tok.span.end) {
+            let at = tok.span.end;
+            tokens.push(Token {
+                kind: TokenKind::Eof,
+                span: Span::new(at, at),
+                text: compact_str::CompactString::default(),
+            });
+            break;
+        }
+        last_end = Some(tok.span.end);
+        tokens.push(tok);
     }
     tokens
+}
+
+/// [`tokenize`] over a `&str`.
+#[must_use]
+pub fn tokenize_str(src: &str) -> Vec<Token> {
+    tokenize(src.as_bytes())
 }
 
 #[cfg(test)]
@@ -540,11 +589,63 @@ mod tests {
             .collect()
     }
 
+    fn texts(src: &str) -> Vec<String> {
+        tokenize(src.as_bytes())
+            .into_iter()
+            .map(|t| t.text.to_string())
+            .collect()
+    }
+
     #[test]
     fn simple_command() {
         assert_eq!(
             kinds("ls -la"),
             vec![TokenKind::Word, TokenKind::Word, TokenKind::Eof]
+        );
+    }
+
+    // ── Hang regressions (both measured against the stock binary,
+    //    2026-08-07 — each one wedged frost forever) ──────────────────
+
+    #[test]
+    fn lone_trailing_backslash_terminates() {
+        // `\` is a metacharacter with nothing left to escape: `lex_word`
+        // consumed zero bytes, so every drain-to-Eof loop spun. It ends the
+        // stream (a line continuation onto nothing — zsh's `echo \` prints
+        // an empty line), it does not become a literal word.
+        assert_eq!(kinds("echo \\"), vec![TokenKind::Word, TokenKind::Eof]);
+        assert_eq!(kinds("\\"), vec![TokenKind::Eof]);
+        // A backslash with something after it is still an escape.
+        assert_eq!(
+            kinds("echo a\\ b"),
+            vec![TokenKind::Word, TokenKind::Word, TokenKind::Eof]
+        );
+    }
+
+    #[test]
+    fn double_quote_spans_a_nested_command_substitution() {
+        // `"$(echo "$(echo deep)")"` must be ONE DoubleQuoted token.
+        // Ending it at the third quote stranded `)` at command position
+        // and spun `parse_program`.
+        assert_eq!(
+            kinds("echo \"$(echo \"$(echo deep)\")\""),
+            vec![TokenKind::Word, TokenKind::DoubleQuoted, TokenKind::Eof]
+        );
+        assert_eq!(
+            texts("\"$(printf %s \"export D=1\")\"")[0],
+            "\"$(printf %s \"export D=1\")\""
+        );
+    }
+
+    #[test]
+    fn double_quote_holds_brace_and_backtick_runs() {
+        assert_eq!(
+            kinds("echo \"${a:-\"x\"}\""),
+            vec![TokenKind::Word, TokenKind::DoubleQuoted, TokenKind::Eof]
+        );
+        assert_eq!(
+            kinds("echo \"`echo \"x\"`\""),
+            vec![TokenKind::Word, TokenKind::DoubleQuoted, TokenKind::Eof]
         );
     }
 

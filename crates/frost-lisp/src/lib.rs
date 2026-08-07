@@ -1253,19 +1253,7 @@ fn collect_var_refs(s: &str, out: &mut std::collections::HashSet<String>) {
 /// `env.functions`. Used by defhook / deftrap / defbind / defun, all of
 /// which carry a `body` that must round-trip through the frost parser.
 fn install_body_as_function(env: &mut ShellEnv, fn_name: &str, body: &str) {
-    let tokens = {
-        let mut lexer = frost_lexer::Lexer::new(body.as_bytes());
-        let mut toks = Vec::new();
-        loop {
-            let tk = lexer.next_token();
-            let eof = tk.kind == frost_lexer::TokenKind::Eof;
-            toks.push(tk);
-            if eof {
-                break;
-            }
-        }
-        toks
-    };
+    let tokens = frost_lexer::tokenize_str(body);
     let program = frost_parser::Parser::new(&tokens).parse();
     // BraceGroup, not Subshell. Hooks (precmd/preexec/chpwd) MUST run
     // in-process so their env mutations propagate to the caller —
