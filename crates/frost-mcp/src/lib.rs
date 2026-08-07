@@ -20,6 +20,6 @@ mod state;
 
 pub use server::{serve_stdio, serve_uds, FrostMcp};
 pub use state::{
-    default_socket_path, default_state_dir, discover_latest_snapshot, load_snapshot,
-    FrostState, PickerInfo, SharedState,
+    default_socket_path, default_state_dir, discover_latest_snapshot, load_snapshot, reap_dead,
+    remove_process_files, FrostState, PickerInfo, SharedState,
 };

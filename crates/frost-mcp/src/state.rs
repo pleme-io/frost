@@ -138,6 +138,82 @@ pub fn default_state_dir() -> Option<PathBuf> {
     Some(p)
 }
 
+/// The pid a state-directory entry belongs to, or `None` if the name is not
+/// one of ours. Recognises all three shapes a frost process leaves behind:
+/// `mcp-<pid>.sock`, `state-<pid>.json`, `state-<pid>.json.tmp`.
+#[must_use]
+fn owning_pid(file_name: &str) -> Option<u32> {
+    let body = file_name
+        .strip_prefix("mcp-")
+        .and_then(|s| s.strip_suffix(".sock"))
+        .or_else(|| {
+            file_name
+                .strip_prefix("state-")
+                .and_then(|s| s.strip_suffix(".json.tmp").or_else(|| s.strip_suffix(".json")))
+        })?;
+    body.parse::<u32>().ok()
+}
+
+/// Remove the three files `pid` owns in `state_dir`. Missing files are not an
+/// error — a `-c` invocation never creates any, and calling this on every
+/// graceful exit is simpler than tracking which ones were made.
+///
+/// Safe against a live sibling by construction: pids are unique among running
+/// processes, so `mcp-<our pid>.sock` cannot belong to another live shell.
+pub fn remove_process_files(state_dir: &std::path::Path, pid: u32) {
+    for name in [
+        format!("mcp-{pid}.sock"),
+        format!("state-{pid}.json"),
+        format!("state-{pid}.json.tmp"),
+    ] {
+        let _ = std::fs::remove_file(state_dir.join(name));
+    }
+}
+
+/// Delete every state-directory entry whose owning pid is gone, and report
+/// how many were removed.
+///
+/// Frost bound `~/.local/state/frost/mcp-<pid>.sock` and wrote
+/// `state-<pid>.json` on every interactive start and never removed either, so
+/// the directory grew without bound — measured 2026-08-07 on this operator's
+/// box: 346 entries, of which 301 were snapshots and 45 sockets, accumulating
+/// since June. A crash or `kill -9` still leaves files behind (no exit path
+/// runs), which is why this sweep exists in addition to the graceful-exit
+/// teardown.
+///
+/// `is_alive` is injected rather than called directly so this crate stays free
+/// of a libc dependency and the sweep is testable without spawning processes.
+/// It must be **conservative**: anything it cannot prove dead must be reported
+/// alive, since deleting a live shell's socket silently severs its MCP
+/// channel. `self_pid` is never touched regardless of what `is_alive` says.
+///
+/// Known limit, stated rather than papered over: a pid the OS has recycled
+/// onto an unrelated process reads as alive, so its stale files survive until
+/// that process exits. Leaking a file is the correct side to err on.
+pub fn reap_dead(
+    state_dir: &std::path::Path,
+    self_pid: u32,
+    is_alive: &dyn Fn(u32) -> bool,
+) -> usize {
+    let Ok(entries) = std::fs::read_dir(state_dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(pid) = path.file_name().and_then(|n| n.to_str()).and_then(owning_pid) else {
+            continue;
+        };
+        if pid == self_pid || is_alive(pid) {
+            continue;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// Find the most-recently-modified `state-*.json` snapshot under
 /// `state_dir`. Returns `(pid, path)` or `None` if none exist.
 ///
@@ -199,6 +275,117 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The state dir grew to 346 entries (301 snapshots + 45 sockets)
+    /// because nothing ever removed a dead shell's files. The sweep must
+    /// clear all three shapes for a dead pid, and touch nothing else.
+    #[test]
+    fn reap_removes_every_shape_for_a_dead_pid() {
+        let dir = fresh_dir("reap-dead");
+        for name in [
+            "mcp-111.sock",
+            "state-111.json",
+            "state-111.json.tmp",
+            "mcp-222.sock",
+            "state-222.json",
+        ] {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+        // Entries that are not ours must survive untouched.
+        std::fs::write(dir.join("aaa-unrelated"), b"x").unwrap();
+        std::fs::write(dir.join("state-notapid.json"), b"{}").unwrap();
+
+        let removed = reap_dead(&dir, 999, &|_| false);
+        assert_eq!(removed, 5, "all five entries for dead pids must go");
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left.len(), 2, "only the non-frost entries survive: {left:?}");
+        assert!(left.contains(&"aaa-unrelated".to_string()), "{left:?}");
+        assert!(left.contains(&"state-notapid.json".to_string()), "{left:?}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The whole hazard of a sweep: deleting a LIVE shell's socket severs
+    /// its MCP channel. A live pid, and our own pid regardless of what the
+    /// liveness predicate says, must both survive.
+    #[test]
+    fn reap_never_touches_a_live_shell_or_itself() {
+        let dir = fresh_dir("reap-live");
+        for name in [
+            "mcp-111.sock",   // live
+            "state-111.json", // live
+            "mcp-555.sock",   // ours
+            "state-555.json", // ours
+            "mcp-777.sock",   // dead
+        ] {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+
+        // `is_alive` lies about our own pid to prove `self_pid` is checked
+        // independently rather than relying on the predicate.
+        let removed = reap_dead(&dir, 555, &|pid| pid == 111);
+        assert_eq!(removed, 1, "only the dead pid's socket may be removed");
+        assert!(dir.join("mcp-111.sock").exists(), "live socket deleted");
+        assert!(dir.join("state-111.json").exists(), "live snapshot deleted");
+        assert!(dir.join("mcp-555.sock").exists(), "own socket deleted");
+        assert!(dir.join("state-555.json").exists(), "own snapshot deleted");
+        assert!(!dir.join("mcp-777.sock").exists(), "dead socket survived");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Graceful-exit teardown: our three files go, everyone else's stay,
+    /// and an absent file is not an error (a `-c` run creates none).
+    #[test]
+    fn remove_process_files_is_scoped_and_idempotent() {
+        let dir = fresh_dir("remove-own");
+        for name in ["mcp-42.sock", "state-42.json", "state-42.json.tmp", "mcp-43.sock"] {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+        remove_process_files(&dir, 42);
+        assert!(!dir.join("mcp-42.sock").exists());
+        assert!(!dir.join("state-42.json").exists());
+        assert!(!dir.join("state-42.json.tmp").exists());
+        assert!(dir.join("mcp-43.sock").exists(), "another pid's file removed");
+        // Second call on the same (now absent) files must not panic.
+        remove_process_files(&dir, 42);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A reaped directory must still be discoverable — the sweep must not
+    /// take the snapshot the bridge is about to read.
+    #[test]
+    fn reap_leaves_the_live_snapshot_discoverable() {
+        let dir = fresh_dir("reap-discover");
+        std::fs::write(dir.join("mcp-111.sock"), b"").unwrap();
+        std::fs::write(dir.join("state-111.json"), b"{}").unwrap();
+        FrostState::boot(456).write_snapshot(&dir).unwrap();
+
+        reap_dead(&dir, 456, &|pid| pid == 456);
+        assert_eq!(
+            discover_latest_snapshot(&dir).map(|(pid, _)| pid),
+            Some(456),
+            "the live shell's snapshot must survive the sweep"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn owning_pid_recognises_exactly_our_three_shapes() {
+        assert_eq!(owning_pid("mcp-7.sock"), Some(7));
+        assert_eq!(owning_pid("state-7.json"), Some(7));
+        assert_eq!(owning_pid("state-7.json.tmp"), Some(7));
+        assert_eq!(owning_pid("state-notapid.json"), None);
+        assert_eq!(owning_pid("mcp-.sock"), None);
+        assert_eq!(owning_pid("aaa-unrelated"), None);
+        assert_eq!(owning_pid("mcp-7.sock.bak"), None);
     }
 
     #[test]
