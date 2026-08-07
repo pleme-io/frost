@@ -60,7 +60,20 @@ impl Builtin for DirenvApply {
     }
 
     fn execute(&self, _args: &[&str], env: &mut dyn ShellEnvironment) -> i32 {
-        let out = match Command::new("direnv").arg("export").arg("json").output() {
+        // `.envs(...)` is load-bearing. A `Command` inherits the PROCESS
+        // environment, which never saw anything the shell set — and direnv
+        // decides what delta to emit by reading DIRENV_DIR / DIRENV_DIFF /
+        // DIRENV_WATCHES out of its own environment. Without this, direnv
+        // believes every invocation is a cold start, so it never emits the
+        // leaving-a-directory unsets and an `.envrc` variable follows you out
+        // of its own tree. See `ShellEnvironment::exported_vars`.
+        let out = match Command::new("direnv")
+            .arg("export")
+            .arg("json")
+            .env_clear()
+            .envs(env.exported_vars())
+            .output()
+        {
             Ok(o) => o,
             // direnv absent is the normal case on a host that does not use it.
             // The hook fires on every `cd`, so this must be silent — the old

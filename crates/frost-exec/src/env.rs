@@ -617,6 +617,26 @@ impl ShellEnvironment for ShellEnv {
         self.declare_global_var(name, value);
     }
 
+    fn exported_vars(&self) -> Vec<(String, String)> {
+        // Same collection and same shadowing rule as `to_env_vec` (inner
+        // scopes win), just handed back as pairs for `Command::envs` rather
+        // than as `CString`s for `execve`. Kept as one semantics rather than
+        // two so a builtin's child and an exec'd child cannot disagree about
+        // what is exported.
+        let mut exported: IndexMap<&str, &ShellVar> = IndexMap::new();
+        for scope in &self.scopes {
+            for (name, var) in &scope.variables {
+                if var.export {
+                    exported.insert(name.as_str(), var);
+                }
+            }
+        }
+        exported
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), v.as_str().to_string()))
+            .collect()
+    }
+
     fn export_var(&mut self, name: &str) {
         self.export_var(name);
     }
