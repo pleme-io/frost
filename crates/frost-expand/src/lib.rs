@@ -103,12 +103,31 @@ impl ExpandValue {
 /// In double-quoted context, the result is always a single string.
 /// Unquoted arrays and `$@` produce multiple words.
 pub fn expand_word(word: &Word, env: &dyn ExpandEnv) -> Vec<String> {
+    expand_word_inner(word, env, false)
+}
+
+/// [`expand_word`] in a context that performs FIELD SPLITTING — the argv of a
+/// command, a `for` list, an array literal.
+///
+/// The distinction is not cosmetic: `x=$(echo a b)` assigns `a b` while
+/// `set -- $(echo a b)` sets two positional parameters, and both go through
+/// this same engine. Assignment and other single-value contexts keep calling
+/// [`expand_word`].
+pub fn expand_word_fields(word: &Word, env: &dyn ExpandEnv) -> Vec<String> {
+    expand_word_inner(word, env, true)
+}
+
+fn expand_word_inner(word: &Word, env: &dyn ExpandEnv, split_fields: bool) -> Vec<String> {
     let mut ctx = ExpandCtx {
         env,
         in_double_quote: false,
+        split_fields,
     };
     let parts = ctx.expand_word_parts(&word.parts);
-    if parts.is_empty() {
+    if parts.is_empty() && !split_fields {
+        // A single-value context always has a value, even if it is empty:
+        // `x=$unset` assigns the empty string. A field-splitting context
+        // does not — it gets zero fields, and the word disappears.
         vec![String::new()]
     } else {
         parts
@@ -136,6 +155,10 @@ pub fn expand_word_to_string(word: &Word, env: &dyn ExpandEnv) -> String {
 struct ExpandCtx<'a> {
     env: &'a dyn ExpandEnv,
     in_double_quote: bool,
+    /// Whether this expansion feeds a context that splits into fields
+    /// (argv, a `for` list, an array literal) rather than one value
+    /// (an assignment, a `case` word, a `[[ … ]]` operand).
+    split_fields: bool,
 }
 
 impl<'a> ExpandCtx<'a> {
@@ -147,6 +170,19 @@ impl<'a> ExpandCtx<'a> {
         for part in parts {
             let expanded = self.expand_part(part);
             segments.push(expanded);
+        }
+
+        // A word made ENTIRELY of expansions that produced zero fields
+        // produces zero words — `for w in ${=x}` with `x=""` iterates not
+        // once, and `"$@"` with no positional parameters contributes
+        // nothing. `combine_segments` cannot express that: it seeds its
+        // accumulator with one empty string and `continue`s past an empty
+        // segment, so the word came back as a single empty word. Callers in
+        // a single-value context re-inflate this to `[""]`
+        // (`expand_word_inner`), so only field-splitting contexts see the
+        // difference.
+        if !segments.is_empty() && segments.iter().all(Vec::is_empty) {
+            return Vec::new();
         }
 
         // Combine segments: if all segments are single-element, concatenate
@@ -204,6 +240,9 @@ impl<'a> ExpandCtx<'a> {
         match part {
             WordPart::Literal(s) => vec![s.to_string()],
             WordPart::SingleQuoted(s) => vec![s.to_string()],
+            // `$'…'` — decode the escapes; the result is one quoted field,
+            // never split and never re-globbed.
+            WordPart::AnsiCQuoted(raw) => vec![expand_ansi_c(raw)],
             WordPart::DoubleQuoted(inner) => {
                 let saved = self.in_double_quote;
                 self.in_double_quote = true;
@@ -223,7 +262,17 @@ impl<'a> ExpandCtx<'a> {
                 let output = self.env.capture_command_sub(program);
                 // Trim trailing newlines (POSIX/zsh behavior)
                 let trimmed = output.trim_end_matches('\n');
-                vec![trimmed.to_string()]
+                // zsh splits an UNQUOTED command substitution on `$IFS` even
+                // with SH_WORD_SPLIT off — that option governs *parameter*
+                // expansion only, which is why `$var` deliberately stays one
+                // word here. Splitting is suppressed inside double quotes and
+                // in a scalar-assignment context (`x=$(echo a b)` keeps the
+                // space), which is what `split_fields` carries.
+                if self.split_fields && !self.in_double_quote {
+                    split_on_ifs(trimmed, &self.env.ifs())
+                } else {
+                    vec![trimmed.to_string()]
+                }
             }
             WordPart::ArithSub(expr) => {
                 let result = self.env.eval_arithmetic(expr);
@@ -649,7 +698,11 @@ impl<'a> ExpandCtx<'a> {
         }
         // ${name#pattern} — remove shortest matching prefix
         if let Some(pat) = rest.strip_prefix('#') {
-            return vec![strip_glob_prefix(&val, &self.expand_inline_word(pat), false)];
+            return vec![strip_glob_prefix(
+                &val,
+                &self.expand_inline_word(pat),
+                false,
+            )];
         }
         // ${name%%pattern} — remove longest matching suffix
         if let Some(pat) = rest.strip_prefix("%%") {
@@ -657,7 +710,11 @@ impl<'a> ExpandCtx<'a> {
         }
         // ${name%pattern} — remove shortest matching suffix
         if let Some(pat) = rest.strip_prefix('%') {
-            return vec![strip_glob_suffix(&val, &self.expand_inline_word(pat), false)];
+            return vec![strip_glob_suffix(
+                &val,
+                &self.expand_inline_word(pat),
+                false,
+            )];
         }
         // ${name//pattern/replacement} — replace all glob matches
         if let Some(rest) = rest.strip_prefix("//") {
@@ -1160,25 +1217,19 @@ impl<'a> ExpandCtx<'a> {
             // Inherit quoting so a command sub inside a double-quoted default
             // doesn't word-split.
             in_double_quote: self.in_double_quote,
+            // The result is `join("")`-ed back into one string, so splitting
+            // here could only lose the separators. Never split.
+            split_fields: false,
         };
         ctx.expand_word_parts(&word.parts).join("")
     }
 }
 
-/// Lex a raw string into a token stream (mirrors `frost_exec::tokenize`,
-/// kept local so `frost-expand` doesn't depend on `frost-exec`).
+/// Lex a raw string into a token stream — `frost_lexer::tokenize_str`, the
+/// one guarded drain-to-Eof loop. Kept as a local alias only so call sites
+/// read unchanged.
 fn tokenize_str(input: &str) -> Vec<frost_lexer::Token> {
-    let mut lexer = frost_lexer::Lexer::new(input.as_bytes());
-    let mut tokens = Vec::new();
-    loop {
-        let tok = lexer.next_token();
-        let eof = tok.kind == frost_lexer::TokenKind::Eof;
-        tokens.push(tok);
-        if eof {
-            break;
-        }
-    }
-    tokens
+    frost_lexer::tokenize_str(input)
 }
 
 /// Given that `s[start]` is `$` or `` ` ``, return the byte index one past the
@@ -1207,15 +1258,14 @@ fn expansion_extent(s: &str, start: usize) -> usize {
         // `$name` — an identifier or a single special parameter.
         Some(c) if c.is_ascii_alphabetic() || c == b'_' => {
             let mut j = start + 1;
-            while j < bytes.len()
-                && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
-            {
+            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
                 j += 1;
             }
             j
         }
-        Some(c) if matches!(c, b'?' | b'$' | b'!' | b'#' | b'*' | b'@' | b'-')
-            || c.is_ascii_digit() =>
+        Some(c)
+            if matches!(c, b'?' | b'$' | b'!' | b'#' | b'*' | b'@' | b'-')
+                || c.is_ascii_digit() =>
         {
             start + 2
         }
@@ -1441,9 +1491,14 @@ pub fn expand_ansi_c(s: &str) -> String {
                 Some('\'') => out.push('\''),
                 Some('"') => out.push('"'),
                 Some('0') => {
-                    // Octal \0NNN
+                    // Octal. zsh reads at most THREE octal digits in total,
+                    // the leading `0` included — so `$'\0101'` is `\010`
+                    // (backspace) followed by a literal `1`, not `\0101`
+                    // (`A`). Reading three digits AFTER the `0` made frost
+                    // print `A` (measured against zsh --no-rcs 5.9,
+                    // 2026-08-07). Two more, not three.
                     let mut val = 0u32;
-                    for _ in 0..3 {
+                    for _ in 0..2 {
                         if let Some(&d) = chars.peek() {
                             if ('0'..='7').contains(&d) {
                                 val = val * 8 + (d as u32 - '0' as u32);
@@ -1515,10 +1570,11 @@ pub fn expand_ansi_c(s: &str) -> String {
                     }
                     out.push(char::from_u32(val).unwrap_or('\0'));
                 }
-                Some(other) => {
-                    out.push('\\');
-                    out.push(other);
-                }
+                // An unrecognized escape: zsh DROPS the backslash
+                // (`$'a\qb'` → `aqb`), bash KEEPS it (`a\qb`). frost targets
+                // zsh, so the backslash goes. Verified against
+                // `zsh --no-rcs` 5.9, 2026-08-07.
+                Some(other) => out.push(other),
                 None => out.push('\\'),
             }
         } else {
@@ -1948,5 +2004,104 @@ mod tests {
     fn split_on_ifs_collapses_runs() {
         assert_eq!(split_on_ifs("a  b\tc", " \t\n"), vec!["a", "b", "c"]);
         assert_eq!(split_on_ifs("", " \t\n"), Vec::<String>::new());
+    }
+
+    // ── $'…' ANSI-C quoting (2026-08-07) ─────────────────────────────
+
+    /// An env whose command substitutions return a fixed string, so the
+    /// field-splitting tests below can exercise the real `CommandSub` arm.
+    struct FixedSubEnv(&'static str);
+
+    impl ExpandEnv for FixedSubEnv {
+        fn get_var(&self, _name: &str) -> Option<&str> {
+            None
+        }
+        fn get_var_value(&self, _name: &str) -> Option<ExpandValue> {
+            None
+        }
+        fn exit_status(&self) -> i32 {
+            0
+        }
+        fn pid(&self) -> u32 {
+            1
+        }
+        fn positional_params(&self) -> &[String] {
+            &[]
+        }
+        fn capture_command_sub(&self, _program: &Program) -> String {
+            self.0.to_string()
+        }
+        fn eval_arithmetic(&self, _expr: &str) -> i64 {
+            0
+        }
+    }
+
+    fn cmd_sub_word() -> Word {
+        mk_word(vec![WordPart::CommandSub(Box::new(Program {
+            commands: vec![],
+        }))])
+    }
+
+    #[test]
+    fn ansi_c_part_decodes_its_escapes() {
+        let env = TestEnv::new();
+        let w = mk_word(vec![WordPart::AnsiCQuoted(r"a\nb\tc".into())]);
+        assert_eq!(expand_word(&w, &env), vec!["a\nb\tc".to_string()]);
+    }
+
+    #[test]
+    fn ansi_c_covers_every_escape_form() {
+        assert_eq!(expand_ansi_c(r"\a\b\f\v\r\n\t"), "\x07\x08\x0c\x0b\r\n\t");
+        assert_eq!(expand_ansi_c(r#"\\\'\""#), "\\'\"");
+        assert_eq!(expand_ansi_c(r"\e|\E"), "\x1b|\x1b");
+        assert_eq!(expand_ansi_c(r"\x41\x42"), "AB");
+        assert_eq!(expand_ansi_c(r"\101\102"), "AB");
+        assert_eq!(expand_ansi_c(r"\u0041"), "A");
+        assert_eq!(expand_ansi_c(r"\U00000041"), "A");
+        assert_eq!(expand_ansi_c(r"a\0b"), "a\0b");
+        // zsh DROPS the backslash of an unknown escape; bash keeps it.
+        // frost follows zsh (verified against `zsh --no-rcs` 5.9).
+        assert_eq!(expand_ansi_c(r"a\qb"), "aqb");
+    }
+
+    // ── Field splitting of unquoted $(…) (2026-08-07) ─────────────────
+
+    #[test]
+    fn unquoted_command_substitution_splits_in_a_field_context() {
+        let env = FixedSubEnv("a b c\n");
+        assert_eq!(
+            expand_word_fields(&cmd_sub_word(), &env),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            "zsh splits `$(…)` even with SH_WORD_SPLIT off"
+        );
+    }
+
+    #[test]
+    fn unquoted_command_substitution_does_not_split_in_a_value_context() {
+        let env = FixedSubEnv("a b c\n");
+        assert_eq!(
+            expand_word(&cmd_sub_word(), &env),
+            vec!["a b c".to_string()],
+            "`x=$(echo a b c)` keeps one value"
+        );
+    }
+
+    #[test]
+    fn quoted_command_substitution_never_splits() {
+        let env = FixedSubEnv("a b c\n");
+        let w = mk_word(vec![WordPart::DoubleQuoted(vec![WordPart::CommandSub(
+            Box::new(Program { commands: vec![] }),
+        )])]);
+        assert_eq!(expand_word_fields(&w, &env), vec!["a b c".to_string()]);
+    }
+
+    #[test]
+    fn a_word_of_only_zero_field_expansions_produces_no_words() {
+        // `for w in ${=x}` with `x=""` must iterate zero times. The
+        // single-value entry point still yields one empty string.
+        let env = TestEnv::new();
+        let w = mk_word(vec![WordPart::DollarVar("@".into())]); // no params
+        assert_eq!(expand_word_fields(&w, &env), Vec::<String>::new());
+        assert_eq!(expand_word(&w, &env), vec![String::new()]);
     }
 }

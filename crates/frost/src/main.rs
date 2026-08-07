@@ -1070,18 +1070,9 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+/// See `frost_lexer::tokenize_str` — the single guarded drain-to-Eof loop.
 fn tokenize(input: &str) -> Vec<frost_lexer::Token> {
-    let mut lexer = frost_lexer::Lexer::new(input.as_bytes());
-    let mut tokens = Vec::new();
-    loop {
-        let tok = lexer.next_token();
-        let eof = tok.kind == frost_lexer::TokenKind::Eof;
-        tokens.push(tok);
-        if eof {
-            break;
-        }
-    }
-    tokens
+    frost_lexer::tokenize_str(input)
 }
 
 /// Cheap "does this input look complete?" check for the interactive REPL.

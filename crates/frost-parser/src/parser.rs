@@ -32,6 +32,16 @@ pub struct Parser<'a> {
     pos: usize,
 }
 
+/// Where a piece sits inside the word being assembled.
+///
+/// Only one construct cares — `~`, which expands at a word's start and is a
+/// literal anywhere after it (`~/x` is `$HOME/x`; `a~b` is `a~b`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WordPos {
+    First,
+    Merged,
+}
+
 impl<'a> Parser<'a> {
     pub fn new(tokens: &'a [Token]) -> Self {
         Self { tokens, pos: 0 }
@@ -267,6 +277,18 @@ impl<'a> Parser<'a> {
         matches!(self.kind(), TokenKind::LeftBrace | TokenKind::RightBrace)
     }
 
+    /// Whether the current token is one of the block-closing reserved words,
+    /// in either form — a real `TokenKind` or a `Word` whose text spells it.
+    fn at_reserved_word_form(&self) -> bool {
+        self.at(TokenKind::Then)
+            || self.at(TokenKind::Elif)
+            || self.at(TokenKind::Else)
+            || self.at(TokenKind::Fi)
+            || self.at(TokenKind::Do)
+            || self.at(TokenKind::Done)
+            || self.at(TokenKind::Esac)
+    }
+
     fn at_redirect(&self) -> bool {
         matches!(
             self.kind(),
@@ -295,6 +317,8 @@ impl<'a> Parser<'a> {
         self.skip_newlines();
 
         while !self.at_eof() {
+            let pos_before = self.pos;
+
             if self.at_command_start() {
                 commands.push(self.parse_complete_command());
             }
@@ -305,6 +329,25 @@ impl<'a> Parser<'a> {
                 }
             }
             self.skip_newlines();
+
+            // Cursor-did-not-move check — the same guard
+            // `parse_compound_body` has carried since the 2026-05-30 hang,
+            // which this loop (its sibling) was missing. A token that is
+            // neither a command start nor an eatable separator — a stray
+            // `)`, a `Comment`, a `RightBrace` — otherwise traps this loop
+            // spinning forever without advancing `self.pos`. Measured
+            // 2026-08-07: `echo "$(echo "$(echo deep)")"` mis-lexed into a
+            // stranded `)` and hung the shell with no output.
+            //
+            // Consume one token to make progress. The resulting parse may
+            // be wrong; the shell stays alive, which is the trade every
+            // other recovery point in this parser already makes.
+            if self.pos == pos_before {
+                self.advance();
+                if self.pos == pos_before {
+                    break; // pinned at Eof — nothing left to consume
+                }
+            }
         }
         commands
     }
@@ -482,14 +525,22 @@ impl<'a> Parser<'a> {
                     | TokenKind::Done
                     | TokenKind::Esac
             )
-            // Also check word-based keywords
-            && !self.at(TokenKind::Then)
-            && !self.at(TokenKind::Elif)
-            && !self.at(TokenKind::Else)
-            && !self.at(TokenKind::Fi)
-            && !self.at(TokenKind::Do)
-            && !self.at(TokenKind::Done)
-            && !self.at(TokenKind::Esac)
+            // Also check word-based keywords — but only where a reserved
+            // word can actually BE one. `self.at()` falls back to matching
+            // a plain `Word`'s TEXT (the lexer's own reserved-word check is
+            // inert: it slices `src[pos..pos]` after consuming, so it always
+            // sees an empty string). That fallback is position-blind, so
+            // `done` / `fi` / `in` in ARGUMENT position ended the command:
+            // `echo done` produced a zero-word `echo` and then an endless
+            // run of empty commands — `frost -c 'echo done'` hung outright
+            // on the stock binary (measured 2026-08-07), and
+            // `echo a done b` printed `a` and then tried to run `b`.
+            //
+            // A reserved word is reserved only at the START of a command,
+            // which here means before the first word has been taken. Every
+            // real terminator that follows a word — `;`, a newline, `|`,
+            // `&&`, `)`, `}`, `;;` — is a genuine token and is caught above.
+            && !(words.is_empty() && self.at_reserved_word_form())
         {
             if self.at_redirect() {
                 redirects.push(self.parse_redirect());
@@ -636,15 +687,70 @@ impl<'a> Parser<'a> {
         self.parse_word()
     }
 
+    /// Parse one word.
+    ///
+    /// A word is one or more **adjacent** word-like tokens: the lexer splits
+    /// on operators but not on whitespace, so `FOO=bar` arrives as three
+    /// tokens and `${a}${b}` as six, and span adjacency is what rejoins them.
+    ///
+    /// Both the first piece and every merged piece go through
+    /// [`Self::parse_word_piece`] — one dispatch, not two. They used to be
+    /// separate matches, and the merge copy handled only the single-token
+    /// kinds: `${…}`, `$(…)`, `$((…))`, `<(…)` and `~` all fell to a literal
+    /// fallback there. Worse, the driver tracked `end_pos` from the *first*
+    /// token alone, so any multi-token construct left `end_pos` pointing
+    /// mid-word and the adjacency test failed against every following piece.
+    /// `x=${a}${b}` silently assigned just `AB` and `y=${a}Z` ran `Z` as a
+    /// command (measured 2026-08-07).
+    ///
+    /// TERMINATION: `parse_word_piece` calls `advance()` at least once, so
+    /// `self.pos` strictly increases each iteration and the loop is bounded
+    /// by `self.tokens.len()`.
     fn parse_word(&mut self) -> Word {
         let start_span = self.span();
         let mut parts = Vec::new();
 
-        // A Word is one or more adjacent word-like tokens with no whitespace separation.
-        // The lexer splits on operators but not whitespace — we use span adjacency
-        // to merge tokens like FOO, =, bar into a single word FOO=bar.
+        self.parse_word_piece(&mut parts, WordPos::First);
+        let mut end_pos = self.prev_end();
+
+        // An adjacent Bang joins too (`a!=b`, `hi!` are one word in zsh
+        // script semantics — history expansion is a REPL-layer concern);
+        // it lands on the Literal fallback arm inside `parse_word_piece`.
+        while self.pos < self.tokens.len()
+            && self.peek().span.start == end_pos
+            && (self.at_word() || self.at_brace_in_word() || self.kind() == TokenKind::Bang)
+        {
+            let pos_before = self.pos;
+            self.parse_word_piece(&mut parts, WordPos::Merged);
+            debug_assert!(self.pos > pos_before, "parse_word_piece must consume");
+            if self.pos == pos_before {
+                break; // provable advance, belt to the debug_assert's braces
+            }
+            end_pos = self.prev_end();
+        }
+
+        Word {
+            parts,
+            span: start_span,
+        }
+    }
+
+    /// End offset of the most recently consumed token — where the word has
+    /// reached so far. Adjacency is measured against this, so a construct
+    /// that consumed many tokens reports its real end rather than its
+    /// opener's.
+    fn prev_end(&self) -> u32 {
+        self.tokens
+            .get(self.pos.saturating_sub(1))
+            .map_or(0, |t| t.span.end)
+    }
+
+    /// Consume the token(s) of exactly one word part and push it.
+    ///
+    /// Always advances at least one token — `parse_word`'s termination proof
+    /// rests on that.
+    fn parse_word_piece(&mut self, parts: &mut Vec<WordPart>, pos: WordPos) {
         let tok = self.advance().clone();
-        let mut end_pos = tok.span.end;
         match tok.kind {
             TokenKind::Word | TokenKind::Number => {
                 parts.push(WordPart::Literal(tok.text.clone()));
@@ -654,7 +760,7 @@ impl<'a> Parser<'a> {
                 let inner = strip_quotes(&tok.text, '\'');
                 parts.push(WordPart::SingleQuoted(inner));
             }
-            TokenKind::DoubleQuoted | TokenKind::DollarSingleQuoted => {
+            TokenKind::DoubleQuoted => {
                 // Wrap in WordPart::DoubleQuoted so the expansion engine
                 // can distinguish `"$x"` from `$x` — quoted empties
                 // must be preserved as one arg (`[ -n "" ]` = 3 args)
@@ -663,6 +769,16 @@ impl<'a> Parser<'a> {
                 let inner = strip_quotes(&tok.text, '"');
                 parts.push(WordPart::DoubleQuoted(parse_double_quoted_parts(&inner)));
             }
+            TokenKind::DollarSingleQuoted => {
+                // `$'…'` — ANSI-C quoting. NOT a double-quoted string: no
+                // parameter, command or arithmetic expansion happens inside,
+                // only backslash-escape decoding, and the result is a single
+                // quoted field. Routing it through the double-quote path
+                // (which is what used to happen) left `$'hello'` completely
+                // unexpanded — and `direnv export bash` emits every line as
+                // `export VAR=$'…'`, so the whole chpwd hook was a no-op.
+                parts.push(WordPart::AnsiCQuoted(strip_ansi_c_quotes(&tok.text)));
+            }
             TokenKind::DollarParam => {
                 // A complete special-parameter token (e.g. `$#`). Its
                 // text is `$<char>`; strip the `$` to recover the name.
@@ -670,18 +786,42 @@ impl<'a> Parser<'a> {
                 parts.push(WordPart::DollarVar(CompactString::from(name)));
             }
             TokenKind::Dollar => {
-                // $VAR — the next token should be the variable name
-                if self.kind() == TokenKind::Word || self.kind() == TokenKind::Number {
-                    let name_tok = self.advance();
-                    end_pos = name_tok.span.end;
-                    parts.push(WordPart::DollarVar(name_tok.text.clone()));
-                } else if matches!(
-                    self.kind(),
-                    TokenKind::Question | TokenKind::Bang | TokenKind::At | TokenKind::Star
-                ) {
-                    // Special parameters: $?, $!, $@, $*
+                // `$VAR` — the name is the next token, and it must be
+                // physically adjacent: `$ foo` is a literal `$` then a word.
+                let adjacent =
+                    self.pos < self.tokens.len() && self.peek().span.start == tok.span.end;
+                if adjacent && (self.kind() == TokenKind::Word || self.kind() == TokenKind::Number)
+                {
+                    // The lexer stops a word only at a metacharacter, and
+                    // `/`, `:`, `.` and `-` are not metacharacters — so
+                    // `$d/xx` arrives as `$` + Word("d/xx") and `$PATH:/bin`
+                    // as `$` + Word("PATH:/bin"). Taking the whole token as
+                    // the name looked up a variable that cannot exist and
+                    // expanded to nothing: a redirect target `> $d/xx`
+                    // became `> ` (measured 2026-08-07). Cut the name at the
+                    // first byte that cannot be in one, and keep the tail as
+                    // an adjacent literal.
+                    let name_tok = self.advance().clone();
+                    let text = name_tok.text.as_str();
+                    let split = param_name_len(text);
+                    if split == 0 {
+                        parts.push(WordPart::Literal(CompactString::from("$")));
+                        parts.push(WordPart::Literal(name_tok.text.clone()));
+                    } else {
+                        parts.push(WordPart::DollarVar(CompactString::from(&text[..split])));
+                        if split < text.len() {
+                            parts.push(WordPart::Literal(CompactString::from(&text[split..])));
+                        }
+                    }
+                } else if adjacent
+                    && matches!(
+                        self.kind(),
+                        TokenKind::Question | TokenKind::Bang | TokenKind::At | TokenKind::Star
+                    )
+                {
+                    // Special parameters: $?, $!, $@, $*. Without this,
+                    // `rc=$?` fell through to Literal("$") + Glob(?).
                     let special_tok = self.advance();
-                    end_pos = special_tok.span.end;
                     let name = match special_tok.kind {
                         TokenKind::Question => "?",
                         TokenKind::Bang => "!",
@@ -690,7 +830,7 @@ impl<'a> Parser<'a> {
                         _ => unreachable!(),
                     };
                     parts.push(WordPart::DollarVar(CompactString::from(name)));
-                } else if self.at(TokenKind::Dollar) {
+                } else if adjacent && self.at(TokenKind::Dollar) {
                     // $$ — PID
                     self.advance();
                     parts.push(WordPart::DollarVar(CompactString::from("$")));
@@ -774,6 +914,10 @@ impl<'a> Parser<'a> {
             TokenKind::Backtick => {
                 parts.push(WordPart::CommandSub(Box::new(Program { commands: vec![] })));
             }
+            // Glob metacharacters must preserve their WordPart::Glob tag so
+            // the executor can recognize the word as needing filesystem
+            // globbing. Without this, `sub/*` was parsed as a single
+            // Literal word, silently disabling glob expansion.
             TokenKind::Star => parts.push(WordPart::Glob(GlobKind::Star)),
             TokenKind::Question => parts.push(WordPart::Glob(GlobKind::Question)),
             TokenKind::At => parts.push(WordPart::Glob(GlobKind::At)),
@@ -820,11 +964,17 @@ impl<'a> Parser<'a> {
                     body: Box::new(body),
                 });
             }
-            TokenKind::Tilde => {
-                // ~user or just ~
-                let user = if self.kind() == TokenKind::Word {
-                    let t = self.advance();
-                    t.text.clone()
+            // Tilde expansion only fires at the START of a word — zsh's own
+            // rule, and the behaviour the merge arm already had by accident
+            // when it fell to the literal fallback. Without the distinction,
+            // unifying the two dispatches would have turned `echo a~b` into
+            // `a~b` -> `a` + Tilde("b") -> `a~b`... but `echo a~/x` into
+            // `a` + $HOME. Keep `~` literal once a word is under way.
+            TokenKind::Tilde if pos == WordPos::First => {
+                let adjacent =
+                    self.pos < self.tokens.len() && self.peek().span.start == tok.span.end;
+                let user = if adjacent && self.kind() == TokenKind::Word {
+                    self.advance().text.clone()
                 } else {
                     CompactString::default()
                 };
@@ -838,106 +988,7 @@ impl<'a> Parser<'a> {
                 parts.push(WordPart::Literal(tok.text.clone()));
             }
         }
-
-        // Merge adjacent tokens (no whitespace) into the same word.
-        // This handles cases like FOO=bar where the lexer splits on =,
-        // and brace expansions like a{1,2}b. An adjacent Bang also
-        // joins (`a!=b`, `hi!` are one word in zsh script semantics —
-        // history expansion is a REPL-layer concern); it lands on the
-        // Literal fallback arm below.
-        while self.pos < self.tokens.len()
-            && self.peek().span.start == end_pos
-            && (self.at_word() || self.at_brace_in_word() || self.kind() == TokenKind::Bang)
-        {
-            let next = self.advance().clone();
-            end_pos = next.span.end;
-            match next.kind {
-                TokenKind::Word | TokenKind::Number => {
-                    parts.push(WordPart::Literal(next.text.clone()));
-                }
-                TokenKind::Equals => {
-                    parts.push(WordPart::Literal(CompactString::from("=")));
-                }
-                TokenKind::DollarParam => {
-                    // A complete special-parameter token (e.g. `$#`) in a
-                    // compound word like `n=$#`. Strip the leading `$`.
-                    // (Use `next`, the merged token — not `tok`, the word's
-                    // first token.)
-                    let name = next.text.strip_prefix('$').unwrap_or(&next.text);
-                    parts.push(WordPart::DollarVar(CompactString::from(name)));
-                }
-                TokenKind::Dollar => {
-                    let adjacent =
-                        self.pos < self.tokens.len() && self.peek().span.start == end_pos;
-                    if adjacent
-                        && (self.kind() == TokenKind::Word || self.kind() == TokenKind::Number)
-                    {
-                        let name_tok = self.advance();
-                        end_pos = name_tok.span.end;
-                        parts.push(WordPart::DollarVar(name_tok.text.clone()));
-                    } else if adjacent
-                        && matches!(
-                            self.kind(),
-                            TokenKind::Question | TokenKind::Bang | TokenKind::At | TokenKind::Star
-                        )
-                    {
-                        // Special parameters: $?, $!, $@, $*. Mirror the
-                        // initial-token handling so `rc=$?` and similar
-                        // compound words get DollarVar rather than falling
-                        // through to Literal("$") + Glob(?).
-                        let special_tok = self.advance();
-                        end_pos = special_tok.span.end;
-                        let name = match special_tok.kind {
-                            TokenKind::Question => "?",
-                            TokenKind::Bang => "!",
-                            TokenKind::At => "@",
-                            TokenKind::Star => "*",
-                            _ => unreachable!(),
-                        };
-                        parts.push(WordPart::DollarVar(CompactString::from(name)));
-                    } else {
-                        parts.push(WordPart::Literal(CompactString::from("$")));
-                    }
-                }
-                // Glob metacharacters must preserve their WordPart::Glob tag so
-                // the executor can recognize the word as needing filesystem
-                // globbing. Without this, `sub/*` was parsed as a single
-                // Literal word, silently disabling glob expansion.
-                TokenKind::Star => {
-                    parts.push(WordPart::Glob(GlobKind::Star));
-                }
-                TokenKind::Question => {
-                    parts.push(WordPart::Glob(GlobKind::Question));
-                }
-                TokenKind::At => {
-                    parts.push(WordPart::Glob(GlobKind::At));
-                }
-                // Adjacent quoted segments — e.g. `ll='ls -la'` where the
-                // word is `ll=` + `'ls -la'`. Must strip the surrounding
-                // quotes here; the initial-token branch above already does
-                // so for the first token of a word.
-                TokenKind::SingleQuoted => {
-                    let inner = strip_quotes(&next.text, '\'');
-                    parts.push(WordPart::SingleQuoted(inner));
-                }
-                TokenKind::DoubleQuoted | TokenKind::DollarSingleQuoted => {
-                    // See matching comment above — wrap, don't flatten,
-                    // so quoted-empty preservation survives expansion.
-                    let inner = strip_quotes(&next.text, '"');
-                    parts.push(WordPart::DoubleQuoted(parse_double_quoted_parts(&inner)));
-                }
-                _ => {
-                    parts.push(WordPart::Literal(next.text.clone()));
-                }
-            }
-        }
-
-        Word {
-            parts,
-            span: start_span,
-        }
     }
-
     // ── Redirect ───────────────────────────────────────────────
 
     fn parse_redirect(&mut self) -> Redirect {
@@ -1719,48 +1770,144 @@ fn strip_quotes(text: &str, quote: char) -> CompactString {
     CompactString::from(s)
 }
 
-/// Parse double-quoted content into word parts.
-/// Handles $VAR and ${VAR} inside double quotes.
+/// Length of the parameter name at the start of `text`, per zsh: a
+/// positional parameter is ONE digit (`$1abc` is `${1}abc`), and a named
+/// parameter is `[A-Za-z_][A-Za-z0-9_]*`. Returns 0 when `text` cannot start
+/// a name at all.
+fn param_name_len(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    match bytes.first() {
+        Some(b) if b.is_ascii_digit() => 1,
+        Some(b) if b.is_ascii_alphabetic() || *b == b'_' => bytes
+            .iter()
+            .position(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+            .unwrap_or(bytes.len()),
+        _ => 0,
+    }
+}
+
+/// `$'a\nb'` → `a\nb` (the raw body, escapes still encoded). Decoding is the
+/// expander's job — the parser stays syntax-only.
+fn strip_ansi_c_quotes(text: &str) -> CompactString {
+    let s = text.strip_prefix("$'").unwrap_or(text);
+    let s = s.strip_suffix('\'').unwrap_or(s);
+    CompactString::from(s)
+}
+
+/// Lex and parse a fragment that the lexer already handed us as raw text —
+/// the body of a `$(…)` found inside a double-quoted token.
+///
+/// TERMINATION: `frost_lexer::tokenize_str` is the tree's one drain-to-Eof
+/// loop and carries its own cursor-did-not-move guard, so this always
+/// returns.
+fn parse_fragment(src: &str) -> Program {
+    let tokens = frost_lexer::tokenize_str(src);
+    Parser::new(&tokens).parse()
+}
+
+/// Parse the body of a double-quoted string into word parts.
+///
+/// Inside `"…"` zsh performs parameter, command and arithmetic expansion, and
+/// removes a backslash only when it precedes a character that is special
+/// there. Everything else is literal.
+///
+/// `$(…)` used to be emitted as the literal text `$(` here — a *silent wrong
+/// answer*, not a missing feature: frostmourne's dirty marker
+/// `[ -n "$(git status --porcelain)" ]` tested a non-empty literal, so git
+/// never ran and every repo read as dirty (diagnosed 2026-08-07). `$((…))`
+/// had the same hole.
+///
+/// TERMINATION: `i` strictly increases on every path — the three expansion
+/// arms jump to an index that [`frost_lexer::matching_close`] guarantees is
+/// past their opener, and every other arm adds 1 or 2. Bound is
+/// `bytes.len()`.
 fn parse_double_quoted_parts(content: &str) -> Vec<WordPart> {
     let mut parts = Vec::new();
     let bytes = content.as_bytes();
     let mut i = 0;
     let mut literal_start = 0;
 
-    while i < bytes.len() {
-        if bytes[i] == b'$' && i + 1 < bytes.len() {
-            // Flush literal before $
-            if i > literal_start {
+    // Flush `content[literal_start..upto]` as a literal part, if non-empty.
+    macro_rules! flush {
+        ($upto:expr) => {
+            if $upto > literal_start {
                 parts.push(WordPart::Literal(CompactString::from(
-                    &content[literal_start..i],
+                    &content[literal_start..$upto],
                 )));
             }
+        };
+    }
 
-            if bytes[i + 1] == b'{' {
-                // ${VAR} — find closing }
-                let start = i + 2;
-                let mut end = start;
-                let mut depth = 1u32;
-                while end < bytes.len() && depth > 0 {
-                    if bytes[end] == b'{' {
-                        depth += 1;
-                    } else if bytes[end] == b'}' {
-                        depth -= 1;
-                    }
-                    if depth > 0 {
-                        end += 1;
-                    }
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            // In double quotes a backslash escapes only `$ ` ` " \` and a
+            // newline; before anything else it is an ordinary character.
+            // The old code advanced past both bytes without ever flushing,
+            // so the backslash survived into the literal and `echo "a\"b"`
+            // printed `a\"b`.
+            let esc = bytes[i + 1];
+            if matches!(esc, b'$' | b'`' | b'"' | b'\\' | b'\n') {
+                flush!(i);
+                if esc != b'\n' {
+                    // A `\<newline>` is a line continuation: both bytes go.
+                    parts.push(WordPart::Literal(CompactString::from(
+                        &content[i + 1..i + 2],
+                    )));
                 }
-                let param = &content[start..end];
+                i += 2;
+                literal_start = i;
+            } else {
+                i += 2;
+            }
+            continue;
+        }
+
+        if bytes[i] != b'$' || i + 1 >= bytes.len() {
+            i += 1;
+            continue;
+        }
+
+        match bytes[i + 1] {
+            // `$((expr))` — arithmetic. Must be tested before `$(`.
+            b'(' if bytes.get(i + 2) == Some(&b'(') => {
+                let end = frost_lexer::matching_close(bytes, i + 1);
+                // `end` is one past the outer `)`; the body sits between
+                // `$((` and `))`.
+                let body_end = end.saturating_sub(2).max(i + 3);
+                flush!(i);
+                parts.push(WordPart::ArithSub(CompactString::from(
+                    &content[i + 3..body_end],
+                )));
+                i = end;
+                literal_start = i;
+            }
+            // `$(cmd)` — command substitution.
+            b'(' => {
+                let end = frost_lexer::matching_close(bytes, i + 1);
+                let body_end = end.saturating_sub(1).max(i + 2);
+                flush!(i);
+                parts.push(WordPart::CommandSub(Box::new(parse_fragment(
+                    &content[i + 2..body_end],
+                ))));
+                i = end;
+                literal_start = i;
+            }
+            // `${…}` — parameter expansion. `matching_close` respects quoting
+            // inside the braces, so `${a:-'}'}` no longer ends early.
+            b'{' => {
+                let end = frost_lexer::matching_close(bytes, i + 1);
+                let body_end = end.saturating_sub(1).max(i + 2);
+                flush!(i);
                 parts.push(WordPart::DollarBrace {
-                    param: CompactString::from(param),
+                    param: CompactString::from(&content[i + 2..body_end]),
                     operator: None,
                     arg: None,
                 });
-                i = end + 1;
+                i = end;
                 literal_start = i;
-            } else if bytes[i + 1].is_ascii_alphabetic() || bytes[i + 1] == b'_' {
-                // $VAR
+            }
+            // `$VAR`
+            c if c.is_ascii_alphabetic() || c == b'_' => {
                 let start = i + 1;
                 let mut end = start;
                 while end < bytes.len()
@@ -1768,45 +1915,30 @@ fn parse_double_quoted_parts(content: &str) -> Vec<WordPart> {
                 {
                     end += 1;
                 }
-                let name = &content[start..end];
-                parts.push(WordPart::DollarVar(CompactString::from(name)));
+                flush!(i);
+                parts.push(WordPart::DollarVar(CompactString::from(
+                    &content[start..end],
+                )));
                 i = end;
                 literal_start = i;
-            } else if bytes[i + 1] == b'(' {
-                // $(cmd) inside double quotes — simplified: treat as literal for now
-                parts.push(WordPart::Literal(CompactString::from("$(")));
+            }
+            // `$?`, `$!`, `$$`, `$#`, `$*`, `$@`, `$-`, `$0`-`$9`
+            c @ (b'?' | b'!' | b'$' | b'#' | b'*' | b'@' | b'-' | b'0'..=b'9') => {
+                let _ = c;
+                flush!(i);
+                parts.push(WordPart::DollarVar(CompactString::from(
+                    &content[i + 1..i + 2],
+                )));
                 i += 2;
                 literal_start = i;
-            } else {
-                // Special vars: $?, $!, $$, $#, $*, $@, $0-$9
-                let special = bytes[i + 1];
-                if matches!(
-                    special,
-                    b'?' | b'!' | b'$' | b'#' | b'*' | b'@' | b'-' | b'0'..=b'9'
-                ) {
-                    parts.push(WordPart::DollarVar(CompactString::from(
-                        &content[i + 1..i + 2],
-                    )));
-                    i += 2;
-                    literal_start = i;
-                } else {
-                    i += 1;
-                }
             }
-        } else if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            // Escaped character in double quotes
-            i += 2;
-        } else {
-            i += 1;
+            // A bare `$` (including `"$'a'"`, which zsh leaves alone inside
+            // double quotes) is literal text.
+            _ => i += 1,
         }
     }
 
-    // Flush remaining literal
-    if literal_start < bytes.len() {
-        parts.push(WordPart::Literal(CompactString::from(
-            &content[literal_start..],
-        )));
-    }
+    flush!(bytes.len());
 
     if parts.is_empty() {
         parts.push(WordPart::Literal(CompactString::default()));
@@ -1828,17 +1960,7 @@ mod tests {
     use super::*;
 
     fn tokenize(input: &str) -> Vec<Token> {
-        let mut lexer = frost_lexer::Lexer::new(input.as_bytes());
-        let mut tokens = Vec::new();
-        loop {
-            let tok = lexer.next_token();
-            let eof = tok.kind == TokenKind::Eof;
-            tokens.push(tok);
-            if eof {
-                break;
-            }
-        }
-        tokens
+        frost_lexer::tokenize_str(input)
     }
 
     fn parse(input: &str) -> Program {
@@ -1924,7 +2046,10 @@ mod tests {
                 .collect()
         }
         let rows: &[(&str, &[&str])] = &[
-            ("test ! -d /nonexistent", &["test", "!", "-d", "/nonexistent"]),
+            (
+                "test ! -d /nonexistent",
+                &["test", "!", "-d", "/nonexistent"],
+            ),
             ("test a != b", &["test", "a", "!=", "b"]),
             ("test a!=b", &["test", "a!=b"]),
         ];
@@ -2026,6 +2151,219 @@ mod tests {
             }
             other => panic!("expected DoubleQuoted wrapper, got {other:?}"),
         }
+    }
+
+    // ── Expansion-inside-double-quotes regressions (2026-08-07) ──────
+    //
+    // `$(…)` and `$((…))` inside `"…"` used to be emitted as the LITERAL
+    // text `$(`, so `[ -n "$(git status --porcelain)" ]` tested a non-empty
+    // constant and every repo read as dirty.
+
+    /// The inner parts of the sole `DoubleQuoted` part of `words[idx]`.
+    fn dq_inner(p: &Program, idx: usize) -> Vec<WordPart> {
+        let parts = &first_simple(p).words[idx].parts;
+        assert_eq!(parts.len(), 1, "expected one DoubleQuoted part: {parts:?}");
+        match &parts[0] {
+            WordPart::DoubleQuoted(inner) => inner.clone(),
+            other => panic!("expected DoubleQuoted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn double_quoted_command_substitution_is_parsed() {
+        let inner = dq_inner(&parse(r#"echo "$(echo hi)""#), 1);
+        assert!(
+            matches!(inner.as_slice(), [WordPart::CommandSub(_)]),
+            "expected a CommandSub, got {inner:?}"
+        );
+    }
+
+    #[test]
+    fn double_quoted_command_substitution_keeps_surrounding_literals() {
+        let inner = dq_inner(&parse(r#"echo "x$(echo hi)y""#), 1);
+        assert!(
+            matches!(
+                inner.as_slice(),
+                [
+                    WordPart::Literal(a),
+                    WordPart::CommandSub(_),
+                    WordPart::Literal(b)
+                ] if a == "x" && b == "y"
+            ),
+            "got {inner:?}"
+        );
+    }
+
+    #[test]
+    fn double_quoted_command_substitution_spans_inner_double_quotes() {
+        // The lexer must hand the whole thing over as one token, and the
+        // sub-parse must see the inner quotes. This is the shape that
+        // wedged the parser.
+        let inner = dq_inner(&parse(r#"echo "$(printf %s "export D=1")""#), 1);
+        match inner.as_slice() {
+            [WordPart::CommandSub(prog)] => {
+                let sub = match &prog.commands[0].list.first.commands[0] {
+                    Command::Simple(s) => s,
+                    other => panic!("expected Simple, got {other:?}"),
+                };
+                assert_eq!(sub.words.len(), 3, "printf %s \"export D=1\"");
+            }
+            other => panic!("expected one CommandSub, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn double_quoted_arithmetic_substitution_is_parsed() {
+        let inner = dq_inner(&parse(r#"echo "$((2+2))""#), 1);
+        assert!(
+            matches!(inner.as_slice(), [WordPart::ArithSub(e)] if e == "2+2"),
+            "got {inner:?}"
+        );
+        // Nested parens inside the expression must not close it early.
+        let inner = dq_inner(&parse(r#"echo "$(( (1+2) * 3 ))""#), 1);
+        assert!(
+            matches!(inner.as_slice(), [WordPart::ArithSub(e)] if e == " (1+2) * 3 "),
+            "got {inner:?}"
+        );
+    }
+
+    #[test]
+    fn double_quoted_backslash_escapes_are_removed() {
+        // zsh removes the backslash before `$ ` ` " \` only.
+        let inner = dq_inner(&parse(r#"echo "a\"b""#), 1);
+        let joined: String = inner
+            .iter()
+            .map(|p| match p {
+                WordPart::Literal(s) => s.to_string(),
+                other => panic!("expected literals, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(joined, "a\"b");
+    }
+
+    #[test]
+    fn ansi_c_quoting_gets_its_own_part() {
+        // `$'…'` must NOT be routed through the double-quote path.
+        let p = parse(r"echo $'a\nb'");
+        let parts = &first_simple(&p).words[1].parts;
+        assert!(
+            matches!(parts.as_slice(), [WordPart::AnsiCQuoted(raw)] if raw == r"a\nb"),
+            "got {parts:?}"
+        );
+    }
+
+    // ── Adjacent-expansion regressions (2026-08-07) ──────────────────
+    //
+    // `parse_word` tracked its adjacency offset from the FIRST token only,
+    // so `x=${a}${b}` dropped `${b}` and `y=${a}Z` ran `Z` as a command.
+
+    #[test]
+    fn adjacent_brace_expansions_stay_in_one_word() {
+        let p = parse("x=${a}${b}");
+        let assign = &first_simple(&p).assignments[0];
+        let parts = &assign.value.as_ref().expect("value").parts;
+        assert_eq!(parts.len(), 2, "both ${{…}} must survive: {parts:?}");
+        assert!(
+            parts
+                .iter()
+                .all(|p| matches!(p, WordPart::DollarBrace { .. }))
+        );
+        assert!(
+            first_simple(&p).words.is_empty(),
+            "nothing may leak out as a command word"
+        );
+    }
+
+    #[test]
+    fn brace_expansion_then_literal_stays_in_one_word() {
+        let p = parse("y=${a}Z");
+        let cmd = first_simple(&p);
+        let parts = &cmd.assignments[0].value.as_ref().expect("value").parts;
+        assert!(
+            matches!(
+                parts.as_slice(),
+                [WordPart::DollarBrace { .. }, WordPart::Literal(z)] if z == "Z"
+            ),
+            "got {parts:?}"
+        );
+        assert!(cmd.words.is_empty(), "`Z` must not become a command");
+    }
+
+    #[test]
+    fn adjacent_command_substitutions_stay_in_one_word() {
+        let p = parse("x=$(echo A)$(echo B)");
+        let parts = &first_simple(&p).assignments[0]
+            .value
+            .as_ref()
+            .expect("value")
+            .parts;
+        assert_eq!(parts.len(), 2, "got {parts:?}");
+        assert!(parts.iter().all(|p| matches!(p, WordPart::CommandSub(_))));
+    }
+
+    #[test]
+    fn dollar_var_stops_at_a_non_name_byte() {
+        // `/`, `:` and `.` are not lexer metacharacters, so `$d/xx` arrives
+        // as `$` + Word("d/xx"). The name is `d`; the rest is a literal.
+        let p = parse("echo $d/xx");
+        let parts = &first_simple(&p).words[1].parts;
+        assert!(
+            matches!(
+                parts.as_slice(),
+                [WordPart::DollarVar(n), WordPart::Literal(rest)]
+                    if n == "d" && rest == "/xx"
+            ),
+            "got {parts:?}"
+        );
+    }
+
+    #[test]
+    fn tilde_expands_only_at_a_words_start() {
+        // `a~b` is a literal in zsh; only a leading `~` expands.
+        let p = parse("echo a~b");
+        let parts = &first_simple(&p).words[1].parts;
+        assert!(
+            !parts.iter().any(|p| matches!(p, WordPart::Tilde(_))),
+            "mid-word `~` must stay literal: {parts:?}"
+        );
+    }
+
+    // ── Hang regressions (2026-08-07) ────────────────────────────────
+
+    #[test]
+    fn a_stray_closing_paren_does_not_spin_parse_program() {
+        // `parse_program` had no cursor-did-not-move guard, so any token
+        // that is neither a command start nor an eatable separator looped
+        // forever. Reaching this assert at all IS the test.
+        let p = parse("echo a ) echo b");
+        assert!(!p.commands.is_empty());
+        assert!(parse(")").commands.is_empty() || true);
+        assert!(parse("}").commands.is_empty() || true);
+    }
+
+    #[test]
+    fn reserved_word_in_argument_position_is_a_plain_word() {
+        // `echo done` produced a zero-word `echo` and then an endless run
+        // of empty commands — the stock binary hung on it.
+        for kw in ["done", "fi", "then", "else", "elif", "do", "esac"] {
+            let p = parse(&format!("echo {kw}"));
+            let cmd = first_simple(&p);
+            assert_eq!(cmd.words.len(), 2, "`echo {kw}` must be two words");
+        }
+        let p = parse("echo a done b");
+        assert_eq!(first_simple(&p).words.len(), 4);
+    }
+
+    #[test]
+    fn control_flow_keywords_still_terminate_their_blocks() {
+        // The counterpart to the test above: the position rule must not
+        // cost us the real terminators.
+        let p = parse("if true; then echo A; fi");
+        assert_eq!(p.commands.len(), 1);
+        let p = parse("for i in a b; do echo $i; done");
+        assert_eq!(p.commands.len(), 1);
+        let p = parse("while false; do echo x; done");
+        assert_eq!(p.commands.len(), 1);
     }
 
     #[test]

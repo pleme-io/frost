@@ -23,18 +23,12 @@ pub use modal::{FrostMode, KeyDecision, ModalState};
 pub use trap::{TrapAction, TrapTable};
 
 /// Tokenize a string into a token stream.
+///
+/// Delegates to `frost_lexer::tokenize_str`, which is the ONE drain-to-Eof
+/// loop in the tree and carries the cursor-did-not-move guard. This used to
+/// be a hand-rolled copy — one of six — and a copy cannot be fixed once.
 pub fn tokenize(input: &str) -> Vec<frost_lexer::Token> {
-    let mut lexer = frost_lexer::Lexer::new(input.as_bytes());
-    let mut tokens = Vec::new();
-    loop {
-        let tok = lexer.next_token();
-        let eof = tok.kind == frost_lexer::TokenKind::Eof;
-        tokens.push(tok);
-        if eof {
-            break;
-        }
-    }
-    tokens
+    frost_lexer::tokenize_str(input)
 }
 
 /// Convenience entry point: create a fresh environment, execute the

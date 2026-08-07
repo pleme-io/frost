@@ -6,9 +6,11 @@
 
 mod cursor;
 mod lexer;
+mod nest;
 mod token;
 mod words;
 
-pub use lexer::Lexer;
+pub use lexer::{Lexer, tokenize, tokenize_str};
+pub use nest::matching_close;
 pub use token::{Span, Token, TokenKind};
 pub use words::split_words;

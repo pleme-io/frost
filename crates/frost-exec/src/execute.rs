@@ -1531,9 +1531,14 @@ impl<'env> Executor<'env> {
     /// Expand a Word AST node into potentially multiple strings.
     ///
     /// Applies brace expansion after parameter/command substitution.
+    ///
+    /// This is the FIELD-SPLITTING entry point — argv, a `for` list, an
+    /// array literal. `expand_word` above is the single-value one; the two
+    /// differ on unquoted `$(…)`, which zsh splits (`set -- $(echo a b c)`
+    /// gives 3 params) while `x=$(echo a b c)` keeps one value.
     pub fn expand_word_multi(&mut self, word: &Word) -> Vec<String> {
         let bridge = ExpandBridge::new(self.env);
-        let parts = frost_expand::expand_word(word, &bridge);
+        let parts = frost_expand::expand_word_fields(word, &bridge);
         self.apply_expand_effects(bridge.into_effects());
         // Apply brace expansion to each resulting word
         let mut result = Vec::new();
@@ -1992,7 +1997,10 @@ fn word_has_quoted_part(w: &Word) -> bool {
     w.parts.iter().any(|p| {
         matches!(
             p,
-            WordPart::SingleQuoted(_) | WordPart::DoubleQuoted(_) | WordPart::Literal(_)
+            WordPart::SingleQuoted(_)
+                | WordPart::AnsiCQuoted(_)
+                | WordPart::DoubleQuoted(_)
+                | WordPart::Literal(_)
         )
     })
 }
@@ -2004,7 +2012,9 @@ fn word_has_unquoted_glob(w: &Word) -> bool {
             WordPart::Glob(_) | WordPart::ExtGlob { .. } => true,
             // Quoted parts carry their own parts but they are all literal.
             WordPart::DoubleQuoted(inner) => contains(inner),
-            WordPart::SingleQuoted(_)
+            // `$'…'` is a quoted form: its decoded value is never re-globbed.
+            WordPart::AnsiCQuoted(_)
+            | WordPart::SingleQuoted(_)
             | WordPart::Literal(_)
             | WordPart::DollarVar(_)
             | WordPart::DollarBrace { .. }
