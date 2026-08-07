@@ -52,6 +52,30 @@ pub trait ShellEnvironment {
         self.set_var(name, value);
     }
 
+    /// Every EXPORTED variable, as the child of a spawn would see it.
+    ///
+    /// ## Why this is on the trait rather than left to `std::env`
+    ///
+    /// frost keeps shell variables in its own scope map and materialises the
+    /// exported subset only when its executor spawns a command. A builtin that
+    /// spawns a child ITSELF — via `std::process::Command` — inherits the
+    /// PROCESS environment instead, which never saw anything the shell set. So
+    /// a builtin can set a variable, watch a normally-spawned child see it,
+    /// and still hand its own child a stale environment.
+    ///
+    /// That is not hypothetical: it is what made `__frost_direnv_apply`'s leave
+    /// path wrong. direnv decides what delta to emit by reading `DIRENV_DIR` /
+    /// `DIRENV_DIFF` / `DIRENV_WATCHES` out of its own environment; the builtin
+    /// applied them to the shell, and then invoked direnv with a `Command` that
+    /// could not see them, so direnv believed it was starting cold every time
+    /// and never emitted the leaving-a-directory unsets.
+    ///
+    /// Default is empty so mocks and the many builtins that spawn nothing are
+    /// unaffected; the real `ShellEnv` overrides it.
+    fn exported_vars(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
     /// Mark a variable as read-only.
     fn set_var_readonly(&mut self, _name: &str) {}
 
