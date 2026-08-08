@@ -234,10 +234,9 @@ jobs:
   # makes the SUITE hang, and a hanging suite reads as "slow CI" long before it
   # reads as "the shell is broken".
   #
-  # Every step is a `uses:`. `cargo-run-bin` is the catalog's own
-  # build-a-workspace-binary primitive (it installs the toolchain, builds
-  # ./target/debug/frost, and runs it — `--version` doubles as a smoke test),
-  # so this job carries no hand-authored `run:` at all.
+  # Every step is a `uses:`. The binary comes from `nix-build` against the
+  # repo's own `packages.<sys>.frost`, so this job carries no hand-authored
+  # `run:` and no dependency on a toolchain being present in the runner image.
   #
   # Runs in PARALLEL with cargo-test rather than after it: this is the check
   # that catches the class that makes the test suite itself unrunnable, so
@@ -261,12 +260,25 @@ jobs:
           bot-pat: ${{ secrets.BOT_PAT }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: pleme-io/actions/cargo-run-bin@2018933f32d08f29b5c4de5aeba207f31ae1d755
+      # nix-build, NOT cargo-run-bin. MEASURED 2026-08-08, run 31244565419:
+      # `cargo-run-bin` died on the Camelot pool with
+      #   error: linker `cc` not found
+      #   note: No such file or directory (os error 2)
+      # because the ARC runner image is minimal and carries no C toolchain,
+      # where GitHub's ubuntu-24.04 ships build-essential. Installing a
+      # toolchain onto the runner would be the local fix; building the binary
+      # with nix is the load-bearing one — nix brings its own compiler, so the
+      # job stops depending on what happens to be baked into a runner image.
+      #
+      # It is also a STRONGER gate than it was: the sweep now runs against the
+      # artifact this repo actually SHIPS (`packages.x86_64-linux.frost`)
+      # rather than an ad-hoc debug cargo build, so a termination bug that
+      # only appears in the release build can no longer hide from it.
+      - id: frostbin
+        uses: pleme-io/actions/nix-build@3c76f440fdfa406ba5c314c1d6032b2f9da7eaf5
         with:
-          package: frost
-          bin: frost
-          profile: debug
-          args: "--version"
+          flake-ref: .#frost
+          github-token: ${{ secrets.BOT_PAT }}
 
       # `script-file:`, never an inline `script:` — the latter rides to the
       # runner as TATARA_SCRIPT_SRC and GitHub echoes every env value into the
@@ -276,10 +288,13 @@ jobs:
       #
       # Verified locally 2026-08-08 against ./target/debug/frost:
       #   hang-sweep: 46 inputs, 0 hung   (exit 0)
+      #
+      # The binary path is the nix store out-path, not ./target — see the
+      # nix-build step above for why.
       - uses: pleme-io/actions/tatara-script@2018933f32d08f29b5c4de5aeba207f31ae1d755
         with:
           script-file: tools/hang-sweep.tlisp
-          args: ${{ github.workspace }}/target/debug/frost
+          args: ${{ steps.frostbin.outputs.out-path }}/bin/frost
 
   # ── The known-red ledger — advisory, and the reason the six skips above
   #    are an exclusion rather than a disappearance ─────────────────────────
@@ -317,21 +332,18 @@ jobs:
   # hang. A `continue-on-error` job that hangs still burns the default 6h.
   known-red-ledger:
     name: known-red ledger (advisory, never blocks)
-    needs: resolve-runner
-    runs-on: ${{ needs.resolve-runner.outputs.runner }}
     continue-on-error: true
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pleme-io/actions/git-credentials@2018933f32d08f29b5c4de5aeba207f31ae1d755
-        with:
-          bot-pat: ${{ secrets.BOT_PAT }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: pleme-io/actions/rust-gate@2018933f32d08f29b5c4de5aeba207f31ae1d755
-        with:
-          run-fmt: "false"
-          run-clippy: "false"
-          run-test: "true"
-          test-args: "--workspace --no-fail-fast"
+    #
+    # CHANGED 2026-08-08: was `pleme-io/actions/rust-gate` on a bare runner.
+    # That died on the Camelot pool with ``linker `cc` not found`` — the ARC
+    # runner image carries no C toolchain — and an ADVISORY job that always
+    # fails for an environmental reason is worse than no job at all: its whole
+    # purpose is to surface the real known-reds, and a linker error hides
+    # every one of them behind itself. It now calls the same nix devShell
+    # reusable `cargo-test` uses (which passed on that same run), with the
+    # skips removed instead of a second toolchain story.
+    uses: pleme-io/substrate/.github/workflows/nix-devshell-cargo-test.yml@main
+    with:
+      devshell: .#default
+      test-args: "--workspace --no-fail-fast"
+    secrets: inherit
