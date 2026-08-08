@@ -2287,6 +2287,7 @@ mod tests {
                 },
                 is_async: false,
             }],
+            syntax_errors: vec![],
         }
     }
 
@@ -2733,6 +2734,7 @@ mod tests {
                 },
                 is_async: false,
             }],
+            syntax_errors: vec![],
         };
         let status = exec.execute_program(&program).unwrap();
         assert_eq!(status, 0);
