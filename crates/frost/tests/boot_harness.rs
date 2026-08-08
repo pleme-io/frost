@@ -171,10 +171,7 @@ impl RecordingJob for BootStepJob {
             frost_lisp::apply_source(&source, &mut env)
         })
         .await
-        .map_err(|join| BootStepError::Join {
-            file,
-            source: join,
-        })?
+        .map_err(|join| BootStepError::Join { file, source: join })?
         .map_err(|err| BootStepError::Apply { file, source: err })?;
         Ok(BootStepCounters {
             aliases: summary.aliases,
@@ -325,9 +322,7 @@ async fn all_frostmourne_rc_files_apply_within_timeout() {
         ids.push((name, id));
     }
 
-    eprintln!(
-        "  running InProcessScheduler tick loop (budget=1, per-job timeout=1000ms)"
-    );
+    eprintln!("  running InProcessScheduler tick loop (budget=1, per-job timeout=1000ms)");
 
     tick_to_steady_state(&scheduler, &mut dag, files.len())
         .await

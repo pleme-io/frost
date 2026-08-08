@@ -233,18 +233,16 @@ impl Completer for FrostCompleter {
                 .as_ref()
                 .is_some_and(ValueKind::completes_from_fs);
             if !kind_owns_fs {
-                tree_sugs.extend(
-                    filename_candidates(&ctx.word)
-                        .into_iter()
-                        .map(|value| Suggestion {
-                            description: None,
-                            append_whitespace: !value.ends_with('/'),
-                            style: None,
-                            extra: None,
-                            span,
-                            value,
-                        }),
-                );
+                tree_sugs.extend(filename_candidates(&ctx.word).into_iter().map(|value| {
+                    Suggestion {
+                        description: None,
+                        append_whitespace: !value.ends_with('/'),
+                        style: None,
+                        extra: None,
+                        span,
+                        value,
+                    }
+                }));
             }
             return tree_sugs;
         }
@@ -305,16 +303,18 @@ impl Completer for FrostCompleter {
         {
             let mut out: Vec<Suggestion> = Vec::new();
             if let Some(args) = self.arg_completions.get(cmd_name) {
-                out.extend(args.iter().filter(|a| a.starts_with(&ctx.word)).map(
-                    |value| Suggestion {
-                        description: None,
-                        append_whitespace: !value.ends_with('/'),
-                        style: None,
-                        extra: None,
-                        span,
-                        value: value.clone(),
-                    },
-                ));
+                out.extend(
+                    args.iter()
+                        .filter(|a| a.starts_with(&ctx.word))
+                        .map(|value| Suggestion {
+                            description: None,
+                            append_whitespace: !value.ends_with('/'),
+                            style: None,
+                            extra: None,
+                            span,
+                            value: value.clone(),
+                        }),
+                );
             }
             // Frecency oracle — ranked dirs from the wadachi index
             // (real visits + background-indexed dirs), so
@@ -325,16 +325,19 @@ impl Completer for FrostCompleter {
             if kind == ValueKind::Dir
                 && let Some(oracle) = &self.dir_oracle
             {
-                out.extend(oracle(&ctx.word).into_iter().take(8).map(|value| {
-                    Suggestion {
-                        description: Some("frecency".into()),
-                        append_whitespace: false,
-                        style: None,
-                        extra: None,
-                        span,
-                        value,
-                    }
-                }));
+                out.extend(
+                    oracle(&ctx.word)
+                        .into_iter()
+                        .take(8)
+                        .map(|value| Suggestion {
+                            description: Some("frecency".into()),
+                            append_whitespace: false,
+                            style: None,
+                            extra: None,
+                            span,
+                            value,
+                        }),
+                );
             }
             // Local filesystem walk, deduped against anything the
             // oracle already offered.
@@ -918,8 +921,7 @@ fn filename_candidates(partial: &str) -> Vec<String> {
         // filters like `cd`'s.
         let is_dir = entry.file_type().is_ok_and(|t| {
             t.is_dir()
-                || (t.is_symlink()
-                    && std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir()))
+                || (t.is_symlink() && std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir()))
         });
         if is_dir {
             rendered.push('/');
@@ -1069,7 +1071,8 @@ mod tests {
     #[cfg(unix)]
     fn symlink_bin(tag: &str, name: &str, mode: u32) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("frost-complete-{tag}-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("frost-complete-{tag}-{}", std::process::id()));
         let (store, bin) = (root.join("store"), root.join("bin"));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&store).unwrap();
@@ -1308,9 +1311,10 @@ mod tests {
         let tmp = scratch_dir("oracle");
         let oracle_dir = format!("{}/sub/", tmp.display());
         let oracle_dir_clone = oracle_dir.clone();
-        let mut completer = FrostCompleter::with_default_builtins().with_dir_oracle(
-            Box::new(move |_| vec![oracle_dir_clone.clone(), "/frecency/jump/".into()]),
-        );
+        let mut completer =
+            FrostCompleter::with_default_builtins().with_dir_oracle(Box::new(move |_| {
+                vec![oracle_dir_clone.clone(), "/frecency/jump/".into()]
+            }));
         // Bare-word completion: oracle candidates appear, marked.
         let out = completer.complete("cd ju", 5);
         let jump = out
@@ -1365,12 +1369,7 @@ mod tests {
     fn git_payload() -> String {
         serde_json::to_string(&CompletionSpec {
             command: "git".into(),
-            args: vec![
-                "status".into(),
-                "diff".into(),
-                "log".into(),
-                "stash".into(),
-            ],
+            args: vec!["status".into(), "diff".into(), "log".into(), "stash".into()],
             description: Some("version control".into()),
         })
         .unwrap()
@@ -1398,9 +1397,12 @@ mod tests {
         assert!(parse_defcompletion_payload("not json").is_none());
         assert!(parse_defcompletion_payload("").is_none());
         // Valid spec but no args → no candidates (None, not an empty Vec).
-        let no_args =
-            serde_json::to_string(&CompletionSpec { command: "x".into(), args: vec![], description: None })
-                .unwrap();
+        let no_args = serde_json::to_string(&CompletionSpec {
+            command: "x".into(),
+            args: vec![],
+            description: None,
+        })
+        .unwrap();
         assert!(parse_defcompletion_payload(&no_args).is_none());
     }
 
@@ -1436,8 +1438,14 @@ mod tests {
             .collect();
         assert!(curated.contains(&"status"), "expected status: {curated:?}");
         assert!(curated.contains(&"stash"), "expected stash: {curated:?}");
-        assert!(!curated.contains(&"diff"), "diff must be filtered out: {curated:?}");
-        assert!(!curated.contains(&"log"), "log must be filtered out: {curated:?}");
+        assert!(
+            !curated.contains(&"diff"),
+            "diff must be filtered out: {curated:?}"
+        );
+        assert!(
+            !curated.contains(&"log"),
+            "log must be filtered out: {curated:?}"
+        );
         // The span replaces the partial word `st` (offsets 4..6), so
         // accepting a suggestion overwrites exactly what was typed.
         for s in out.iter().filter(|s| curated.contains(&s.value.as_str())) {
@@ -1452,7 +1460,8 @@ mod tests {
         // later positional. No suggestion may carry the spec description.
         let out = completer.complete("git status ", 11);
         assert!(
-            out.iter().all(|s| s.description.as_deref() != Some("version control")),
+            out.iter()
+                .all(|s| s.description.as_deref() != Some("version control")),
             "defcompletion subcommands must not reappear past arg 1: {out:?}"
         );
     }

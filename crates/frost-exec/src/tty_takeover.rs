@@ -171,9 +171,7 @@ impl TtyTakeover {
         // join is bounded) unless the child leaked the write end to a
         // still-running grandchild — pickers don't fork detached
         // writers; that contract is part of the skim-tab protocol.
-        let selection = drain
-            .and_then(|t| t.join().ok())
-            .unwrap_or_default();
+        let selection = drain.and_then(|t| t.join().ok()).unwrap_or_default();
         if !status.success() {
             return Ok(None);
         }
@@ -334,8 +332,7 @@ mod tests {
         // A binary that doesn't exist must surface as Err (so the
         // caller can log "skim-foo not on $PATH") — distinct from
         // Ok(None) (which means "binary ran, user picked nothing").
-        let err = TtyTakeover::new("__definitely_not_a_binary__")
-            .spawn_and_capture();
+        let err = TtyTakeover::new("__definitely_not_a_binary__").spawn_and_capture();
         assert!(err.is_err(), "missing binary should return Err");
     }
 
@@ -390,8 +387,8 @@ mod tests {
     /// only blocking point is child exit.)
     #[test]
     fn silent_child_cannot_wedge_the_shell() {
-        let sel = capture_within(TtyTakeover::new("sleep").arg("0.3"), 10)
-            .expect("sleep should spawn");
+        let sel =
+            capture_within(TtyTakeover::new("sleep").arg("0.3"), 10).expect("sleep should spawn");
         assert_eq!(sel, None, "a silent child yields no selection");
     }
 
@@ -440,10 +437,7 @@ mod tests {
     fn strip_removes_csi_osc_dcs_and_bare_controls() {
         assert_eq!(strip_terminal_controls("\x1b[6ngit status"), "git status");
         assert_eq!(strip_terminal_controls("a\x1b[31mred\x1b[0mb"), "aredb");
-        assert_eq!(
-            strip_terminal_controls("\x1b]0;title\x07ls -la"),
-            "ls -la"
-        );
+        assert_eq!(strip_terminal_controls("\x1b]0;title\x07ls -la"), "ls -la");
         assert_eq!(
             strip_terminal_controls("\x1bP+q544e\x1b\\echo hi"),
             "echo hi"

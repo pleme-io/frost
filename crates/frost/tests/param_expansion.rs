@@ -106,18 +106,27 @@ fn assign_writeback_returns_and_assigns() {
 
 #[test]
 fn assign_writeback_skips_when_set() {
-    parity(r#"v=set; echo "${v:=def}"; echo "after=$v""#, "set\nafter=set\n");
+    parity(
+        r#"v=set; echo "${v:=def}"; echo "after=$v""#,
+        "set\nafter=set\n",
+    );
 }
 
 #[test]
 fn assign_writeback_expands_default() {
-    parity(r#"o=World; echo "${v:=Hello_$o}"; echo "$v""#, "Hello_World\nHello_World\n");
+    parity(
+        r#"o=World; echo "${v:=Hello_$o}"; echo "$v""#,
+        "Hello_World\nHello_World\n",
+    );
 }
 
 #[test]
 fn assign_unset_only_form() {
     // `${v=word}` assigns only when unset (an empty-but-set var is left).
-    parity(r#"v=; echo "[${v=def}]"; echo "after=[$v]""#, "[]\nafter=[]\n");
+    parity(
+        r#"v=; echo "[${v=def}]"; echo "after=[$v]""#,
+        "[]\nafter=[]\n",
+    );
 }
 
 #[test]
@@ -250,21 +259,33 @@ fn strip_no_match_returns_value() {
 #[test]
 fn shwordsplit_basic() {
     // `${=x}` splits the value on IFS into separate words.
-    parity(r#"x="a b c"; for w in ${=x}; do echo "[$w]"; done"#, "[a]\n[b]\n[c]\n");
+    parity(
+        r#"x="a b c"; for w in ${=x}; do echo "[$w]"; done"#,
+        "[a]\n[b]\n[c]\n",
+    );
 }
 
 #[test]
 fn shwordsplit_collapses_runs() {
-    parity(r#"x="a  b"; for w in ${=x}; do echo "[$w]"; done"#, "[a]\n[b]\n");
+    parity(
+        r#"x="a  b"; for w in ${=x}; do echo "[$w]"; done"#,
+        "[a]\n[b]\n",
+    );
 }
 
 #[test]
 fn shwordsplit_inside_double_quotes() {
     // The flag splits even inside double quotes — its whole purpose.
-    parity(r#"x="a b c"; for w in "${=x}"; do echo "[$w]"; done"#, "[a]\n[b]\n[c]\n");
+    parity(
+        r#"x="a b c"; for w in "${=x}"; do echo "[$w]"; done"#,
+        "[a]\n[b]\n[c]\n",
+    );
 }
 
 #[test]
 fn shwordsplit_empty_yields_nothing() {
-    parity(r#"x=""; for w in ${=x}; do echo "[$w]"; done; echo done"#, "done\n");
+    parity(
+        r#"x=""; for w in ${=x}; do echo "[$w]"; done; echo done"#,
+        "done\n",
+    );
 }

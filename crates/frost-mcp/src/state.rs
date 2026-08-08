@@ -147,9 +147,10 @@ fn owning_pid(file_name: &str) -> Option<u32> {
         .strip_prefix("mcp-")
         .and_then(|s| s.strip_suffix(".sock"))
         .or_else(|| {
-            file_name
-                .strip_prefix("state-")
-                .and_then(|s| s.strip_suffix(".json.tmp").or_else(|| s.strip_suffix(".json")))
+            file_name.strip_prefix("state-").and_then(|s| {
+                s.strip_suffix(".json.tmp")
+                    .or_else(|| s.strip_suffix(".json"))
+            })
         })?;
     body.parse::<u32>().ok()
 }
@@ -201,7 +202,11 @@ pub fn reap_dead(
     let mut removed = 0;
     for entry in entries.flatten() {
         let path = entry.path();
-        let Some(pid) = path.file_name().and_then(|n| n.to_str()).and_then(owning_pid) else {
+        let Some(pid) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(owning_pid)
+        else {
             continue;
         };
         if pid == self_pid || is_alive(pid) {
@@ -225,9 +230,7 @@ pub fn reap_dead(
 /// discovery — the 2026-06-11 "running_shells: 0 while a live frost
 /// exists" gap.
 #[must_use]
-pub fn discover_latest_snapshot(
-    state_dir: &std::path::Path,
-) -> Option<(u32, PathBuf)> {
+pub fn discover_latest_snapshot(state_dir: &std::path::Path) -> Option<(u32, PathBuf)> {
     let entries = std::fs::read_dir(state_dir).ok()?;
     let mut best: Option<(SystemTime, u32, PathBuf)> = None;
     for entry in entries.flatten() {
@@ -303,7 +306,11 @@ mod tests {
             .flatten()
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(left.len(), 2, "only the non-frost entries survive: {left:?}");
+        assert_eq!(
+            left.len(),
+            2,
+            "only the non-frost entries survive: {left:?}"
+        );
         assert!(left.contains(&"aaa-unrelated".to_string()), "{left:?}");
         assert!(left.contains(&"state-notapid.json".to_string()), "{left:?}");
 
@@ -344,14 +351,22 @@ mod tests {
     #[test]
     fn remove_process_files_is_scoped_and_idempotent() {
         let dir = fresh_dir("remove-own");
-        for name in ["mcp-42.sock", "state-42.json", "state-42.json.tmp", "mcp-43.sock"] {
+        for name in [
+            "mcp-42.sock",
+            "state-42.json",
+            "state-42.json.tmp",
+            "mcp-43.sock",
+        ] {
             std::fs::write(dir.join(name), b"").unwrap();
         }
         remove_process_files(&dir, 42);
         assert!(!dir.join("mcp-42.sock").exists());
         assert!(!dir.join("state-42.json").exists());
         assert!(!dir.join("state-42.json.tmp").exists());
-        assert!(dir.join("mcp-43.sock").exists(), "another pid's file removed");
+        assert!(
+            dir.join("mcp-43.sock").exists(),
+            "another pid's file removed"
+        );
         // Second call on the same (now absent) files must not panic.
         remove_process_files(&dir, 42);
 

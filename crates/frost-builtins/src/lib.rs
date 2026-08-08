@@ -6,6 +6,7 @@
 
 mod cd;
 pub mod control;
+mod direnv;
 mod echo;
 mod eval_builtin;
 mod exit;
@@ -20,7 +21,6 @@ mod read;
 mod set;
 mod source;
 mod test;
-mod direnv;
 mod true_false;
 
 use std::collections::HashMap;

@@ -36,11 +36,11 @@ mod completion;
 mod env;
 mod function;
 mod history;
-pub mod meguri;
 mod hook;
 mod integration;
 mod intent;
 mod mark;
+pub mod meguri;
 mod notify;
 mod option;
 mod path;
@@ -98,7 +98,9 @@ pub enum LispError {
     UnknownSignal(String),
     #[error("unknown picker action: {0} (valid: replace, append, cd-submit, submit)")]
     UnknownPickerAction(String),
-    #[error("unknown keybind intent: {unknown} (valid: history-picker, files-picker, dir-picker, content-picker, clear-buffer, kill-line, edit-in-editor, help, clipboard-copy, clipboard-paste, toggle-sudo, insert-last-arg, multiplexer-prefix)")]
+    #[error(
+        "unknown keybind intent: {unknown} (valid: history-picker, files-picker, dir-picker, content-picker, clear-buffer, kill-line, edit-in-editor, help, clipboard-copy, clipboard-paste, toggle-sudo, insert-last-arg, multiplexer-prefix)"
+    )]
     UnknownKeybindIntent { unknown: String },
     #[error("unknown integration: {0} (known: zoxide, direnv, starship, atuin)")]
     UnknownIntegration(String),
@@ -1094,40 +1096,10 @@ fn resolve_mark_collision(name: &str, env: &ShellEnv) -> Option<mark::CommandRes
 /// Fleet-CLI marks carry the trailing-dash convention (`nix-`, `tend-`).
 pub const FLEET_CLIS: &[&str] = &[
     // pleme-io fleet binaries (substrate apps + tools).
-    "nix",
-    "tend",
-    "sui",
-    "tatara",
-    "engenho",
-    "magma",
-    "kikai",
-    "kurage",
-    "frost",
-    "forge",
-    "feira",
-    "carve",
-    "galho",
-    "eclusa",
-    "cofre",
-    "kensa",
-    "seki",
-    "mado",
-    "tear",
-    "pangea",
-    "kindling",
-    // ubiquitous host commands an editor/dev box ships.
-    "code",
-    "git",
-    "ls",
-    "cd",
-    "cat",
-    "vim",
-    "cargo",
-    "nvim",
-    "kubectl",
-    "helm",
-    "flux",
-    "docker",
+    "nix", "tend", "sui", "tatara", "engenho", "magma", "kikai", "kurage", "frost", "forge",
+    "feira", "carve", "galho", "eclusa", "cofre", "kensa", "seki", "mado", "tear", "pangea",
+    "kindling", // ubiquitous host commands an editor/dev box ships.
+    "code", "git", "ls", "cd", "cat", "vim", "cargo", "nvim", "kubectl", "helm", "flux", "docker",
 ];
 
 /// Does `name` collide with a known fleet/host CLI in the hermetic
@@ -1870,7 +1842,10 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("not-a-real-intent"), "msg: {msg}");
         assert!(msg.contains("history-picker"), "valid list missing: {msg}");
-        assert!(msg.contains("multiplexer-prefix"), "valid list missing: {msg}");
+        assert!(
+            msg.contains("multiplexer-prefix"),
+            "valid list missing: {msg}"
+        );
     }
 
     #[test]
@@ -2905,7 +2880,11 @@ mod tests {
             target.display()
         );
         let s = apply_source(&src, &mut env).unwrap();
-        assert!(s.warnings.is_empty(), "unexpected warnings: {:?}", s.warnings);
+        assert!(
+            s.warnings.is_empty(),
+            "unexpected warnings: {:?}",
+            s.warnings
+        );
         assert!(env.aliases.contains_key("frostmarkroundtrip"));
 
         let status = exec_src("frostmarkroundtrip", &mut env);

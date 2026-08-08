@@ -16,7 +16,7 @@ pub mod sys;
 pub mod trap;
 pub mod tty_takeover;
 
-pub use env::{frecent_dirs, ShellEnv};
+pub use env::{ShellEnv, frecent_dirs};
 pub use execute::{ControlFlow, ExecError, Executor};
 pub use job::{Job, JobTable};
 pub use modal::{FrostMode, KeyDecision, ModalState};

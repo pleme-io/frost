@@ -78,10 +78,8 @@ fn assert_threshold(name: &str, threshold_pct: f64) {
 fn suite_cases_run_in_scratch_not_process_cwd() {
     use std::io::Write as _;
     let marker = "frost-ztst-cwd-isolation-marker";
-    let ztst = std::env::temp_dir().join(format!(
-        "frost-ztst-isolation-{}.ztst",
-        std::process::id()
-    ));
+    let ztst =
+        std::env::temp_dir().join(format!("frost-ztst-isolation-{}.ztst", std::process::id()));
     {
         let mut f = std::fs::File::create(&ztst).unwrap();
         // One case writes a marker file into ITS cwd; if isolation

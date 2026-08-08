@@ -175,7 +175,10 @@ fn successful_command_does_not_enumerate_path() {
     arm_probe(&sb.bin);
     let before = atime(&sb.bin);
     let (code, stderr) = sb.run_frost("sentinelcm");
-    assert_eq!(code, 127, "an unknown command must exit 127; stderr={stderr}");
+    assert_eq!(
+        code, 127,
+        "an unknown command must exit 127; stderr={stderr}"
+    );
     assert!(
         stderr.contains("sentinelcmd"),
         "the control must actually reach the suggestion path; stderr={stderr}"

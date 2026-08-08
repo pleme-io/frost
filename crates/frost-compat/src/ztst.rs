@@ -87,8 +87,8 @@ enum Section {
 /// may fail individually under the ratchet), but every other case in
 /// the file must still run.
 pub fn parse_ztst(path: &Path) -> Result<TestFile, String> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     let content = String::from_utf8_lossy(&bytes);
 
     let name = path

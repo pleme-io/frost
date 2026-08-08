@@ -22,7 +22,7 @@
 //! Re-uses the same primitive that mado / ayatsuri / namimado consume
 //! (per the ★★ EMITTER SUBSTRATE rule) — no duplicate state machine.
 
-use awase::{Action, BindingMap, Hotkey, Key, KeyMode, MatchResult, MatchContext, Modifiers};
+use awase::{Action, BindingMap, Hotkey, Key, KeyMode, MatchContext, MatchResult, Modifiers};
 
 /// Named mode identifiers for frost's interactive surface.
 ///
@@ -138,10 +138,7 @@ impl ModalState {
         let esc = Hotkey::new(Modifiers::NONE, Key::Escape);
 
         if let Some(normal) = binding_map.mode_mut("normal") {
-            normal.add_binding(awase::Binding::new(
-                colon,
-                Action::mode_switch("command"),
-            ));
+            normal.add_binding(awase::Binding::new(colon, Action::mode_switch("command")));
             // Also accept bare semicolon as a Command toggle on
             // keyboards where Shift isn't easily reportable (the
             // reedline / VT layer often hands us the produced char,
@@ -150,23 +147,14 @@ impl ModalState {
                 semicolon,
                 Action::mode_switch("command"),
             ));
-            normal.add_binding(awase::Binding::new(
-                slash,
-                Action::mode_switch("search"),
-            ));
-            normal.add_binding(awase::Binding::new(
-                qmark,
-                Action::mode_switch("search"),
-            ));
+            normal.add_binding(awase::Binding::new(slash, Action::mode_switch("search")));
+            normal.add_binding(awase::Binding::new(qmark, Action::mode_switch("search")));
         }
 
         // Esc -> Normal from any non-Normal mode.
         for non_normal in ["command", "search"] {
             if let Some(mode) = binding_map.mode_mut(non_normal) {
-                mode.add_binding(awase::Binding::new(
-                    esc,
-                    Action::mode_switch("normal"),
-                ));
+                mode.add_binding(awase::Binding::new(esc, Action::mode_switch("normal")));
             }
         }
 
@@ -254,7 +242,10 @@ mod tests {
         let mut modal = ModalState::new();
         let colon = Hotkey::new(Modifiers::SHIFT, Key::Semicolon);
         let decision = modal.interpret_key(colon);
-        assert!(matches!(decision, KeyDecision::ModeChange(FrostMode::Command)));
+        assert!(matches!(
+            decision,
+            KeyDecision::ModeChange(FrostMode::Command)
+        ));
         assert_eq!(modal.current_mode(), FrostMode::Command);
         assert!(!modal.is_passthrough());
     }
@@ -264,7 +255,10 @@ mod tests {
         let mut modal = ModalState::new();
         let slash = Hotkey::new(Modifiers::NONE, Key::Slash);
         let decision = modal.interpret_key(slash);
-        assert!(matches!(decision, KeyDecision::ModeChange(FrostMode::Search)));
+        assert!(matches!(
+            decision,
+            KeyDecision::ModeChange(FrostMode::Search)
+        ));
         assert_eq!(modal.current_mode(), FrostMode::Search);
     }
 
@@ -274,7 +268,10 @@ mod tests {
         modal.set_mode(FrostMode::Command).unwrap();
         let esc = Hotkey::new(Modifiers::NONE, Key::Escape);
         let decision = modal.interpret_key(esc);
-        assert!(matches!(decision, KeyDecision::ModeChange(FrostMode::Normal)));
+        assert!(matches!(
+            decision,
+            KeyDecision::ModeChange(FrostMode::Normal)
+        ));
         assert_eq!(modal.current_mode(), FrostMode::Normal);
     }
 

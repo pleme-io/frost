@@ -19,9 +19,9 @@ fn exec_error_class(e: &frost_exec::ExecError) -> ShellSignal {
     match e {
         ExecError::CommandNotFound(_) => ShellSignal::CommandNotFound,
         ExecError::Exec(errno) => match *errno as i32 {
-            2 => ShellSignal::CommandNotFound, // ENOENT on exec = not found
+            2 => ShellSignal::CommandNotFound,   // ENOENT on exec = not found
             13 => ShellSignal::PermissionDenied, // EACCES
-            8 => ShellSignal::ExecFormat,      // ENOEXEC
+            8 => ShellSignal::ExecFormat,        // ENOEXEC
             n => ShellSignal::from_errno(n),
         },
         ExecError::Pipe(_) => ShellSignal::PipeFailed,
@@ -46,7 +46,9 @@ fn shell_warmth() -> &'static str {
     if std::env::var_os("NO_COLOR").is_some() {
         return "";
     }
-    ShellSignals::prescribed().warmth().render(SignalMode::Emoji)
+    ShellSignals::prescribed()
+        .warmth()
+        .render(SignalMode::Emoji)
 }
 
 /// Bitmask of signals that fired since the last check. Set by the
@@ -1730,9 +1732,7 @@ fn interactive(
                 // (e.g. mado's embedded session on the first prompt) heals
                 // instead of killing the shell. Any other read error, or CPR
                 // that never resolves, is still fatal.
-                if e.to_string().contains("cursor position")
-                    && cpr_retries < MAX_CPR_RETRIES
-                {
+                if e.to_string().contains("cursor position") && cpr_retries < MAX_CPR_RETRIES {
                     cpr_retries += 1;
                     std::thread::sleep(std::time::Duration::from_millis(25));
                     continue;
@@ -1807,9 +1807,7 @@ async fn run_mcp_bridge(target_pid: Option<u32>) -> i32 {
                 p
             }
             None => {
-                eprintln!(
-                    "frost --mcp: no running frost shells found under ~/.local/state/frost/"
-                );
+                eprintln!("frost --mcp: no running frost shells found under ~/.local/state/frost/");
                 return 1;
             }
         },
@@ -1956,7 +1954,7 @@ fn main() {
                     }
                 }
             })
-            .ok();  // .ok() — thread-spawn failure is non-fatal.
+            .ok(); // .ok() — thread-spawn failure is non-fatal.
     }
 
     // Tatara-Lisp rc file — declarative authoring surface for aliases,
@@ -1964,7 +1962,10 @@ fn main() {
     // functions. Missing file is not an error; parse/apply errors print
     // a warning so frost still starts even if the rc has a bug.
     let rc_path = frost_lisp::default_rc_path();
-    kanshou_shell_state.rc_path.write().replace(rc_path.display().to_string());
+    kanshou_shell_state
+        .rc_path
+        .write()
+        .replace(rc_path.display().to_string());
     // Seed live MCP state with the boot snapshot — the rc-load arm
     // below populates the rest. We thread it through so the
     // interactive path can hand it to the MCP server thread.

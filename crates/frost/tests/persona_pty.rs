@@ -67,8 +67,8 @@ use std::os::fd::AsRawFd;
 use std::time::{Duration, Instant};
 
 use espelho::{AnswerPolicy, TerminalPersona, VtQuery};
-use nix::sys::signal::{kill, Signal};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+use nix::sys::signal::{Signal, kill};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 
 /// The harness persona: espelho policy + the cursor position the old
 /// hand-rolled harness always reported (`ESC[25;1R`) — identical wire.
@@ -218,9 +218,7 @@ fn drive(
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// Healthy terminal, idle shell: stays alive, no read errors. (Baseline.)
@@ -549,7 +547,10 @@ fn frostmourne_rc_post_accept_survives_and_executes() {
     let home = std::env::var("HOME").unwrap_or_default();
     let lisp_dir = std::path::PathBuf::from(home).join("code/github/pleme-io/frostmourne/lisp");
     if !lisp_dir.is_dir() {
-        eprintln!("SKIP frostmourne_rc row: no local frostmourne checkout at {}", lisp_dir.display());
+        eprintln!(
+            "SKIP frostmourne_rc row: no local frostmourne checkout at {}",
+            lisp_dir.display()
+        );
         return;
     }
     let mut files: Vec<_> = std::fs::read_dir(&lisp_dir)
@@ -764,14 +765,12 @@ fn sigterm_no_trap_probe() -> Result<(), String> {
                 if Instant::now() >= deadline {
                     let _ = kill(child, Signal::SIGKILL);
                     let _ = waitpid(child, None);
-                    return Err(
-                        "interactive frost did not exit within 20s of SIGTERM -- \
+                    return Err("interactive frost did not exit within 20s of SIGTERM -- \
                          either the swallowed-signal regression is back, or \
                          this is the known macOS kernel-exit-teardown stall \
                          (see this test's doc comment) exceeding even a \
                          generous bound"
-                            .to_string(),
-                    );
+                        .to_string());
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
