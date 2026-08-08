@@ -97,11 +97,43 @@ fn write_vec<T: std::fmt::Debug>(out: &mut String, label: &str, v: &[T]) {
     }
 }
 
+/// Substitute the running operator's `$HOME` for a literal `$HOME` token.
+///
+/// WHY THIS EXISTS. Without it the golden bakes in whoever last blessed it.
+/// Twenty-two of its lines held `/Users/luis.d/...` — the rc's `(defmark …)`
+/// forms are written against `~`, and apply expands them — so this seal passed
+/// on exactly ONE machine and could not pass on any other operator's box or on
+/// any runner. Measured on frost's first CI run (31230794959), where it was the
+/// single failure out of 1,015 tests:
+///
+///   got:      completion_descriptions[bm] = "→ /home/runner/code/…/blackmatter"
+///   expected: completion_descriptions[bm] = "→ /Users/luis.d/code/…/blackmatter"
+///
+/// A byte-parity seal only its author can run is not a seal, it is a local
+/// habit — and the failure it produces elsewhere teaches nothing, so it gets
+/// muted or skipped, which is how a real gate dies. The home PREFIX is the only
+/// machine-dependent part of this summary, so substituting it leaves every
+/// other byte — every counter, every map entry, every vector element, which is
+/// what the mis-threaded-pass class actually shows up in — still under the gate.
+///
+/// Longest-match is not a concern: there is one `$HOME` and it is an absolute
+/// path, so no shorter path in the summary can contain it as a substring
+/// without genuinely being inside it.
+fn dehome(rendered: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() => rendered.replace(&home, "$HOME"),
+        // No HOME (or an empty one) means nothing to substitute; the summary is
+        // already machine-independent by accident. Returning the input unchanged
+        // is right — replacing an empty needle would corrupt every byte.
+        _ => rendered.to_string(),
+    }
+}
+
 #[test]
 fn frostmourne_rc_apply_summary_is_byte_stable() {
     let mut env = frost_exec::ShellEnv::new();
     let summary = frost_lisp::apply_source(FIXTURE, &mut env).expect("rc should apply cleanly");
-    let rendered = canonical(&summary);
+    let rendered = dehome(&canonical(&summary));
 
     if std::env::var_os("FROST_BLESS_RC_SUMMARY").is_some() {
         std::fs::write(GOLDEN_PATH, &rendered).expect("write golden");
