@@ -129,11 +129,60 @@ fn dehome(rendered: &str) -> String {
     }
 }
 
+/// Reduce a resolved `PathBinary` to its basename.
+///
+/// The SECOND machine-dependent axis in this summary, and it surfaced only
+/// after `$HOME` was fixed — run 31231173681, again the single failure out of
+/// 1,015:
+///
+///   got:      warnings[0] = MarkShadowsCommand { name: "nix",
+///                             resolved: PathBinary { path: "/nix/var/nix/profiles/default/bin/nix" } }
+///   expected:                 PathBinary { path: "/run/current-system/sw/bin/nix" }
+///
+/// The claim this warning makes is "the mark `nix` shadows a command named
+/// `nix` that exists on PATH". Which DIRECTORY that command was found in is a
+/// property of the machine's PATH, never of the rc, and it cannot be stable
+/// across a nix-darwin box and a runner. The basename is the whole invariant,
+/// so keeping it and dropping the directory preserves every bit of signal the
+/// mis-threaded-pass class shows up in.
+///
+/// Scoped to the `PathBinary { path: "…" }` shape rather than applied to the
+/// whole rendering, so bare unresolved command names elsewhere in the summary
+/// (`path: "kubectl"`, `path: "$bat"`) are untouched.
+///
+/// ⚠ RESIDUAL, named rather than papered over: the warning SET still depends on
+/// which binaries exist on the running machine — `MarkShadowsCommand` is only
+/// emitted when the shadowed command actually resolves. `warnings.len = 1` held
+/// on both a darwin workstation and an ubuntu runner because `nix` is the only
+/// marked name present on either, but a machine that happens to carry a `code`
+/// or `dl` binary would produce a different count and trip this seal on a
+/// length diff. Closing that wants the fixture's marks isolated from the
+/// ambient PATH, which is a change to the harness's environment rather than to
+/// its rendering, and is not attempted here.
+fn debinpath(rendered: &str) -> String {
+    const OPEN: &str = "PathBinary { path: \"";
+    let mut out = String::with_capacity(rendered.len());
+    let mut rest = rendered;
+    while let Some(i) = rest.find(OPEN) {
+        let (head, tail) = rest.split_at(i + OPEN.len());
+        out.push_str(head);
+        let Some(end) = tail.find('"') else {
+            rest = tail;
+            break;
+        };
+        let path = &tail[..end];
+        out.push_str(path.rsplit('/').next().unwrap_or(path));
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 #[test]
 fn frostmourne_rc_apply_summary_is_byte_stable() {
     let mut env = frost_exec::ShellEnv::new();
     let summary = frost_lisp::apply_source(FIXTURE, &mut env).expect("rc should apply cleanly");
-    let rendered = dehome(&canonical(&summary));
+    let rendered = debinpath(&dehome(&canonical(&summary)));
 
     if std::env::var_os("FROST_BLESS_RC_SUMMARY").is_some() {
         std::fs::write(GOLDEN_PATH, &rendered).expect("write golden");
