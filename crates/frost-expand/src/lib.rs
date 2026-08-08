@@ -2039,6 +2039,7 @@ mod tests {
     fn cmd_sub_word() -> Word {
         mk_word(vec![WordPart::CommandSub(Box::new(Program {
             commands: vec![],
+            syntax_errors: vec![],
         }))])
     }
 
@@ -2090,7 +2091,10 @@ mod tests {
     fn quoted_command_substitution_never_splits() {
         let env = FixedSubEnv("a b c\n");
         let w = mk_word(vec![WordPart::DoubleQuoted(vec![WordPart::CommandSub(
-            Box::new(Program { commands: vec![] }),
+            Box::new(Program {
+                commands: vec![],
+                syntax_errors: vec![],
+            }),
         )])]);
         assert_eq!(expand_word_fields(&w, &env), vec!["a b c".to_string()]);
     }
