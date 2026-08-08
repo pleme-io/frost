@@ -47,6 +47,25 @@ name: ci
 # The `hang-sweep` job below runs tatara-script's release binary, which needs
 # glibc 2.39. On 22.04 the step dies instantly with a GLIBC error. Both jobs
 # are pinned to the same floor so the two legs cannot drift apart.
+#
+# ── WHAT THE FIRST RUN FOUND (run 31230390171, 2026-08-08) ─────────────────
+#
+# The gate's first execution failed, and not on a flaky test: `frost-exec`'s
+# and `frost-expand`'s lib-test targets DID NOT COMPILE. `Program` had gained
+# a `syntax_errors` field and four call sites inside `#[cfg(test)]` blocks were
+# never updated, so `cargo build` was green while `cargo test` could not build
+# at all.
+#
+# That is the absent-not-red class: a test target that cannot COMPILE reports
+# NOTHING, not a failure. 119 frost-exec tests plus the entire frost-expand
+# suite had been silently not running, and no local `cargo build` or `cargo
+# run` could have shown it. Repaired in the same branch; recorded here because
+# it is the concrete answer to "what was this repo buying by having no CI".
+#
+# Post-repair baseline, aarch64-darwin:
+#   cargo check --workspace --all-targets  -> clean
+#   cargo test --workspace --no-fail-fast, with the six --skips below
+#                                          -> exit 0, 1015 passed / 0 failed
 
 on:
   push:
