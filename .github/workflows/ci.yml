@@ -1,0 +1,236 @@
+name: ci
+
+# The test gate frost has never had.
+#
+# Until this file, .github/workflows/ held gen-spec.yml ALONE — a
+# Cargo.gen.lock delta-freshness check. frost's ~1,400 tests across 18 crates
+# had never been executed by CI, on any commit, ever.
+#
+# That is not a hygiene point. frost is the LOGIN SHELL every operator on this
+# fleet runs, and on 2026-08-07 three inputs were found that wedged the shipped
+# binary forever — no output, no error, no CPU, no exit. One of them is
+# `echo done`: a reserved word in argument position, which is a line a person
+# types, and which had presumably hung since the reserved-word table was
+# written. Nothing in CI could have caught any of them because nothing in CI
+# ran anything.
+#
+# ── WHY THIS CONSUMES nix-devshell-cargo-test.yml AND NOT cargo-ci.yml ──────
+#
+# cargo-ci.yml is the fleet's fuller Rust reusable (flake-check + this same
+# test leg) and would be the default choice. It is STRUCTURALLY BLOCKED on
+# this repo today, and the blocker is in its bootstrap job, not something a
+# `with:` can reach:
+#
+#   cargo-ci.yml's `resolve-runner` job is pinned by a literal ternary —
+#     runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-latest' }}
+#   — because bootstrapping the runner resolver cannot call the resolver. frost
+#   is PRIVATE, so that job lands on the Camelot ARC pool, and every other job
+#   in the workflow `needs:` it.
+#
+# Measured 2026-08-08, not assumed: seki run 31210151119 has had two jobs
+# sitting `queued` on `camelot-builder-pleme-eks` for 5h13m. The pool is not
+# serving. A `.github/runner.yml` pin cannot fix it either — runner-resolve's
+# config-path tier is read by the resolver, and the resolver is the job that
+# never starts. Contrast mado (PUBLIC), whose identical cargo-ci.yml shim
+# resolved `ubuntu-latest` and went green in 33m on the same day.
+#
+# So this shim calls cargo-ci.yml's OWN test leg directly, with an explicit
+# GitHub-hosted runner. mado's ci.yml sets the precedent for calling this
+# reusable directly (its `release-tests` job). What that costs, stated rather
+# than glossed: no `nix flake check` leg, so `checks.build` (does the shipped
+# artifact compile under nix) is NOT covered here. gen-spec.yml already covers
+# Cargo.gen.lock freshness. Restoring flake-check is a follow-up that wants
+# either a serving ARC pool or a `runner:` input on cargo-ci.yml.
+#
+# ── ubuntu-24.04, NOT ubuntu-latest ────────────────────────────────────────
+#
+# The `hang-sweep` job below runs tatara-script's release binary, which needs
+# glibc 2.39. On 22.04 the step dies instantly with a GLIBC error. Both jobs
+# are pinned to the same floor so the two legs cannot drift apart.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# frost merges to main frequently and this graph is large; a queue of
+# superseded runs is pure runner waste.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── The gate ───────────────────────────────────────────────────────────
+  #
+  # `cargo fmt --all -- --check` + `cargo test` inside `.#default`, with the
+  # private-git-dependency credential wiring the private `pleme-io/reedline`
+  # fork requires. Red here blocks.
+  cargo-test:
+    uses: pleme-io/substrate/.github/workflows/nix-devshell-cargo-test.yml@main
+    with:
+      runner: ubuntu-24.04
+
+      # MEASURED before wiring, because this reusable's own header records a
+      # case where it "reached" three consumers and ran the tests of ZERO of
+      # them — all three resolved `devShells.<sys>.default` to a devenv shell,
+      # which `nix develop` cannot enter non-interactively.
+      #
+      # frost WAS one of those. At substrate 89174bb (the pin this repo carried
+      # until the commit that added this file):
+      #   nix eval --raw .#devShells.aarch64-darwin.default.name -> devenv-shell
+      # and `--impure` did not rescue it (substrate's measurement on forge: it
+      # clears the working-directory assertion and then hits a `rust-overlay`
+      # input the consumer never declared).
+      #
+      # The fix was the stale pin itself, not a `devshell-args` workaround.
+      # After `nix flake update substrate` (89174bb -> a411d15, the same rev
+      # seki already carried):
+      #   nix eval --raw .#devShells.aarch64-darwin.default.name -> nix-shell
+      #   nix develop .#default -c cargo --version    -> cargo 1.97.1
+      # i.e. entered non-interactively, for real. Re-measure if the flake's
+      # builder changes; do not assume.
+      devshell: default
+
+      # ── The six KNOWN-RED tests, and why each is skipped rather than fixed
+      #
+      # All six were verified failing at c3434ca — BEFORE this branch — so
+      # none of them is a regression introduced here, and none is this
+      # workflow's to fix. They are named exactly (libtest `--skip` is a
+      # SUBSTRING match, so a loose filter is a silent over-skip) and they are
+      # NOT `#[ignore]`d and NOT deleted: they still fail a local
+      # `cargo test`, and the `known-red-ledger` job below runs the full suite
+      # every time so their status stays visible in the Actions UI.
+      #
+      # WHAT THIS COSTS, stated plainly: a NEW failure that happens to land in
+      # one of these six test names would be skipped here too. The ledger job
+      # is the compensating control, and it is advisory, so the honest tier of
+      # this exclusion is only-mitigated — not sealed.
+      #
+      #   tests::apply_deftheme_merges_onto_borealis_default   (frost-lisp)
+      #     Measured: left Some("#D7C489") right Some("#EDC980") — the test
+      #     pins a colour the ishou-tokens rev no longer emits.
+      #   tests::load_round_trips_a_real_file                  (frost-config)
+      #   tests::load_treats_missing_file_as_defaults          (frost-config)
+      #     Both exercise on-disk config load; both red at c3434ca.
+      #   a07_control_flow::return_from_function               (frost/zsh_compat)
+      #   a07_control_flow::return_with_code                   (frost/zsh_compat)
+      #     Qualified by module on purpose — frost-builtins has its own
+      #     `tests::return_with_code`, which PASSES and must not be caught.
+      #   interactive_session_terminates_on_sigterm_with_no_trap (frost/persona_pty)
+      #     Fails ONLY under a parallel `--workspace` run; passes 10/10 alone.
+      #     The test's own doc comment names it a macOS kernel-teardown stall.
+      #     Kept skipped on Linux too rather than assuming the platform saves
+      #     us — a hung test in a shared reusable costs 6h of runner time, and
+      #     this suite already has a receipt for a hang making `cargo test
+      #     --workspace` unable to complete at all (2026-08-07).
+      #
+      # `--all-features` is deliberately dropped from the reusable's default.
+      # frost's only non-default-off feature is frost-exec's
+      # `frecency-wadachi`, which is ON by default, so `--all-features` would
+      # widen the subject set by exactly zero tests here.
+      test-args: >-
+        --workspace --no-fail-fast --
+        --skip tests::apply_deftheme_merges_onto_borealis_default
+        --skip tests::load_round_trips_a_real_file
+        --skip tests::load_treats_missing_file_as_defaults
+        --skip a07_control_flow::return_from_function
+        --skip a07_control_flow::return_with_code
+        --skip interactive_session_terminates_on_sigterm_with_no_trap
+    secrets: inherit
+
+  # ── Termination as a property — the gate that already existed and ran
+  #    nowhere ─────────────────────────────────────────────────────────────
+  #
+  # tools/hang-sweep.tlisp has been committed since 2026-08-07 and had never
+  # been executed by anything but a human. It feeds 46 adversarial inputs to a
+  # frost binary and fails if ANY of them fails to terminate — a property the
+  # differential corpus structurally cannot check, because a row that hangs
+  # makes the SUITE hang, and a hanging suite reads as "slow CI" long before it
+  # reads as "the shell is broken".
+  #
+  # Every step is a `uses:`. `cargo-run-bin` is the catalog's own
+  # build-a-workspace-binary primitive (it installs the toolchain, builds
+  # ./target/debug/frost, and runs it — `--version` doubles as a smoke test),
+  # so this job carries no hand-authored `run:` at all.
+  #
+  # Runs in PARALLEL with cargo-test rather than after it: this is the check
+  # that catches the class that makes the test suite itself unrunnable, so
+  # gating it behind that suite would be exactly backwards.
+  hang-sweep:
+    name: hang sweep (termination, 46 inputs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # `pleme-io/reedline` is PRIVATE and so is frost, so on the Free plan the
+      # ORG BOT_PAT arrives EMPTY here and the fallback lands on the repo-scoped
+      # GITHUB_TOKEN, which cannot read a sibling private repo. frost carries a
+      # REPO-level BOT_PAT (set 2026-08-07) for exactly this; delete it and
+      # cargo dies with "Repository not found", which reads as a missing repo
+      # rather than a missing credential.
+      - uses: pleme-io/actions/git-credentials@2018933f32d08f29b5c4de5aeba207f31ae1d755
+        with:
+          bot-pat: ${{ secrets.BOT_PAT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pleme-io/actions/cargo-run-bin@2018933f32d08f29b5c4de5aeba207f31ae1d755
+        with:
+          package: frost
+          bin: frost
+          profile: debug
+          args: "--version"
+
+      # `script-file:`, never an inline `script:` — the latter rides to the
+      # runner as TATARA_SCRIPT_SRC and GitHub echoes every env value into the
+      # step log, so each invocation dumps the whole stdlib+script and any grep
+      # for a message finds the line that WOULD print it rather than one that
+      # DID.
+      #
+      # Verified locally 2026-08-08 against ./target/debug/frost:
+      #   hang-sweep: 46 inputs, 0 hung   (exit 0)
+      - uses: pleme-io/actions/tatara-script@2018933f32d08f29b5c4de5aeba207f31ae1d755
+        with:
+          script-file: tools/hang-sweep.tlisp
+          args: ${{ github.workspace }}/target/debug/frost
+
+  # ── The known-red ledger — advisory, and the reason the six skips above
+  #    are an exclusion rather than a disappearance ─────────────────────────
+  #
+  # Runs the FULL suite with no skips at all. `continue-on-error: true` so it
+  # never blocks a merge; its job is to keep the six known reds — and any new
+  # red that would otherwise hide behind one of their names — visible on every
+  # run, with their actual assertion output in the log.
+  #
+  # This is the mechanism chosen INSTEAD of `#[ignore]`: an `#[ignore]`d test
+  # is invisible by construction (it prints `ignored` and nobody reads it),
+  # whereas this job prints the real failure every time. The cost is one extra
+  # runner leg per push.
+  #
+  # Bare toolchain via rust-gate rather than the nix devShell: this leg is
+  # advisory, and a second `nix develop` would double the expensive part of
+  # the pipeline to produce a verdict nothing gates on.
+  #
+  # `timeout-minutes: 30` is load-bearing, not decoration — with no skips this
+  # job runs persona_pty's teardown test, and the suite has a receipt for a
+  # hang. A `continue-on-error` job that hangs still burns the default 6h.
+  known-red-ledger:
+    name: known-red ledger (advisory, never blocks)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pleme-io/actions/git-credentials@2018933f32d08f29b5c4de5aeba207f31ae1d755
+        with:
+          bot-pat: ${{ secrets.BOT_PAT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pleme-io/actions/rust-gate@2018933f32d08f29b5c4de5aeba207f31ae1d755
+        with:
+          run-fmt: "false"
+          run-clippy: "false"
+          run-test: "true"
+          test-args: "--workspace --no-fail-fast"
