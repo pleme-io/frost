@@ -1060,5 +1060,5 @@ multi_key_bindings.len = 1
 multi_key_bindings[0] = ("C-x", "e", "__frost_widget_edit_line__")
 declared_packages.len = 0
 warnings.len = 1
-warnings[0] = MarkShadowsCommand { name: "nix", resolved: PathBinary { path: "/run/current-system/sw/bin/nix" } }
+warnings[0] = MarkShadowsCommand { name: "nix", resolved: PathBinary { path: "nix" } }
 theme = ThemeSpec { name: Some("borealis-night"), command: Some("#A9BB8C"), unknown_command: Some("#D7C489"), string: Some("#94BBB8"), variable: Some("#8FB9AB"), reserved: Some("#B8A1B9"), operator: Some("#C9837B"), comment: Some("#90897B"), hint: Some("#6E6857"), broken_path: Some("#C9837B"), glob: Some("#D7C489"), number: Some("#99AABE") }
