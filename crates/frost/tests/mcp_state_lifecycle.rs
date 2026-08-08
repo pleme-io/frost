@@ -161,9 +161,18 @@ fn interactive_shell_sweeps_dead_pids_and_removes_its_own_files() {
     }
 
     // ── the sweep ────────────────────────────────────────────────────
-    assert!(!dead_sock.exists(), "a dead pid's socket survived the sweep");
-    assert!(!dead_snap.exists(), "a dead pid's snapshot survived the sweep");
-    assert!(!dead_tmp.exists(), "a dead pid's temp file survived the sweep");
+    assert!(
+        !dead_sock.exists(),
+        "a dead pid's socket survived the sweep"
+    );
+    assert!(
+        !dead_snap.exists(),
+        "a dead pid's snapshot survived the sweep"
+    );
+    assert!(
+        !dead_tmp.exists(),
+        "a dead pid's temp file survived the sweep"
+    );
     assert!(
         live_sock.exists(),
         "a LIVE pid's socket was swept — this severs a running shell's MCP channel"

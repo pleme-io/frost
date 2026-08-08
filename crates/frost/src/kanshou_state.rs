@@ -92,7 +92,14 @@ impl Introspect for FrostShellState {
     }
 
     fn schema(&self) -> &'static [&'static str] {
-        &["rc", "current_command", "prompt", "vt", "history", "process"]
+        &[
+            "rc",
+            "current_command",
+            "prompt",
+            "vt",
+            "history",
+            "process",
+        ]
     }
 }
 

@@ -2641,8 +2641,7 @@ mod live_rc_parses_clean {
     /// should say so, not go green.
     #[test]
     fn the_shipped_frostmourne_rc_has_no_recovered_syntax_errors() {
-        const RC: &str =
-            "/nix/store/jmvklqqzydxrdiyb8bsjxi1d8i78i8q1-frostmourne-rc.lisp/share/frostmourne/rc.lisp";
+        const RC: &str = "/nix/store/jmvklqqzydxrdiyb8bsjxi1d8i78i8q1-frostmourne-rc.lisp/share/frostmourne/rc.lisp";
         let Ok(src) = std::fs::read_to_string(RC) else {
             eprintln!("SKIP: {RC} not present on this host");
             return;

@@ -41,7 +41,10 @@ impl Builtin for History {
             .get_var("HISTFILE")
             .filter(|p| !p.is_empty())
             .map(PathBuf::from)
-            .or_else(|| env.home_dir().map(|h| PathBuf::from(h).join(".frost_history")));
+            .or_else(|| {
+                env.home_dir()
+                    .map(|h| PathBuf::from(h).join(".frost_history"))
+            });
         let Some(path) = path else {
             eprintln!("history: cannot resolve HISTFILE or HOME");
             return 1;
@@ -1427,7 +1430,10 @@ mod history_tests {
 
     #[test]
     fn plain_line_passes_through() {
-        assert_eq!(strip_hist_meta("git push origin main"), "git push origin main");
+        assert_eq!(
+            strip_hist_meta("git push origin main"),
+            "git push origin main"
+        );
         assert_eq!(strip_hist_meta("echo hi"), "echo hi");
     }
 
@@ -1435,7 +1441,10 @@ mod history_tests {
     fn zsh_extended_prefix_is_stripped() {
         // `: <ts>:<elapsed>;<cmd>` → just the command.
         assert_eq!(strip_hist_meta(": 1700000000:0;git status"), "git status");
-        assert_eq!(strip_hist_meta(": 1699999999:12;nix run .#rebuild"), "nix run .#rebuild");
+        assert_eq!(
+            strip_hist_meta(": 1699999999:12;nix run .#rebuild"),
+            "nix run .#rebuild"
+        );
     }
 
     #[test]

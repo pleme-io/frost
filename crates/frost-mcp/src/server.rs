@@ -26,9 +26,7 @@ use rmcp::{
 };
 use tokio::net::UnixListener;
 
-use crate::state::{
-    SharedState, default_state_dir, discover_latest_snapshot, load_snapshot,
-};
+use crate::state::{SharedState, default_state_dir, discover_latest_snapshot, load_snapshot};
 
 /// The frost MCP server. One instance per connection; serves the same
 /// four introspection tools regardless of source (UDS or stdio bridge).
@@ -123,12 +121,9 @@ impl FrostMcp {
         let bindings: Vec<_> = st
             .bindings
             .iter()
-            .map(|(chord, action)| {
-                serde_json::json!({ "chord": chord, "action": action })
-            })
+            .map(|(chord, action)| serde_json::json!({ "chord": chord, "action": action }))
             .collect();
-        serde_json::json!({ "ok": true, "count": bindings.len(), "bindings": bindings })
-            .to_string()
+        serde_json::json!({ "ok": true, "count": bindings.len(), "bindings": bindings }).to_string()
     }
 
     #[tool(
@@ -150,8 +145,7 @@ impl FrostMcp {
                 })
             })
             .collect();
-        serde_json::json!({ "ok": true, "count": pickers.len(), "pickers": pickers })
-            .to_string()
+        serde_json::json!({ "ok": true, "count": pickers.len(), "pickers": pickers }).to_string()
     }
 
     #[tool(
@@ -168,10 +162,7 @@ impl FrostMcp {
             .as_ref()
             .map(|p| {
                 let meta = std::fs::metadata(p).ok();
-                (
-                    meta.as_ref().map(|m| m.len()).unwrap_or(0),
-                    meta.is_some(),
-                )
+                (meta.as_ref().map(|m| m.len()).unwrap_or(0), meta.is_some())
             })
             .unwrap_or((0, false));
         serde_json::json!({

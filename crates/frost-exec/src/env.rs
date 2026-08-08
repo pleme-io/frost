@@ -851,14 +851,29 @@ mod tests {
         // Absolute arg ignores base; `.` + trailing components collapse.
         // Crucially LEXICAL: `/tmp/.` stays `/tmp` (NOT canonicalized to
         // `/private/tmp` on macOS) — this is the zsh-parity property.
-        assert_eq!(logical_absolutize(Path::new("/"), Path::new("/tmp/.")), PathBuf::from("/tmp"));
+        assert_eq!(
+            logical_absolutize(Path::new("/"), Path::new("/tmp/.")),
+            PathBuf::from("/tmp")
+        );
         // Relative `..` resolves against base lexically.
-        assert_eq!(logical_absolutize(Path::new("/a/b"), Path::new("../c")), PathBuf::from("/a/c"));
-        assert_eq!(logical_absolutize(Path::new("/a/b"), Path::new("c/d")), PathBuf::from("/a/b/c/d"));
+        assert_eq!(
+            logical_absolutize(Path::new("/a/b"), Path::new("../c")),
+            PathBuf::from("/a/c")
+        );
+        assert_eq!(
+            logical_absolutize(Path::new("/a/b"), Path::new("c/d")),
+            PathBuf::from("/a/b/c/d")
+        );
         // `..` past root is a no-op (stays `/`).
-        assert_eq!(logical_absolutize(Path::new("/"), Path::new("../..")), PathBuf::from("/"));
+        assert_eq!(
+            logical_absolutize(Path::new("/"), Path::new("../..")),
+            PathBuf::from("/")
+        );
         // Absolute arg with internal `..`.
-        assert_eq!(logical_absolutize(Path::new("/x"), Path::new("/a/b/../c")), PathBuf::from("/a/c"));
+        assert_eq!(
+            logical_absolutize(Path::new("/x"), Path::new("/a/b/../c")),
+            PathBuf::from("/a/c")
+        );
     }
 
     #[test]

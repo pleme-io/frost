@@ -52,7 +52,11 @@ fn canonical(s: &frost_lisp::ApplySummary) -> String {
 
     // ── maps, sorted by key ──────────────────────────────────────────
     write_map(&mut out, "completion_map", &s.completion_map);
-    write_map(&mut out, "completion_descriptions", &s.completion_descriptions);
+    write_map(
+        &mut out,
+        "completion_descriptions",
+        &s.completion_descriptions,
+    );
     write_map(&mut out, "completion_payloads", &s.completion_payloads);
     write_map(&mut out, "abbreviations", &s.abbreviations);
     write_map(&mut out, "marks", &s.marks);

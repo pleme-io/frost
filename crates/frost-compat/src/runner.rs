@@ -358,7 +358,12 @@ enum RunOutcome {
 /// Run a code string via `frost -c "<code>"`, capturing output.
 /// `cwd` is the per-file scratch directory — fixture writes and
 /// `rm`-glob cleanups must never land in the harness process's cwd.
-fn run_code(frost_path: &Path, code: &str, stdin_input: Option<&str>, cwd: Option<&Path>) -> RunOutcome {
+fn run_code(
+    frost_path: &Path,
+    code: &str,
+    stdin_input: Option<&str>,
+    cwd: Option<&Path>,
+) -> RunOutcome {
     let mut cmd = Command::new(frost_path);
     cmd.arg("-c").arg(code);
     if let Some(dir) = cwd {

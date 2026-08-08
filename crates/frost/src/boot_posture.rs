@@ -95,8 +95,8 @@ fn detect_inner() -> BootPosture {
 
     let in_nix_shell = std::env::var_os("IN_NIX_SHELL").is_some();
     let direnv_active = std::env::var_os("DIRENV_DIR").is_some();
-    let via_ssh = std::env::var_os("SSH_CONNECTION").is_some()
-        || std::env::var_os("SSH_CLIENT").is_some();
+    let via_ssh =
+        std::env::var_os("SSH_CONNECTION").is_some() || std::env::var_os("SSH_CLIENT").is_some();
     let interactive = std::io::stdin().is_terminal();
     let login = std::env::args()
         .next()

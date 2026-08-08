@@ -190,7 +190,10 @@ mod tests {
     #[test]
     fn unquoted_values_match_whitespace_splitting() {
         assert_eq!(split_words("ls -la"), vec!["ls", "-la"]);
-        assert_eq!(split_words("grep --color=auto"), vec!["grep", "--color=auto"]);
+        assert_eq!(
+            split_words("grep --color=auto"),
+            vec!["grep", "--color=auto"]
+        );
         assert_eq!(split_words(""), Vec::<String>::new());
         assert_eq!(split_words("   "), Vec::<String>::new());
     }

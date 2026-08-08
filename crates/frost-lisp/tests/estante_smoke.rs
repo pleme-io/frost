@@ -60,6 +60,9 @@ fn estante_typed_builders_alive_end_to_end() {
     assert_eq!(locks.len(), 1);
     assert_eq!(locks[0].name, "frost-defer");
     assert_eq!(locks[0].rev, "aa489f1d0bef818c4ec7d09b87a44d5cabaa9b6f");
-    assert_eq!(locks[0].materialized_path, "/nix/store/abc-frost-defer-1.0.0/");
+    assert_eq!(
+        locks[0].materialized_path,
+        "/nix/store/abc-frost-defer-1.0.0/"
+    );
     assert_eq!(locks[0].placement, "nix");
 }

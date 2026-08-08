@@ -279,13 +279,17 @@ mod tests {
         // consumer.
         let got = parse_flat_json_object(r#"{"GONE":null,"KEPT":""}"#).unwrap();
         assert_eq!(got[0].1, None, "null must be an unset");
-        assert_eq!(got[1].1, Some(String::new()), "\"\" must stay a set-to-empty");
+        assert_eq!(
+            got[1].1,
+            Some(String::new()),
+            "\"\" must stay a set-to-empty"
+        );
     }
 
     #[test]
     fn escapes_and_multibyte_survive() {
-        let got = parse_flat_json_object(r#"{"A":"a\nb","B":"q\"q","C":"\u00e9","D":"日本"}"#)
-            .unwrap();
+        let got =
+            parse_flat_json_object(r#"{"A":"a\nb","B":"q\"q","C":"\u00e9","D":"日本"}"#).unwrap();
         assert_eq!(got[0].1, Some("a\nb".to_string()));
         assert_eq!(got[1].1, Some("q\"q".to_string()));
         assert_eq!(got[2].1, Some("é".to_string()));

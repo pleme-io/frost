@@ -68,7 +68,12 @@ fn dual_writer_corrupts_the_file() {
     assert_eq!(
         lines,
         vec![
-            "echo one", "echo two", "echo three", "echo one", "echo two", "echo three"
+            "echo one",
+            "echo two",
+            "echo three",
+            "echo one",
+            "echo two",
+            "echo three"
         ]
     );
 }
