@@ -332,18 +332,44 @@ jobs:
   # hang. A `continue-on-error` job that hangs still burns the default 6h.
   known-red-ledger:
     name: known-red ledger (advisory, never blocks)
+    needs: resolve-runner
+    runs-on: ${{ needs.resolve-runner.outputs.runner }}
     continue-on-error: true
+    timeout-minutes: 30
     #
     # CHANGED 2026-08-08: was `pleme-io/actions/rust-gate` on a bare runner.
     # That died on the Camelot pool with ``linker `cc` not found`` — the ARC
     # runner image carries no C toolchain — and an ADVISORY job that always
     # fails for an environmental reason is worse than no job at all: its whole
     # purpose is to surface the real known-reds, and a linker error hides
-    # every one of them behind itself. It now calls the same nix devShell
-    # reusable `cargo-test` uses (which passed on that same run), with the
-    # skips removed instead of a second toolchain story.
-    uses: pleme-io/substrate/.github/workflows/nix-devshell-cargo-test.yml@main
-    with:
-      devshell: .#default
-      test-args: "--workspace --no-fail-fast"
-    secrets: inherit
+    # every one of them behind itself.
+    #
+    # It stays a `steps:` job rather than calling the same reusable
+    # `cargo-test` uses, and the reason is a hard platform constraint, not a
+    # preference: a job that calls a reusable workflow may NOT carry
+    # `continue-on-error`. Converting it dropped the one property that makes
+    # this job advisory, and GitHub rejected the whole FILE for it — run
+    # 31246741255, "This run likely failed because of a workflow file issue",
+    # with no job-level error to read. So nix is installed here directly and
+    # supplies the toolchain the runner image lacks.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pleme-io/actions/git-credentials@2018933f32d08f29b5c4de5aeba207f31ae1d755
+        with:
+          bot-pat: ${{ secrets.BOT_PAT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # `access-tokens` is nix's OWN fetcher credential and is separate from
+      # the git credential above: frost's flake pulls PRIVATE pleme-io inputs,
+      # and without this nix 404s on them and reports a missing REPOSITORY
+      # rather than a missing token.
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            access-tokens = github.com=${{ secrets.BOT_PAT }}
+
+      # The one `run:` in this file, and it is glue: nix brings the compiler,
+      # `cargo test` is the entire payload. No skips — that is the point of
+      # the ledger.
+      - run: nix develop .#default --command cargo test --workspace --no-fail-fast
