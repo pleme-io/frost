@@ -122,38 +122,50 @@ jobs:
       # builder changes; do not assume.
       devshell: default
 
-      # ── The six KNOWN-RED tests, and why each is skipped rather than fixed
+      # ── TWO skips, and the four that were RETRACTED after measurement ─────
       #
-      # All six were verified failing at c3434ca — BEFORE this branch — so
-      # none of them is a regression introduced here, and none is this
-      # workflow's to fix. They are named exactly (libtest `--skip` is a
-      # SUBSTRING match, so a loose filter is a silent over-skip) and they are
-      # NOT `#[ignore]`d and NOT deleted: they still fail a local
-      # `cargo test`, and the `known-red-ledger` job below runs the full suite
-      # every time so their status stays visible in the Actions UI.
+      # This list started at six — the set known red on the operator's darwin
+      # workstation. The `known-red-ledger` job below then ran the FULL suite,
+      # no skips, on the runner, and reported 1019 passed / 2 failed. FOUR of
+      # the six pass on Linux and were only ever darwin failures:
       #
-      # WHAT THIS COSTS, stated plainly: a NEW failure that happens to land in
-      # one of these six test names would be skipped here too. The ledger job
-      # is the compensating control, and it is advisory, so the honest tier of
-      # this exclusion is only-mitigated — not sealed.
+      #   tests::load_round_trips_a_real_file            (frost-config)  PASSES
+      #   tests::load_treats_missing_file_as_defaults    (frost-config)  PASSES
+      #   a07_control_flow::return_from_function         (zsh_compat)    PASSES
+      #   a07_control_flow::return_with_code             (zsh_compat)    PASSES
+      #
+      # They are therefore NOT skipped — carrying them would have excluded four
+      # genuinely-green tests from the gate forever on the strength of a
+      # platform they do not run on. Over-exclusion is the same defect as a
+      # vacuous check, just wearing a safety label. They still fail a local
+      # darwin `cargo test`; that is a real darwin bug for someone to fix, and
+      # this workflow is not the place to hide it.
+      #
+      # WHAT REMAINS SKIPPED, each named exactly (libtest `--skip` is a
+      # SUBSTRING match, so a loose filter is a silent over-skip). Neither is
+      # `#[ignore]`d and neither is deleted — both still fail a local run, and
+      # the ledger job prints their real output on every push:
       #
       #   tests::apply_deftheme_merges_onto_borealis_default   (frost-lisp)
-      #     Measured: left Some("#D7C489") right Some("#EDC980") — the test
-      #     pins a colour the ishou-tokens rev no longer emits.
-      #   tests::load_round_trips_a_real_file                  (frost-config)
-      #   tests::load_treats_missing_file_as_defaults          (frost-config)
-      #     Both exercise on-disk config load; both red at c3434ca.
-      #   a07_control_flow::return_from_function               (frost/zsh_compat)
-      #   a07_control_flow::return_with_code                   (frost/zsh_compat)
-      #     Qualified by module on purpose — frost-builtins has its own
-      #     `tests::return_with_code`, which PASSES and must not be caught.
-      #   interactive_session_terminates_on_sigterm_with_no_trap (frost/persona_pty)
-      #     Fails ONLY under a parallel `--workspace` run; passes 10/10 alone.
-      #     The test's own doc comment names it a macOS kernel-teardown stall.
-      #     Kept skipped on Linux too rather than assuming the platform saves
-      #     us — a hung test in a shared reusable costs 6h of runner time, and
-      #     this suite already has a receipt for a hang making `cargo test
-      #     --workspace` unable to complete at all (2026-08-07).
+      #     Red on BOTH platforms — darwin and the runner agree:
+      #       left Some("#D7C489")  right Some("#EDC980")
+      #     The test pins a colour the current ishou-tokens rev no longer
+      #     emits. A genuine pre-existing defect, verified failing at c3434ca,
+      #     before this branch. Not this workflow's to fix.
+      #
+      #   interactive_session_terminates_on_sigterm_with_no_trap (persona_pty)
+      #     PASSES on the runner, and is skipped anyway — the one deliberate
+      #     over-exclusion here, on cost asymmetry rather than on evidence.
+      #     Its own doc comment records a macOS kernel-teardown stall under a
+      #     parallel `--workspace` run, and this suite has a receipt for a hang
+      #     making `cargo test --workspace` unable to complete AT ALL
+      #     (2026-08-07). A hang inside a reusable-workflow job cannot carry a
+      #     `timeout-minutes`, so it burns the 6h default. One test is not
+      #     worth that tail. Revisit if persona_pty ever gets a bounded harness.
+      #
+      # WHAT THE REMAINING EXCLUSION COSTS: a new failure landing on either of
+      # those two names is skipped here too. The ledger is the compensating
+      # control and it is advisory, so the honest tier is only-mitigated.
       #
       # `--all-features` is deliberately dropped from the reusable's default.
       # frost's only non-default-off feature is frost-exec's
@@ -162,10 +174,6 @@ jobs:
       test-args: >-
         --workspace --no-fail-fast --
         --skip tests::apply_deftheme_merges_onto_borealis_default
-        --skip tests::load_round_trips_a_real_file
-        --skip tests::load_treats_missing_file_as_defaults
-        --skip a07_control_flow::return_from_function
-        --skip a07_control_flow::return_with_code
         --skip interactive_session_terminates_on_sigterm_with_no_trap
     secrets: inherit
 
@@ -238,9 +246,23 @@ jobs:
   # whereas this job prints the real failure every time. The cost is one extra
   # runner leg per push.
   #
+  # IT HAS ALREADY PAID FOR ITSELF: its first run is what retracted four of
+  # the gate's six original skips (they were darwin-only failures), turning a
+  # guess into a measurement.
+  #
   # Bare toolchain via rust-gate rather than the nix devShell: this leg is
   # advisory, and a second `nix develop` would double the expensive part of
   # the pipeline to produce a verdict nothing gates on.
+  #
+  # ⚠ EXPECT `frostmourne_rc_apply_summary_is_byte_stable` RED HERE, and do not
+  # chase it. That is the bare-toolchain leg, not the devShell, so the ambient
+  # PATH differs and the rc's conditional aliases resolve differently:
+  # `aliases = 180` here vs the golden's 179. The seal is calibrated to the
+  # pinned devShell — which is the environment worth sealing against — and
+  # passes there. It is a third machine-dependence axis of that fixture, this
+  # one SEMANTIC (the rc genuinely describes a different shell on a different
+  # box) rather than cosmetic, so unlike the `$HOME` and PATH-directory axes it
+  # is not something the renderer can normalize away.
   #
   # `timeout-minutes: 30` is load-bearing, not decoration — with no skips this
   # job runs persona_pty's teardown test, and the suite has a receipt for a
