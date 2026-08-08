@@ -707,7 +707,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "frost"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "clap",
@@ -748,7 +748,7 @@ dependencies = [
 
 [[package]]
 name = "frost-builtins"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "pretty_assertions",
@@ -757,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "frost-compat"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "serde",
@@ -767,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "frost-complete"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "frost-lisp",
@@ -784,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "frost-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -796,7 +796,7 @@ dependencies = [
 
 [[package]]
 name = "frost-exec"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "awase",
  "compact_str",
@@ -819,7 +819,7 @@ dependencies = [
 
 [[package]]
 name = "frost-expand"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "compact_str",
  "frost-glob",
@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "frost-glob"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "insta",
  "pretty_assertions",
@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "frost-history"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "pretty_assertions",
  "tempfile",
@@ -851,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "frost-lexer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bstr",
  "compact_str",
@@ -862,7 +862,7 @@ dependencies = [
 
 [[package]]
 name = "frost-lisp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "compact_str",
  "frost-builtins",
@@ -880,7 +880,7 @@ dependencies = [
 
 [[package]]
 name = "frost-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "frost-lisp",
@@ -894,7 +894,7 @@ dependencies = [
 
 [[package]]
 name = "frost-options"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "insta",
  "pretty_assertions",
@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "frost-parser"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "compact_str",
  "frost-lexer",
@@ -914,7 +914,7 @@ dependencies = [
 
 [[package]]
 name = "frost-prompt"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "itoa",
  "libc",
@@ -924,7 +924,7 @@ dependencies = [
 
 [[package]]
 name = "frost-spec"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -933,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "frost-verify"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "clap",
@@ -946,7 +946,7 @@ dependencies = [
 
 [[package]]
 name = "frost-zle"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "frost-lexer",
  "frost-options",
