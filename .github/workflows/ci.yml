@@ -34,8 +34,8 @@ name: ci
 # never starts. Contrast mado (PUBLIC), whose identical cargo-ci.yml shim
 # resolved `ubuntu-latest` and went green in 33m on the same day.
 #
-# So this shim calls cargo-ci.yml's OWN test leg directly, with an explicit
-# GitHub-hosted runner. mado's ci.yml sets the precedent for calling this
+# So this shim calls cargo-ci.yml's OWN test leg directly, and lets that
+# reusable route the runner by repo visibility. mado's ci.yml sets the precedent for calling this
 # reusable directly (its `release-tests` job). What that costs, stated rather
 # than glossed: no `nix flake check` leg, so `checks.build` (does the shipped
 # artifact compile under nix) is NOT covered here. gen-spec.yml already covers
@@ -78,6 +78,32 @@ name: ci
 #   cargo test --workspace --no-fail-fast, with the six --skips below
 #                                          -> exit 0, 1015 passed / 0 failed
 
+#
+# ── CORRECTED 2026-08-08: the GitHub-hosted pin is GONE ─────────────────────
+#
+# Everything above is an accurate record of a real measurement, and the
+# conclusion drawn from it was wrong. The pool was not broken — camelot was
+# PARKED. `akeylesslabs/k8s` `clusters/camelot-eks/kustomization.yaml` carries
+# `components: [park]`, which floors the cluster to ~7% of its bill by setting
+# the ARC controller Deployment to `replicaCount: 0` and every runner scale set
+# to `maxRunners: 0`. Flux reports both ARC HelmReleases Ready/succeeded
+# because a zero-replica Deployment installs perfectly — so the cluster looks
+# healthy and serves nothing, and the symptom is silence rather than an error.
+# It was re-parked 2026-08-07 after a partial unpark drained exactly this kind
+# of private-repo queue.
+#
+# Routing around a parked pool onto `ubuntu-24.04` is what actually cost us:
+# on 2026-08-08 those pins exhausted the org's Actions spending limit, and
+# every private repo in pleme-io then refused to start any job at all. The
+# standing rule is closed-source -> Camelot CI in akeyless-development,
+# open-source -> free GitHub-hosted; a metered runner on a private repo is
+# never the answer. A job queued against a parked Camelot costs nothing and
+# runs the moment it is unparked. A metered job bills whether it passes or not.
+#
+# So this workflow routes through `pleme-io/actions/runner-resolve` like the
+# rest of the fleet. If jobs sit queued, the fix is to unpark camelot's CI
+# rungs (l5-ceilings, l4-operators, l1-ci — bottom-up), not to re-pin here.
+
 on:
   push:
     branches: [main]
@@ -91,6 +117,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Bootstrapping the resolver cannot call the resolver, so THIS job's runs-on
+  # is the one place a visibility-only ternary stays correct. Private repos
+  # route to Camelot self-hosted, public repos to free GitHub-hosted. A metered
+  # GitHub-hosted runner on a PRIVATE repo is the one outcome the org invariant
+  # in `pleme-io/actions/runner-resolve` forbids, and on 2026-08-08 that exact
+  # pin exhausted the org's Actions spending limit, blocking every private repo
+  # in pleme-io. Note a queued job on a parked Camelot costs nothing; a metered
+  # job on a private repo costs money whether or not it succeeds.
+  resolve-runner:
+    name: resolve build runner
+    runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-latest' }}
+    outputs:
+      runner: ${{ steps.resolve.outputs.runner }}
+    steps:
+      - id: resolve
+        uses: pleme-io/actions/runner-resolve@main
+        with:
+          public-runner-default: "ubuntu-24.04"
+
   # ── The gate ───────────────────────────────────────────────────────────
   #
   # `cargo fmt --all -- --check` + `cargo test` inside `.#default`, with the
@@ -99,7 +144,9 @@ jobs:
   cargo-test:
     uses: pleme-io/substrate/.github/workflows/nix-devshell-cargo-test.yml@main
     with:
-      runner: ubuntu-24.04
+      # No `runner:` — substrate's reusable now routes by caller repo
+      # visibility. This repo is PRIVATE, so it resolves to Camelot
+      # self-hosted instead of billing GitHub-hosted minutes.
 
       # MEASURED before wiring, because this reusable's own header records a
       # case where it "reached" three consumers and ran the tests of ZERO of
@@ -197,7 +244,8 @@ jobs:
   # gating it behind that suite would be exactly backwards.
   hang-sweep:
     name: hang sweep (termination, 46 inputs)
-    runs-on: ubuntu-24.04
+    needs: resolve-runner
+    runs-on: ${{ needs.resolve-runner.outputs.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -269,7 +317,8 @@ jobs:
   # hang. A `continue-on-error` job that hangs still burns the default 6h.
   known-red-ledger:
     name: known-red ledger (advisory, never blocks)
-    runs-on: ubuntu-24.04
+    needs: resolve-runner
+    runs-on: ${{ needs.resolve-runner.outputs.runner }}
     continue-on-error: true
     timeout-minutes: 30
     steps:
