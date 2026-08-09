@@ -217,9 +217,14 @@ impl FrostHighlighter {
     }
 
     /// Add a single name to the known set post-construction. Useful for
-    /// incrementally tracking `alias foo=bar` invocations mid-session,
-    /// though the REPL currently rebuilds the highlighter each read_line
-    /// so this is mostly for tests.
+    /// incrementally tracking `alias foo=bar` invocations mid-session.
+    ///
+    /// The REPL builds the highlighter ONCE, before the read_line loop
+    /// (`frost::interactive`), and hands it to reedline — it is never
+    /// rebuilt per iteration, so a name added after startup can only
+    /// arrive through here. Nothing calls it in the REPL today, which
+    /// is why an alias defined mid-session is not highlighted as a
+    /// known command until the next shell.
     pub fn insert_known(&mut self, name: impl Into<String>) {
         self.known.insert(name.into());
     }

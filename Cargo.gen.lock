@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "a88ef2c477486e89aba4c8bce7c995c7b3481d33d5dcc4a65ebf6a18a8d6745f",
+  "cargo_lock_sha256": "9b64032a116aa57a43bfbc668819e620ea87641f426fad7e69009c2fd4a3e20d",
   "manifest_sha256": {
     "Cargo.toml": "a832782f06e57b5e104a31fcd5bd67b9b9da36b2e45c1b05d8a33c1c5d28a923",
     "crates/frost-builtins/Cargo.toml": "9c3f46cf0585359618f321ca7f27e1a17f8728b6247848a6936e3d85c8d998a7",
@@ -19,8 +19,8 @@
     "crates/frost-prompt/Cargo.toml": "24b173373611041c9c712e2fbb87e70180343c20064b7fee7e6e545ec098d88c",
     "crates/frost-spec/Cargo.toml": "082c08dec4f2603084515d6bc2f80ea9d654c017813db35d7e1d8ef90067ef44",
     "crates/frost-verify/Cargo.toml": "1fb16dccf197f8336e93383d21eac2e38b5053e3e21750661d37a1ff10ecd677",
-    "crates/frost-zle/Cargo.toml": "59050ce2c47bd730fbd4ac8881e149fa29aa9abf8f5cf60b49966e41d87f8aab",
-    "crates/frost/Cargo.toml": "ff6537ebfe86d48e1f047632a658e990a4fbb8d2871c55e6fefa89a0fe67913c"
+    "crates/frost-zle/Cargo.toml": "62926aa897a2395d61ef28c331f43df1e5d892016533c0301590e0ced0a195f3",
+    "crates/frost/Cargo.toml": "1b94b0cfea5a487a01c85a2e1b06c673e0acf18b22abd2835ebd2e13ddb03005"
   },
   "target_resolves": {
     "base": {
@@ -1788,6 +1788,16 @@
             "tree": "target"
           },
           {
+            "name": "frost_config",
+            "package_key": "frost-config-0.1.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "frost_exec",
             "package_key": "frost-exec-0.1.1",
             "kind": "normal",
@@ -2900,6 +2910,16 @@
       },
       "frost-zle-0.1.1": {
         "runtime_dependencies": [
+          {
+            "name": "crossterm",
+            "package_key": "crossterm-0.28.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
           {
             "name": "frost_lexer",
             "package_key": "frost-lexer-0.1.1",

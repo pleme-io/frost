@@ -211,11 +211,27 @@ impl Default for HistoryConfig {
 fn default_history_file() -> String {
     "~/.local/share/frost/history".to_string()
 }
+/// Default in-memory history cap.
+///
+/// 10_000 was reedline's own default carried over unexamined, and it is
+/// far below what this hardware wants: the fleet directive for the
+/// mado → frostmourne stack is that command history **never silently
+/// drops** — it fills disk before it exhausts itself. At ~80 bytes per
+/// entry, 5M entries is ~400 MB of history, comfortably held by an
+/// M4 Pro / 48 GB workstation and orders of magnitude past any human
+/// session lifetime.
+///
+/// This is the FALLBACK, not the ceiling: a `(defhistory :size …)` in
+/// the rc exports `HISTSIZE`, and `frost::interactive` prefers that
+/// value (frostmourne authors 100_000_000). This number is what frost
+/// uses when no rc said otherwise.
+pub const DEFAULT_HISTORY_SIZE: usize = 5_000_000;
+
 fn default_history_size() -> usize {
-    10_000
+    DEFAULT_HISTORY_SIZE
 }
 fn default_history_save() -> usize {
-    10_000
+    DEFAULT_HISTORY_SIZE
 }
 fn default_ignore_dups() -> bool {
     true
@@ -382,12 +398,17 @@ mod tests {
         assert!(p.subst);
     }
 
+    /// The cap is deliberately absurd — "fills disk before it drops a
+    /// command" is the directive, not "matches zsh's conventional
+    /// 10_000". Pinned so a future edit to one of the two default
+    /// functions cannot silently desync them.
     #[test]
-    fn history_defaults_match_zsh_conventional_limits() {
+    fn history_defaults_are_effectively_unbounded() {
         let h = HistoryConfig::default();
         assert!(h.file.starts_with("~/"));
-        assert_eq!(h.size, 10_000);
-        assert_eq!(h.save, 10_000);
+        assert_eq!(h.size, DEFAULT_HISTORY_SIZE);
+        assert_eq!(h.save, DEFAULT_HISTORY_SIZE);
+        assert_eq!(DEFAULT_HISTORY_SIZE, 5_000_000);
         assert!(h.ignore_dups);
         assert!(!h.ignore_space);
     }
