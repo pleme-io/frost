@@ -15,8 +15,10 @@ pub mod redirect;
 pub mod sys;
 pub mod trap;
 pub mod tty_takeover;
+pub mod usage;
 
 pub use env::{ShellEnv, frecent_dirs};
+pub use usage::{frecent_commands, record_command};
 pub use execute::{ControlFlow, ExecError, Executor};
 pub use job::{Job, JobTable};
 pub use modal::{FrostMode, KeyDecision, ModalState};

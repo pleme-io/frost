@@ -47,3 +47,7 @@ frecency-wadachi = ["dep:pleme-io-wadachi"]
 frost-lexer = { workspace = true }
 pretty_assertions = { workspace = true }
 insta = { workspace = true }
+# tempfile — the command-usage store tests point at a temp DB via an explicit
+# path rather than the process-global WADACHI_DB, so parallel test threads
+# cannot race each other's env writes.
+tempfile = "3"

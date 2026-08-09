@@ -51,10 +51,15 @@ mod cli {
             stdout.contains("frost"),
             "version output should contain 'frost', got:\n{stdout}"
         );
-        // The workspace version is 0.1.0 — verify it appears.
+        // Derived, never hardcoded: this asserted the literal "0.1.0" and went
+        // red the moment `release: workspace v0.1.1` landed — a stale test
+        // pinning a number the release is supposed to move. `CARGO_PKG_VERSION`
+        // is the same value the binary prints, so the assertion tracks the
+        // release instead of rotting behind it.
+        let expected = env!("CARGO_PKG_VERSION");
         assert!(
-            stdout.contains("0.1.0"),
-            "version output should contain '0.1.0', got:\n{stdout}"
+            stdout.contains(expected),
+            "version output should contain '{expected}', got:\n{stdout}"
         );
     }
 
