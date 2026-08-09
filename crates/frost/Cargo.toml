@@ -24,6 +24,11 @@ frost-prompt = { workspace = true }
 frost-history = { workspace = true }
 frost-lisp = { workspace = true }
 frost-mcp = { workspace = true }
+# Typed config crate — consulted for `DEFAULT_HISTORY_SIZE`, the single
+# declared fallback for "the rc did not set HISTSIZE". Keeping the
+# number here rather than re-typing a literal in main.rs is what stops
+# the two from drifting.
+frost-config = { workspace = true }
 # ishou-tokens — the fleet shell-error vocabulary (ShellSignals): warm-frost
 # Nord emoji per failure class with a Brazilian-warmth accent, so a failing
 # command speaks in the fleet's voice instead of a cold grey error.

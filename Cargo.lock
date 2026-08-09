@@ -716,6 +716,7 @@ dependencies = [
  "frost-builtins",
  "frost-compat",
  "frost-complete",
+ "frost-config",
  "frost-exec",
  "frost-history",
  "frost-lexer",
@@ -948,6 +949,7 @@ dependencies = [
 name = "frost-zle"
 version = "0.1.1"
 dependencies = [
+ "crossterm 0.28.1",
  "frost-lexer",
  "frost-options",
  "insta",

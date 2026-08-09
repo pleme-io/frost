@@ -92,6 +92,116 @@ fn with_bindings_applies_rc_bindings_without_stderr_spam() {
 }
 
 #[test]
+fn rc_binds_the_widget_set_the_mcp_snapshot_reports() {
+    // `FrostState.widgets` is what `frost_status` counts, and it was
+    // never written — a live shell reported "0 widgets" while the rc
+    // had six of the seven built-ins bound. Pin the real number against
+    // the real rc so neither the rc dropping a binding nor the
+    // derivation losing the two-key shape passes unnoticed.
+    let mut env = frost_exec::ShellEnv::new();
+    let summary = frost_lisp::apply_source(FIXTURE, &mut env).unwrap();
+    let widgets = summary.bound_widgets();
+    assert_eq!(
+        widgets,
+        vec![
+            "__frost_widget_clear__",
+            "__frost_widget_copy-to-clipboard__",
+            "__frost_widget_edit_line__",
+            "__frost_widget_insert-last-arg__",
+            "__frost_widget_kill-buffer__",
+            "__frost_widget_paste-from-clipboard__",
+            "__frost_widget_toggle-sudo__",
+        ],
+        "frostmourne rc widget bindings drifted"
+    );
+    // edit-line is bound as the two-key `C-x e`, so it only appears if
+    // the multi-key continuation slot is read too.
+    assert!(
+        summary
+            .multi_key_bindings
+            .iter()
+            .any(|(_, _, action)| action == "__frost_widget_edit_line__"),
+        "edit-line is expected to be a two-key binding — the case a \
+         bind_map-only reading would drop"
+    );
+}
+
+#[test]
+fn every_rc_chord_resolves_in_both_vi_keymaps() {
+    // The defect: `set_edit_mode(Vi)` merged the rc's bindings into the
+    // INSERT keymap only and handed reedline a raw
+    // `default_vi_normal_keybindings()`. Ten of the twelve chords the
+    // frostmourne rc authors (C-x, C-u, C-t, C-f, M-?, M-y, M-Y, M-.,
+    // M-s, M-c) resolved to `ReedlineEvent::None` after Esc, and C-r
+    // fell through to reedline's built-in `SearchHistory` instead of
+    // the skim-history picker — a wrong UI, not a dead key, which is
+    // why it read as "Ctrl-R is broken" rather than "vi normal is
+    // unbound".
+    //
+    // Assert the property directly against the REAL rc: every chord it
+    // authors resolves to the SAME ExecuteHostCommand in insert AND in
+    // normal.
+    use frost_zle::{ParsedChord, ViKeymaps, classify_chord};
+    use reedline::{KeyCode, KeyModifiers, ReedlineEvent};
+
+    let mut env = frost_exec::ShellEnv::new();
+    let summary = frost_lisp::apply_source(FIXTURE, &mut env).unwrap();
+    let keymaps = ViKeymaps::from_bindings(&summary.bind_map);
+
+    // Last-writer-wins, matching `apply_custom_bindings_to`: a chord
+    // rebound later in the rc must be expected at its final target, not
+    // its first.
+    let mut expected: Vec<(String, (KeyModifiers, KeyCode), String)> = Vec::new();
+    for (chord, fn_name) in &summary.bind_map {
+        let ParsedChord::Single(modifier, key) = classify_chord(chord) else {
+            // Multi-key chords are recorded but not dispatchable yet;
+            // they are covered by `classify_chord`'s own tests.
+            continue;
+        };
+        match expected
+            .iter_mut()
+            .find(|(_, combo, _)| *combo == (modifier, key))
+        {
+            Some(slot) => slot.2 = fn_name.clone(),
+            None => expected.push((chord.clone(), (modifier, key), fn_name.clone())),
+        }
+    }
+
+    assert!(
+        expected.len() >= 10,
+        "expected the frostmourne rc to author 10+ single-key chords, got {} — \
+         the fixture may have drifted and this test would be vacuous",
+        expected.len()
+    );
+
+    for (which, kb) in [("insert", keymaps.insert()), ("normal", keymaps.normal())] {
+        for (chord, (modifier, key), fn_name) in &expected {
+            match kb.find_binding(*modifier, *key) {
+                Some(ReedlineEvent::ExecuteHostCommand(got)) => assert_eq!(
+                    &got, fn_name,
+                    "vi {which} keymap: {chord} runs {got:?}, expected {fn_name:?}"
+                ),
+                other => panic!(
+                    "vi {which} keymap: rc chord {chord} ({fn_name}) resolved to {other:?} \
+                     instead of its ExecuteHostCommand — the rc binding never reached this keymap"
+                ),
+            }
+        }
+        // Tab was bound in insert but not in normal, so the completion
+        // menu was unreachable the moment the user pressed Esc.
+        match kb.find_binding(KeyModifiers::NONE, KeyCode::Tab) {
+            Some(ReedlineEvent::UntilFound(events)) => assert!(
+                events
+                    .iter()
+                    .any(|e| matches!(e, ReedlineEvent::Menu(n) if n == "completion_menu")),
+                "vi {which} keymap: Tab does not reach the completion_menu: {events:?}"
+            ),
+            other => panic!("vi {which} keymap: Tab is not bound to completion: {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn every_picker_binary_is_a_valid_word() {
     // Picker sentinels round-trip through reedline's ExecuteHostCommand.
     // A spec with whitespace / metachars would break the dispatch path.
