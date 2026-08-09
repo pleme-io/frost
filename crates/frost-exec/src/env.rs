@@ -725,6 +725,13 @@ impl ShellEnvironment for ShellEnv {
         // directory change flows through chdir → here exactly once.
         #[cfg(feature = "frecency-wadachi")]
         {
+            // Ephemeral directories are not recorded. `visits` is append-only and
+            // never pruned, so a scratch dir written once outranks real work
+            // forever — measured at 9.4% of the live store, with a temp path
+            // sitting third. See `crate::usage::is_ephemeral`.
+            if crate::usage::is_ephemeral(path) {
+                return;
+            }
             let _ = pleme_io_wadachi::record(path);
         }
         #[cfg(not(feature = "frecency-wadachi"))]

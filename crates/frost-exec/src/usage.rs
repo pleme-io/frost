@@ -43,6 +43,49 @@ use std::path::{Path, PathBuf};
 /// Store filename for command usage, alongside wadachi's directory store.
 const COMMANDS_DB: &str = "commands.db";
 
+/// Path prefixes whose contents are **ephemeral** — recording them pollutes the
+/// ranking with directories the operator will never navigate to again, and which
+/// usually no longer exist.
+///
+/// Measured on the live fleet store 2026-08-09: **125 of 1,328 visits (9.4%)**
+/// sat under `/private/tmp` — agent scratchpads, `nix-shell.*` build dirs and
+/// test fixtures. `/private/tmp/fsreal` had 10 visits and was ranking **third**
+/// in the operator's directory frecency, above real repositories.
+///
+/// It compounds, because `visits` is **append-only and never pruned**: wadachi's
+/// indexer prunes `discovered` rows whose directory is gone, but a *visited*
+/// directory that has since been deleted keeps its rank forever. So every
+/// ephemeral write is permanent noise.
+///
+/// `/nix/store` is included deliberately: store paths are immutable and
+/// read-only, so a `cd` there is an inspection, never a workspace to return to.
+const EPHEMERAL_PREFIXES: &[&str] = &[
+    "/tmp/",
+    "/private/tmp/",
+    // macOS `$TMPDIR`, both spellings — FSEvents and `realpath` disagree on the
+    // `/private` prefix, so a single spelling would leak half the paths through.
+    "/var/folders/",
+    "/private/var/folders/",
+    "/nix/store/",
+];
+
+/// `true` when `path` is somewhere the operator will not want ranked.
+///
+/// **The destination is a typed policy inside wadachi**, so every consumer
+/// inherits it rather than each recorder re-deciding: wadachi already has an
+/// `IgnoreSet`, but it matches directory *names* (`BTreeSet<String>` +
+/// `index_hidden`) and cannot express a path prefix. Extending it needs a
+/// wadachi release, and its publish pipeline is red — so the guard lives at
+/// frost's recorder for now, which is sound because frost is documented as
+/// **the sole recorder**: filtering here covers every write today.
+///
+/// Exact matches are deliberately NOT excluded — `/tmp` itself is a real place
+/// an operator may sit; it is the churn *underneath* it that is noise.
+#[must_use]
+pub fn is_ephemeral(path: &str) -> bool {
+    EPHEMERAL_PREFIXES.iter().any(|p| path.starts_with(p))
+}
+
 /// A command-usage store failure.
 ///
 /// wadachi returns `anyhow::Error`, which this crate does not speak — its error
@@ -153,6 +196,71 @@ pub fn frecent_commands_from(db: &Path, limit: usize) -> Result<Vec<String>, Usa
         .into_iter()
         .map(|r| r.path.to_string_lossy().into_owned())
         .collect())
+}
+
+#[cfg(test)]
+mod ephemeral_tests {
+    use super::is_ephemeral;
+
+    /// The exact paths measured polluting the live store.
+    #[test]
+    fn the_measured_offenders_are_excluded() {
+        for p in [
+            "/private/tmp/fsreal",
+            "/private/tmp/claude-501/-Users-drzzln-code/abc/scratchpad/fixt/plain",
+            "/private/tmp/nix-shell.E5cmwI",
+            "/tmp/whatever",
+            "/var/folders/36/xyz/T/TemporaryItems",
+            "/private/var/folders/36/xyz/T",
+            "/nix/store/abc123-foo/bin",
+        ] {
+            assert!(is_ephemeral(p), "must be excluded: {p}");
+        }
+    }
+
+    /// Real work must still be recorded — an over-broad filter would silently
+    /// stop the feature working at all, which is worse than the noise.
+    #[test]
+    fn real_workspaces_are_still_recorded() {
+        for p in [
+            "/Users/drzzln/code/github/pleme-io/nix",
+            "/Users/drzzln/code/github/pleme-io/frost/crates/frost-exec",
+            "/Users/drzzln",
+            "/",
+            "/etc",
+            "/usr/local/bin",
+        ] {
+            assert!(!is_ephemeral(p), "must still be recorded: {p}");
+        }
+    }
+
+    /// Both macOS spellings of `$TMPDIR` are covered. FSEvents reports resolved
+    /// `/private/...` paths while a shell may hold the unprefixed form, so one
+    /// spelling alone would leak half of them through.
+    #[test]
+    fn both_macos_tmpdir_spellings_are_covered() {
+        assert!(is_ephemeral("/var/folders/aa/bb/T/x"));
+        assert!(is_ephemeral("/private/var/folders/aa/bb/T/x"));
+        assert!(is_ephemeral("/tmp/x"));
+        assert!(is_ephemeral("/private/tmp/x"));
+    }
+
+    /// The bare directory is a legitimate place to stand; only the churn
+    /// underneath it is noise. Guards against a prefix that accidentally
+    /// swallows its own root.
+    #[test]
+    fn the_bare_tmp_root_itself_is_not_excluded() {
+        assert!(!is_ephemeral("/tmp"));
+        assert!(!is_ephemeral("/private/tmp"));
+        assert!(!is_ephemeral("/nix/store"));
+    }
+
+    /// A prefix must not match mid-path — `/home/x/tmp/y` is real work.
+    #[test]
+    fn prefixes_anchor_at_the_root_not_mid_path() {
+        assert!(!is_ephemeral("/Users/drzzln/code/tmp/notes"));
+        assert!(!is_ephemeral("/Users/drzzln/nix/store/fake"));
+    }
 }
 
 #[cfg(all(test, feature = "frecency-wadachi"))]
