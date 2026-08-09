@@ -1685,6 +1685,12 @@ fn interactive(
                             // Rust-constructed command, not user input.
                             if submit {
                                 let _ = history.push(text.clone());
+                                // A picker submission is a real execution, so
+                                // it counts toward usage just like a typed
+                                // line. Both accept-paths record, or the
+                                // ranking silently under-counts whatever the
+                                // operator drives through a picker.
+                                frost_exec::record_command(&text);
                                 run_hook("__frost_hook_preexec", env);
                                 match run(&text, env) {
                                     RunOutcome::Completed(_) => {}
@@ -1736,6 +1742,14 @@ fn interactive(
                     continue;
                 }
                 let _ = history.push(to_run.clone());
+                // Record the command into wadachi's append-only usage store,
+                // beside the history push so the two halves of "the operator
+                // ran this" stay adjacent. $HISTFILE is a transcript that gets
+                // rewritten wholesale; the store is a ledger that only ever
+                // appends, so a re-run ACCUMULATES and Ctrl-R can rank by how
+                // often a command is actually used. Best-effort by contract —
+                // see `frost_exec::usage`.
+                frost_exec::record_command(&to_run);
                 // Flush reedline's history (the sole $HISTFILE writer) NOW,
                 // before we run the command, so a crash mid-command still
                 // leaves a complete, correctly-ordered trail — the eager
