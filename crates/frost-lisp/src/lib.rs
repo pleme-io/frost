@@ -244,6 +244,40 @@ pub struct ApplySummary {
     pub warnings: Vec<ApplyWarning>,
 }
 
+impl ApplySummary {
+    /// Every built-in widget sentinel this rc actually bound, sorted
+    /// and de-duplicated.
+    ///
+    /// Both binding shapes count. A single-chord
+    /// `(defbind :key "C-l" :action "__frost_widget_clear__")` lands
+    /// in [`Self::bind_map`], while a two-key one (`"C-x e"`) parks
+    /// the same sentinel in the [`Self::multi_key_bindings`]
+    /// continuation slot — reading only the first under-reports
+    /// edit-line, which is bound exactly that way in the frostmourne
+    /// rc.
+    ///
+    /// This lives here, next to `is_widget_action` and the two maps it
+    /// reads, so the answer to "which widgets are live?" has one
+    /// definition. `frost-mcp`'s `FrostState.widgets` was declared and
+    /// read (`frost_status` reports `counts.widgets`) but never
+    /// written, so a live shell reported `0` while all seven built-in
+    /// widgets were bound and working.
+    #[must_use]
+    pub fn bound_widgets(&self) -> Vec<String> {
+        let mut found: Vec<String> = self
+            .bind_map
+            .iter()
+            .map(|(_, action)| action)
+            .chain(self.multi_key_bindings.iter().map(|(_, _, action)| action))
+            .filter(|action| is_widget_action(action))
+            .cloned()
+            .collect();
+        found.sort();
+        found.dedup();
+        found
+    }
+}
+
 /// A non-fatal condition detected while applying rc source. Unlike
 /// [`LispError`] these never abort the load — the offending form is
 /// skipped or degraded and the shell still starts.
@@ -1558,6 +1592,39 @@ mod tests {
         assert_eq!(stored, "__frost_widget_edit_line__");
         // No wrapper function under the two-key compound name.
         assert!(!env.functions.contains_key("__frost_bind_C-x_e"));
+    }
+
+    /// `FrostState.widgets` was never written, so `frost_status`
+    /// reported "0 widgets" on a shell where six were bound. The
+    /// derivation must see BOTH binding shapes — the two-key one is
+    /// exactly how the frostmourne rc binds edit-line, so a
+    /// bind_map-only reading silently loses it.
+    #[test]
+    fn bound_widgets_sees_single_and_two_key_bindings() {
+        let mut env = ShellEnv::new();
+        let src = r#"
+            (defbind :key "C-l"   :action "__frost_widget_clear__")
+            (defbind :key "M-s"   :action "__frost_widget_toggle-sudo__")
+            (defbind :key "C-x e" :action "__frost_widget_edit_line__")
+            (defbind :key "M-?"   :action "help")
+        "#;
+        let s = apply_source(src, &mut env).unwrap();
+        assert_eq!(
+            s.bound_widgets(),
+            vec![
+                "__frost_widget_clear__".to_string(),
+                "__frost_widget_edit_line__".to_string(),
+                "__frost_widget_toggle-sudo__".to_string(),
+            ],
+            "two-key edit-line must be counted, and `help` must not be"
+        );
+    }
+
+    #[test]
+    fn bound_widgets_is_empty_when_no_widget_is_bound() {
+        let mut env = ShellEnv::new();
+        let s = apply_source(r#"(defbind :key "M-?" :action "help")"#, &mut env).unwrap();
+        assert!(s.bound_widgets().is_empty());
     }
 
     #[test]
