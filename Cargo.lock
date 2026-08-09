@@ -814,6 +814,7 @@ dependencies = [
  "nix",
  "pleme-io-wadachi",
  "pretty_assertions",
+ "tempfile",
  "thiserror 2.0.18",
  "tracing",
 ]
