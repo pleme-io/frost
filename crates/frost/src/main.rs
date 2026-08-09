@@ -1377,6 +1377,40 @@ fn is_complete(src: &str) -> bool {
     !in_single && !in_double && paren <= 0 && brace <= 0 && bracket <= 0 && kw.is_empty()
 }
 
+/// How many history entries reedline keeps, resolved from the rc.
+///
+/// `(defhistory :size N)` is the authoring surface, and `frost-lisp`
+/// lowers it to an exported `HISTSIZE` — that env var is the ONLY
+/// channel the value travels on, so reading it back here is what makes
+/// the rc form mean anything. Before this, `ZleEngine::new` took a
+/// hardcoded `10_000` and frostmourne's `:size 100000000` reached the
+/// environment and then died there: the operator authored an
+/// effectively-unlimited history and got 10k.
+///
+/// `frost-config`'s `HistoryConfig` is a separate, YAML-fed surface
+/// that the rc does not populate, so it supplies only the fallback —
+/// one number, declared once, for "no rc said otherwise".
+///
+/// Unparseable or zero values fall back rather than fail: a typo in
+/// `HISTSIZE` must not cost the operator their history file, and
+/// reedline treats a 0 capacity as "keep nothing".
+fn resolve_history_capacity(env: &frost_exec::ShellEnv) -> usize {
+    match env.get_var("HISTSIZE") {
+        Some(raw) => match raw.trim().parse::<usize>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                eprintln!(
+                    "frost: warning: HISTSIZE={raw:?} is not a positive integer; \
+                     using {} entries",
+                    frost_config::DEFAULT_HISTORY_SIZE
+                );
+                frost_config::DEFAULT_HISTORY_SIZE
+            }
+        },
+        None => frost_config::DEFAULT_HISTORY_SIZE,
+    }
+}
+
 fn interactive(
     env: &mut frost_exec::ShellEnv,
     rc_completions: std::collections::HashMap<String, Vec<String>>,
@@ -1402,7 +1436,8 @@ fn interactive(
     sync_trapped_signals(env);
 
     let history_path = frost_zle::default_history_path();
-    let zle_base = match ZleEngine::new(&history_path, 10_000) {
+    let history_capacity = resolve_history_capacity(env);
+    let zle_base = match ZleEngine::new(&history_path, history_capacity) {
         Ok(z) => z,
         Err(e) => {
             eprintln!("frost: ZLE init failed ({e}); falling back to in-memory history");
@@ -2019,6 +2054,12 @@ fn main() {
                     action: p.action.clone(),
                 })
                 .collect();
+            // Widgets bound by the rc. The field was declared and read
+            // (`frost_status` reports `counts.widgets`) but never
+            // written, so a live shell reported "0 widgets" while all
+            // seven built-ins were bound and working (counted against
+            // the frostmourne rc, 2026-08-09).
+            mcp_state.widgets = summary.bound_widgets();
             mcp_state.history_file = env.get_var("HISTFILE").map(std::path::PathBuf::from);
             mcp_state.alias_count = summary.aliases;
             mcp_state.subcmd_count = summary.subcmds.len();

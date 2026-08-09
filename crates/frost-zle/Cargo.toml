@@ -15,6 +15,12 @@ nu-ansi-term = "0.50"
 thiserror = { workspace = true }
 nix = { workspace = true }
 reedline = "0.42"
+# `reedline::CursorConfig` carries `crossterm::cursor::SetCursorStyle`
+# and reedline re-exports only KeyCode / KeyModifiers / Color, so the
+# per-mode cursor shapes have to come from crossterm directly. Pinned
+# to 0.28 to match reedline's own crossterm — a 0.29 `SetCursorStyle`
+# is a different type and would not compile into `CursorConfig`.
+crossterm = "0.28"
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

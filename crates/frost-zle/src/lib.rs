@@ -10,21 +10,32 @@
 //! * Multi-line continuation: the caller owns "is this a complete command"
 //!   detection; when it returns `ReadLineOutcome::Incomplete`, `read_line`
 //!   re-prompts with `PS2` (default `> `) and concatenates.
+//! * vi mode ([`ZleEngine::set_edit_mode`], zsh's `bindkey -v`), with the
+//!   rc's chords merged into BOTH halves of the keymap pair via
+//!   [`ViKeymaps`], a per-mode prompt indicator, and a per-mode terminal
+//!   cursor shape.
+//! * rc-authored keymaps — `(defbind …)` / `(defpicker …)` chords land
+//!   through [`ZleEngine::with_bindings`] and survive every edit-mode
+//!   rebuild.
+//! * Completion: [`ZleEngine::with_completer`] installs a completer plus
+//!   the `completion_menu`, and Tab is wired to it in every keymap.
 //!
 //! Not yet implemented:
 //!
-//! * vi mode / custom keymaps.
-//! * Completion engine hookup (wire-up point is future `with_completer`).
+//! * Multi-key chord dispatch — `"C-x e"` parses (see [`ParsedChord`])
+//!   but reedline binds one chord at a time, so the REPL handles the
+//!   second keystroke itself.
 //! * Prompt substitution (`PROMPT_SUBST`) — the caller should expand the
 //!   prompt string before passing it to [`ZleEngine::set_prompt`].
 
 use std::path::{Path, PathBuf};
 
 use reedline::{
-    Completer, DefaultHinter, EditCommand, EditMode, Emacs, FileBackedHistory, Highlighter, Hinter,
-    KeyCode, KeyModifiers, MenuBuilder, Prompt, PromptEditMode, PromptHistorySearch,
-    PromptHistorySearchStatus, Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
-    default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
+    Completer, CursorConfig, DefaultHinter, EditCommand, EditMode, Emacs, FileBackedHistory,
+    Highlighter, Hinter, KeyCode, KeyModifiers, MenuBuilder, Prompt, PromptEditMode,
+    PromptHistorySearch, PromptHistorySearchStatus, PromptViMode, Reedline, ReedlineEvent,
+    ReedlineMenu, Signal, Vi, default_emacs_keybindings, default_vi_insert_keybindings,
+    default_vi_normal_keybindings,
 };
 
 use nu_ansi_term::{Color, Style};
@@ -74,7 +85,36 @@ pub struct FrostPrompt {
     ps1: String,
     ps2: String,
     rps1: String,
+    /// Rendered after PS1 when the editor is in vi NORMAL mode.
+    vi_normal_indicator: String,
+    /// Rendered after PS1 when the editor is in vi INSERT mode.
+    vi_insert_indicator: String,
+    /// Rendered after PS1 in emacs mode. Empty by default — emacs is
+    /// frost's default mode and the rc-authored PS1 (seki) already ends
+    /// in its own prompt character, so an unconditional suffix would
+    /// change every operator's prompt for no information gain.
+    emacs_indicator: String,
 }
+
+/// Default vi NORMAL / vi INSERT indicators.
+///
+/// **Single-width glyphs only, never emoji.** The fleet prompt (seki)
+/// is grid-aligned; a double-width or emoji glyph shifts every column
+/// after it and the alignment silently rots. Pure ASCII is the only
+/// width that is unambiguous across terminals — several box-drawing
+/// and dingbat candidates (`◆`, `▸`, `❮`) carry East-Asian-Width
+/// *Ambiguous*, which renders double-wide under a CJK-ambiguous
+/// terminal setting.
+///
+/// The intended long-term source for these glyphs is
+/// `ishou_tokens::EscribaSignals` (`mode_normal` / `mode_insert`),
+/// which carries a single-width tier alongside its emoji tier. It is
+/// NOT reachable from this crate today — `frost-zle` does not depend
+/// on `ishou-tokens` — so the literals below stand in. Wire them the
+/// moment the dependency lands rather than inventing a third glyph
+/// vocabulary.
+const DEFAULT_VI_NORMAL_INDICATOR: &str = "[N] ";
+const DEFAULT_VI_INSERT_INDICATOR: &str = "[I] ";
 
 impl FrostPrompt {
     pub fn new(ps1: impl Into<String>, ps2: impl Into<String>) -> Self {
@@ -82,12 +122,30 @@ impl FrostPrompt {
             ps1: ps1.into(),
             ps2: ps2.into(),
             rps1: String::new(),
+            vi_normal_indicator: DEFAULT_VI_NORMAL_INDICATOR.to_string(),
+            vi_insert_indicator: DEFAULT_VI_INSERT_INDICATOR.to_string(),
+            emacs_indicator: String::new(),
         }
     }
 
     /// Include a right-aligned prompt segment.
     pub fn with_rps1(mut self, rps1: impl Into<String>) -> Self {
         self.rps1 = rps1.into();
+        self
+    }
+
+    /// Override the per-mode indicators rendered between PS1 and the
+    /// cursor. Keeps the mode signal configurable rather than baked
+    /// into `render_prompt_indicator`.
+    pub fn with_mode_indicators(
+        mut self,
+        vi_normal: impl Into<String>,
+        vi_insert: impl Into<String>,
+        emacs: impl Into<String>,
+    ) -> Self {
+        self.vi_normal_indicator = vi_normal.into();
+        self.vi_insert_indicator = vi_insert.into();
+        self.emacs_indicator = emacs.into();
         self
     }
 }
@@ -105,8 +163,26 @@ impl Prompt for FrostPrompt {
     fn render_prompt_right(&self) -> std::borrow::Cow<'_, str> {
         std::borrow::Cow::Borrowed(&self.rps1)
     }
-    fn render_prompt_indicator(&self, _mode: PromptEditMode) -> std::borrow::Cow<'_, str> {
-        std::borrow::Cow::Borrowed("")
+    /// The vi mode is the one piece of editor state a user cannot infer
+    /// from the screen — pressing Esc looks identical to not pressing it
+    /// until the next keystroke does the wrong thing. reedline hands the
+    /// live mode in on every repaint; discarding it (this returned `""`
+    /// for every mode) threw that signal away.
+    fn render_prompt_indicator(&self, mode: PromptEditMode) -> std::borrow::Cow<'_, str> {
+        match mode {
+            PromptEditMode::Vi(PromptViMode::Normal) => {
+                std::borrow::Cow::Borrowed(&self.vi_normal_indicator)
+            }
+            PromptEditMode::Vi(PromptViMode::Insert) => {
+                std::borrow::Cow::Borrowed(&self.vi_insert_indicator)
+            }
+            PromptEditMode::Emacs => std::borrow::Cow::Borrowed(&self.emacs_indicator),
+            // `Default` is reedline's pre-edit-mode-selection state and
+            // `Custom` belongs to an edit mode frost does not install;
+            // neither has a frost-authored indicator, so render nothing
+            // rather than mislabel the mode.
+            PromptEditMode::Default | PromptEditMode::Custom(_) => std::borrow::Cow::Borrowed(""),
+        }
     }
     fn render_prompt_multiline_indicator(&self) -> std::borrow::Cow<'_, str> {
         std::borrow::Cow::Borrowed(&self.ps2)
@@ -144,13 +220,37 @@ pub struct ZleEngine {
     /// hasn't changed — both a correctness win (doesn't stomp the
     /// keymap mid-session) and a small perf win.
     current_mode: Option<EditModeKind>,
+    /// `Some(reason)` when the on-disk history file could NOT be opened
+    /// and this session is recording to memory only — see
+    /// [`Self::history_error`].
+    history_error: Option<String>,
 }
 
 impl ZleEngine {
     /// Build an interactive line editor with history backed at `history_file`.
     /// `history_file`'s parent directory is created if missing; if the file
     /// cannot be opened, the engine falls back to in-memory history and
-    /// returns `Ok` (the shell should still be usable).
+    /// returns `Ok` (the shell should still be usable) — but it says so,
+    /// loudly, on stderr and via [`Self::history_error`].
+    ///
+    /// ## Why the fallback is loud
+    ///
+    /// `FileBackedHistory::with_file` calls `sync()` internally and
+    /// propagates its error. An operator's `$HISTFILE` containing
+    /// invalid UTF-8 makes that `sync()` fail, `with_file` returns
+    /// `Err`, and the engine drops to a no-file, in-memory history.
+    /// This arm used to be a bare `Err(_) =>` that discarded the
+    /// reason: the shell looked entirely normal — prompt, up-arrow
+    /// within the session, hints — while persisting NOTHING. That ran
+    /// undetected for 148 days on this operator's box. reedline's
+    /// `Drop` swallowing the sync error is a second layer of the same
+    /// silence; this arm is the first, and the only one that can name
+    /// the file and the cause. Keep the diagnostic even after the
+    /// reedline-side fix lands.
+    ///
+    /// Degrading rather than refusing to start is deliberate: a shell
+    /// that will not open is worse than one that warns. What is not
+    /// acceptable is a shell that does neither.
     pub fn new(history_file: impl AsRef<Path>, history_capacity: usize) -> ZleResult<Self> {
         let path = history_file.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
@@ -158,26 +258,51 @@ impl ZleEngine {
                 let _ = std::fs::create_dir_all(parent);
             }
         }
-        let editor = match FileBackedHistory::with_file(history_capacity, path.clone()) {
-            Ok(hist) => Reedline::create().with_history(Box::new(hist)),
-            Err(_) => Reedline::create(),
-        };
+        let (editor, history_error) =
+            match FileBackedHistory::with_file(history_capacity, path.clone()) {
+                Ok(hist) => (Reedline::create().with_history(Box::new(hist)), None),
+                Err(e) => {
+                    let reason = e.to_string();
+                    eprintln!(
+                        "frost: warning: history file {} could not be opened ({reason})\n\
+                         frost: warning: THIS SESSION RECORDS NO HISTORY — nothing typed here \
+                         will be persisted.\n\
+                         frost: warning: check that the file is readable and valid UTF-8, or \
+                         move it aside to start a fresh one.",
+                        path.display()
+                    );
+                    (Reedline::create(), Some(reason))
+                }
+            };
         Ok(Self {
-            inner: editor,
+            inner: editor.with_cursor_config(frost_cursor_config()),
             prompt: FrostPrompt::default(),
             custom_bindings: Vec::new(),
             current_mode: None,
+            history_error,
         })
+    }
+
+    /// Why this engine is not persisting history, or `None` when the
+    /// history file opened cleanly. Lets callers surface the condition
+    /// somewhere durable (`frost --doctor`, the MCP snapshot) rather
+    /// than relying on the operator having read one startup line.
+    #[must_use]
+    pub fn history_error(&self) -> Option<&str> {
+        self.history_error.as_deref()
     }
 
     /// Build an in-memory (non-persistent) engine. Useful for tests and for
     /// environments where `$HOME` is unavailable.
     pub fn in_memory() -> Self {
         Self {
-            inner: Reedline::create(),
+            inner: Reedline::create().with_cursor_config(frost_cursor_config()),
             prompt: FrostPrompt::default(),
             custom_bindings: Vec::new(),
             current_mode: None,
+            // In-memory is the REQUESTED backing here, not a fallback
+            // from a failed open — there is no error to report.
+            history_error: None,
         }
     }
 
@@ -293,13 +418,19 @@ impl ZleEngine {
                 Box::new(Emacs::new(kb))
             }
             EditModeKind::Vi => {
-                // In vi mode, custom bindings apply to the INSERT
-                // keymap (where Ctrl-R et al. commonly fire). Normal
-                // mode keeps its default keymap.
-                let mut insert_kb = default_vi_insert_keybindings();
-                apply_custom_bindings_to(&mut insert_kb, &self.custom_bindings);
-                add_completion_tab_binding(&mut insert_kb);
-                Box::new(Vi::new(insert_kb, default_vi_normal_keybindings()))
+                // BOTH vi keymaps get the rc's bindings. A chord the
+                // operator authored is a statement about what that key
+                // does in this shell, not about what it does in one
+                // half of one edit mode: pressing Esc must not silently
+                // revoke C-r's history picker, C-l's clear, M-.'s
+                // insert-last-arg or Tab's completion menu. reedline
+                // resolves an unbound chord to `ReedlineEvent::None`,
+                // so a normal-mode-only omission is invisible — the key
+                // simply does nothing (or worse, C-r falls through to
+                // reedline's built-in `SearchHistory` instead of the
+                // skim picker). `ViKeymaps` is the constructor that
+                // makes forgetting one half unrepresentable.
+                ViKeymaps::from_bindings(&self.custom_bindings).into_edit_mode()
             }
         };
         let taken = std::mem::replace(&mut self.inner, Reedline::create());
@@ -395,6 +526,66 @@ impl ZleEngine {
 pub enum EditModeKind {
     Emacs,
     Vi,
+}
+
+/// The two keymaps reedline's [`Vi`] edit mode needs, built as a pair.
+///
+/// This exists to make one specific omission unrepresentable: for a
+/// long time the Vi arm of [`ZleEngine::set_edit_mode`] merged the rc's
+/// bindings into the INSERT keymap and passed
+/// `default_vi_normal_keybindings()` straight through, so ten of the
+/// twelve chords the frostmourne rc authors resolved to
+/// `ReedlineEvent::None` the moment the user pressed Esc, Tab stopped
+/// opening the completion menu, and C-r fell through to reedline's
+/// built-in `SearchHistory`. Nothing about `Vi::new(insert, normal)`
+/// signals that the second argument also wants the operator's
+/// bindings — the types are identical, so the mistake reads as
+/// correct code.
+///
+/// The guard: [`ViKeymaps::from_bindings`] is the ONLY way to build
+/// one, it takes the custom bindings, and it applies both them and the
+/// Tab→completion binding to *each* half. A future keymap cannot be
+/// constructed without being handed the rc's bindings, and the fields
+/// are private so no caller can assemble a half-configured pair.
+pub struct ViKeymaps {
+    insert: reedline::Keybindings,
+    normal: reedline::Keybindings,
+}
+
+impl ViKeymaps {
+    /// Build both vi keymaps from reedline's defaults, merging
+    /// `custom` and the Tab→completion-menu binding into each.
+    #[must_use]
+    pub fn from_bindings(custom: &[(String, String)]) -> Self {
+        let mut insert = default_vi_insert_keybindings();
+        let mut normal = default_vi_normal_keybindings();
+        for kb in [&mut insert, &mut normal] {
+            apply_custom_bindings_to(kb, custom);
+            add_completion_tab_binding(kb);
+        }
+        Self { insert, normal }
+    }
+
+    /// The vi INSERT keymap. Borrow-only: the pair is the unit of
+    /// truth, so a caller can inspect a half but never swap one.
+    #[must_use]
+    pub fn insert(&self) -> &reedline::Keybindings {
+        &self.insert
+    }
+
+    /// The vi NORMAL keymap.
+    #[must_use]
+    pub fn normal(&self) -> &reedline::Keybindings {
+        &self.normal
+    }
+
+    /// Consume the pair into reedline's [`Vi`] edit mode. The only
+    /// exit from this type, so the keymaps reedline receives are
+    /// always the ones `from_bindings` built.
+    #[must_use]
+    pub fn into_edit_mode(self) -> Box<dyn EditMode> {
+        Box::new(Vi::new(self.insert, self.normal))
+    }
 }
 
 // ─── Custom keybindings ─────────────────────────────────────────────────
@@ -598,6 +789,31 @@ pub fn default_history_path() -> PathBuf {
     std::env::temp_dir().join("frost_history")
 }
 
+/// Per-mode terminal cursor shape.
+///
+/// reedline emits the DECSCUSR escape for the active edit mode on every
+/// prompt draw, but only when a [`CursorConfig`] is installed — frost
+/// never called `with_cursor_config`, so the shape stayed whatever the
+/// terminal last set and vi normal mode was visually identical to vi
+/// insert. Together with the prompt indicator this is the second,
+/// peripheral-vision half of "which mode am I in".
+///
+/// **Steady, never Blinking.** The fleet terminal default is
+/// `blink = false`; a blinking cursor style here would override that
+/// per-prompt and fight the operator's own setting.
+fn frost_cursor_config() -> CursorConfig {
+    use crossterm::cursor::SetCursorStyle;
+    CursorConfig {
+        // Bar: sits between characters — insert semantics.
+        vi_insert: Some(SetCursorStyle::SteadyBar),
+        // Block: covers the character the next motion/operator acts on.
+        vi_normal: Some(SetCursorStyle::SteadyBlock),
+        // Emacs has no modal split; keep the conventional block so the
+        // shape never reads as "vi insert".
+        emacs: Some(SetCursorStyle::SteadyBlock),
+    }
+}
+
 /// Bind Tab → completion menu (Shift-BackTab → previous) in a keymap.
 /// reedline's default keymaps bind NO Tab, so a populated completer + a
 /// named "completion_menu" do nothing until Tab is wired here. Called from
@@ -648,6 +864,140 @@ mod tests {
         let p = FrostPrompt::default();
         assert_eq!(p.render_prompt_left(), "frost> ");
         assert_eq!(p.render_prompt_multiline_indicator(), "> ");
+    }
+
+    /// Regression: `render_prompt_indicator` took the mode and threw it
+    /// away, returning `""` for all three. A vi user could not tell
+    /// NORMAL from INSERT anywhere on screen.
+    #[test]
+    fn prompt_indicator_distinguishes_vi_normal_from_vi_insert() {
+        let p = FrostPrompt::default();
+        let normal = p.render_prompt_indicator(PromptEditMode::Vi(PromptViMode::Normal));
+        let insert = p.render_prompt_indicator(PromptEditMode::Vi(PromptViMode::Insert));
+        assert_ne!(normal, insert, "vi modes must render differently");
+        assert!(!normal.is_empty() && !insert.is_empty());
+        // Emacs is frost's default mode and seki's PS1 already ends in
+        // its own character — a suffix there would change every
+        // operator's prompt for no signal.
+        assert_eq!(p.render_prompt_indicator(PromptEditMode::Emacs), "");
+    }
+
+    /// The fleet seki prompt is grid-aligned: an emoji or a
+    /// double-width glyph in the indicator shifts every column after
+    /// it. Assert one column per char, ASCII only.
+    #[test]
+    fn prompt_indicators_are_single_width_ascii() {
+        let p = FrostPrompt::default();
+        for mode in [
+            PromptEditMode::Vi(PromptViMode::Normal),
+            PromptEditMode::Vi(PromptViMode::Insert),
+            PromptEditMode::Emacs,
+        ] {
+            let s = p.render_prompt_indicator(mode);
+            assert!(
+                s.is_ascii(),
+                "indicator {s:?} is not ASCII — non-ASCII risks double-width or emoji rendering"
+            );
+            assert!(
+                !s.chars().any(char::is_control),
+                "indicator {s:?} contains a control character"
+            );
+        }
+    }
+
+    #[test]
+    fn prompt_mode_indicators_are_configurable() {
+        let p = FrostPrompt::new("$ ", "> ").with_mode_indicators("N", "I", "E");
+        assert_eq!(
+            p.render_prompt_indicator(PromptEditMode::Vi(PromptViMode::Normal)),
+            "N"
+        );
+        assert_eq!(
+            p.render_prompt_indicator(PromptEditMode::Vi(PromptViMode::Insert)),
+            "I"
+        );
+        assert_eq!(p.render_prompt_indicator(PromptEditMode::Emacs), "E");
+    }
+
+    /// THE regression this branch exists for: the Vi arm built only the
+    /// INSERT keymap from the rc's bindings and passed
+    /// `default_vi_normal_keybindings()` through untouched, so every
+    /// rc chord died the moment the user pressed Esc.
+    #[test]
+    fn vi_keymaps_carry_custom_bindings_in_both_halves() {
+        let bindings = vec![
+            ("C-r".to_string(), "__frost_picker_history__".to_string()),
+            ("C-t".to_string(), "__frost_picker_files__".to_string()),
+            (
+                "M-.".to_string(),
+                "__frost_widget_insert-last-arg__".to_string(),
+            ),
+        ];
+        let keymaps = ViKeymaps::from_bindings(&bindings);
+        for (which, kb) in [("insert", keymaps.insert()), ("normal", keymaps.normal())] {
+            for (chord, fn_name) in &bindings {
+                let (modifier, key) = parse_chord(chord).unwrap();
+                match kb.find_binding(modifier, key) {
+                    Some(ReedlineEvent::ExecuteHostCommand(got)) => assert_eq!(
+                        &got, fn_name,
+                        "{which} keymap: {chord} bound to the wrong command"
+                    ),
+                    other => panic!("{which} keymap: {chord} resolved to {other:?}, not {fn_name}"),
+                }
+            }
+            // Tab was unbound in vi NORMAL, so completion was
+            // unreachable after Esc.
+            assert!(
+                matches!(
+                    kb.find_binding(KeyModifiers::NONE, KeyCode::Tab),
+                    Some(ReedlineEvent::UntilFound(_))
+                ),
+                "{which} keymap: Tab is not wired to the completion menu"
+            );
+        }
+    }
+
+    /// C-r in vi NORMAL used to resolve to reedline's built-in
+    /// `SearchHistory` — the picker binding never got there, so the
+    /// wrong search UI opened with no visible sign anything was wrong.
+    #[test]
+    fn rc_binding_beats_reedline_builtin_in_vi_normal() {
+        let bindings = vec![("C-r".to_string(), "__frost_picker_history__".to_string())];
+        let default_normal = default_vi_normal_keybindings();
+        let (modifier, key) = parse_chord("C-r").unwrap();
+        // Guard the premise: reedline really does bind C-r itself.
+        assert!(
+            default_normal.find_binding(modifier, key).is_some(),
+            "premise changed: reedline no longer binds C-r in vi normal"
+        );
+        let keymaps = ViKeymaps::from_bindings(&bindings);
+        assert_eq!(
+            keymaps.normal().find_binding(modifier, key),
+            Some(ReedlineEvent::ExecuteHostCommand(
+                "__frost_picker_history__".to_string()
+            )),
+            "the rc's C-r must override reedline's built-in SearchHistory"
+        );
+    }
+
+    #[test]
+    fn in_memory_engine_reports_no_history_error() {
+        // In-memory is a requested backing, not a failed open — it must
+        // not masquerade as the silent-data-loss condition.
+        assert!(ZleEngine::in_memory().history_error().is_none());
+    }
+
+    /// The 148-day silent-history-loss class: an unopenable `$HISTFILE`
+    /// dropped to in-memory with `Err(_) =>` discarding the reason. The
+    /// engine must still start, but must carry the reason.
+    #[test]
+    fn unopenable_history_file_is_reported_not_swallowed() {
+        let zle = ZleEngine::new("/nonexistent/absolutely/no/way/history", 100)
+            .expect("engine must still start");
+        assert!(
+            zle.history_error().is_some(),
+            "an unopenable history file must leave a reason behind"
+        );
     }
 
     #[test]
