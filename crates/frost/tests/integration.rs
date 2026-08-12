@@ -366,3 +366,150 @@ mod script {
         let _ = std::fs::remove_file(&script_path);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Redirect seam — an in-process command's output must land on the redirect
+// target, never on the shell's own stdio.
+//
+// Regression cover for two failure modes found together on 2026-08-12, both
+// of which let output escape a redirect (see `RedirectScope` in
+// frost-exec/src/execute.rs):
+//
+//   1. A resolution query (`command -v`, `type`, `whence`, `which`) returned
+//      from `execute_simple` ABOVE the block that applies redirects, so the
+//      resolved path was printed to the terminal regardless. Observed in the
+//      wild as a stray `/usr/bin/osascript` after any command over 30s:
+//      frostmourne's own `defnotify` precmd body probes with
+//      `command -v osascript >/dev/null 2>&1`.
+//   2. A builtin whose output has no trailing newline stayed buffered in
+//      Rust's `LineWriter` until AFTER the fds were restored — `printf abc
+//      >file` wrote an empty file and printed `abc` to the terminal. Data
+//      loss, not a cosmetic leak.
+// ---------------------------------------------------------------------------
+mod redirect_seam {
+    use super::*;
+
+    /// Run `script` under `frost -c` and return `(stdout, stderr)`.
+    fn run(script: &str) -> (String, String) {
+        let output = Command::new(frost_bin())
+            .arg("-c")
+            .arg(script)
+            .output()
+            .expect("failed to run frost");
+        (
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    }
+
+    /// A temp path unique to `tag`, removed first so a stale file from an
+    /// earlier run can never be mistaken for this run's output.
+    fn temp_path(tag: &str) -> std::path::PathBuf {
+        let p =
+            std::env::temp_dir().join(format!("frost-redirect-seam-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        p
+    }
+
+    /// ANTI-VACUITY: without a redirect these commands really do print. If
+    /// this fails, every assertion below is passing for the wrong reason —
+    /// a resolver that emits nothing would satisfy them all.
+    #[test]
+    fn resolution_queries_print_when_not_redirected() {
+        for script in ["command -v ls", "type ls", "which ls", "whence -v ls"] {
+            let (stdout, _) = run(script);
+            assert!(
+                stdout.contains("ls"),
+                "`{script}` should print its resolution to stdout, got: {stdout:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_v_honors_stdout_redirect() {
+        let path = temp_path("command-v");
+        let (stdout, _) = run(&format!("command -v ls >{}", path.display()));
+
+        assert_eq!(
+            stdout, "",
+            "`command -v ls >FILE` must print NOTHING to the terminal, got: {stdout:?}"
+        );
+        let written = std::fs::read_to_string(&path).expect("redirect target should exist");
+        assert!(
+            written.contains("ls"),
+            "the resolved path must land in the redirect target, got: {written:?}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn type_whence_which_honor_stdout_redirect() {
+        for (tag, script) in [
+            ("type", "type ls"),
+            ("which", "which ls"),
+            ("whence", "whence -v ls"),
+        ] {
+            let path = temp_path(tag);
+            let (stdout, _) = run(&format!("{script} >{}", path.display()));
+
+            assert_eq!(
+                stdout, "",
+                "`{script} >FILE` must print NOTHING to the terminal, got: {stdout:?}"
+            );
+            let written = std::fs::read_to_string(&path).expect("redirect target should exist");
+            assert!(
+                written.contains("ls"),
+                "`{script}` output must land in the redirect target, got: {written:?}"
+            );
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    /// The exact shape frostmourne's `defnotify` precmd emits. This is the
+    /// bug as the operator met it: a stray notifier path painted into the
+    /// terminal after every long-running command.
+    #[test]
+    fn defnotify_probe_shape_emits_nothing() {
+        let (stdout, stderr) = run("if command -v ls >/dev/null 2>&1; then :; fi");
+        assert_eq!(
+            stdout, "",
+            "the defnotify `command -v` probe must be silent, got: {stdout:?}"
+        );
+        assert_eq!(
+            stderr, "",
+            "the defnotify `command -v` probe must be silent, got: {stderr:?}"
+        );
+    }
+
+    /// Failure mode (2): buffered output with no trailing newline.
+    #[test]
+    fn printf_without_trailing_newline_reaches_redirect_target() {
+        let path = temp_path("printf");
+        let (stdout, _) = run(&format!("printf abc >{}", path.display()));
+
+        assert_eq!(
+            stdout, "",
+            "`printf abc >FILE` must print NOTHING to the terminal, got: {stdout:?}"
+        );
+        let written = std::fs::read_to_string(&path).expect("redirect target should exist");
+        assert_eq!(
+            written, "abc",
+            "unterminated builtin output must be flushed INTO the redirect target"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A redirect must not outlive the command it was written on — the guard
+    /// restores the shell's own stdio on every return path.
+    #[test]
+    fn redirect_does_not_leak_into_the_next_command() {
+        let path = temp_path("no-leak");
+        let (stdout, _) = run(&format!("command -v ls >{}; echo AFTER", path.display()));
+
+        assert_eq!(
+            stdout, "AFTER\n",
+            "the following command must write to the restored stdout, got: {stdout:?}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+}

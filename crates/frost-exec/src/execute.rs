@@ -1040,7 +1040,7 @@ impl<'env> Executor<'env> {
         if mods.command_modifier && matches!(argv.first().map(String::as_str), Some("-v" | "-V")) {
             let verbose = argv[0] == "-V";
             let target = argv.get(1).cloned();
-            return Ok(self.command_resolve_query(target.as_deref(), verbose));
+            return Ok(self.command_resolve_query(target.as_deref(), verbose, &cmd.redirects));
         }
 
         if argv.is_empty() {
@@ -1116,7 +1116,11 @@ impl<'env> Executor<'env> {
                 _ => true,
             };
             let target = argv[1..].iter().rev().find(|a| !a.starts_with('-'));
-            return Ok(self.command_resolve_query(target.map(String::as_str), verbose));
+            return Ok(self.command_resolve_query(
+                target.map(String::as_str),
+                verbose,
+                &cmd.redirects,
+            ));
         }
 
         // Check builtins. Builtins run IN-PROCESS even when redirects are
@@ -1129,29 +1133,28 @@ impl<'env> Executor<'env> {
         // — the load-bearing failure behind the broken zoxide `cd`
         // override, which finalizes jumps with `builtin cd … 2>/dev/null`.)
         if self.builtins.contains(name) {
-            let saved_fds = if cmd.redirects.is_empty() {
-                Vec::new()
-            } else {
-                match save_and_apply_redirects(&cmd.redirects) {
-                    Ok(saved) => saved,
+            // The guard is scoped to the builtin call alone, so the fds are
+            // restored — and stdout/stderr flushed INTO the redirect first —
+            // before any hooks / BuiltinActions below run, since those perform
+            // their own I/O. The flush ordering is load-bearing: `printf abc
+            // >file` buffers with no trailing newline, and restoring fd 1
+            // first wrote an empty file and printed `abc` to the terminal.
+            let result = {
+                let _scope = match RedirectScope::enter(&cmd.redirects) {
+                    Ok(scope) => scope,
                     Err(e) => {
                         eprintln!("frost: {e}");
                         self.env.exit_status = 1;
                         return Ok(1);
                     }
-                }
+                };
+
+                let arg_refs: Vec<&str> = argv[1..].iter().map(|s| s.as_str()).collect();
+                self.builtins
+                    .get(name)
+                    .unwrap()
+                    .execute_with_action(&arg_refs, self.env)
             };
-
-            let arg_refs: Vec<&str> = argv[1..].iter().map(|s| s.as_str()).collect();
-            let result = self
-                .builtins
-                .get(name)
-                .unwrap()
-                .execute_with_action(&arg_refs, self.env);
-
-            // Restore the saved fds before any hooks / BuiltinActions
-            // below run (they may perform their own I/O).
-            restore_saved_fds(saved_fds);
 
             let status = result.status;
 
@@ -1360,7 +1363,34 @@ impl<'env> Executor<'env> {
     /// Lives on the executor because it needs the registry, the
     /// function table, and PATH — none of which the leaf `command`
     /// builtin can reach.
-    fn command_resolve_query(&self, name: Option<&str>, verbose: bool) -> i32 {
+    /// Resolve `name` and report it — the printing half of `command -v/-V`,
+    /// `type`, `whence` and `which`.
+    ///
+    /// **`redirects` is a parameter, not a call-site concern, on purpose.**
+    /// This is the only function on the resolution path that writes to stdout,
+    /// so requiring the redirect list *here* is what stops a future early
+    /// return in `execute_simple` from silently bypassing the redirect seam —
+    /// which is exactly the bug this signature was widened to kill. A caller
+    /// cannot invoke it without deciding what its output is attached to.
+    fn command_resolve_query(
+        &self,
+        name: Option<&str>,
+        verbose: bool,
+        redirects: &[frost_parser::ast::Redirect],
+    ) -> i32 {
+        let _scope = match RedirectScope::enter(redirects) {
+            Ok(scope) => scope,
+            Err(e) => {
+                eprintln!("frost: {e}");
+                return 1;
+            }
+        };
+        self.command_resolve_report(name, verbose)
+    }
+
+    /// The resolution + reporting itself. Split out so [`RedirectScope`] wraps
+    /// every `println!` below with no early return able to escape it.
+    fn command_resolve_report(&self, name: Option<&str>, verbose: bool) -> i32 {
         let Some(name) = name else {
             return 1;
         };
@@ -1797,6 +1827,61 @@ fn restore_saved_fds(saved: Vec<(std::os::fd::RawFd, std::os::fd::RawFd)>) {
     for (orig, backup) in saved {
         let _ = sys::dup2(backup, orig);
         let _ = sys::close(backup);
+    }
+}
+
+/// RAII scope holding a command's redirects applied to the *current* process,
+/// restoring the saved fds when dropped.
+///
+/// **Why a guard and not a bare save/restore pair.** Every in-process dispatch
+/// path in [`Executor::execute_simple`] writes to the shell's own stdio, and
+/// two independent ways to write past a redirect were both live (diagnosed
+/// 2026-08-12):
+///
+/// 1. **Returning before the redirects are applied.** `command -v NAME` and
+///    `type`/`whence`/`which` returned from the resolution query above the
+///    builtin dispatch that applies redirects, so `command -v foo >/dev/null`
+///    printed the resolved path to the terminal anyway. Seen in the wild as a
+///    stray `/usr/bin/osascript` after any command over 30s — frostmourne's own
+///    `defnotify` precmd body probes `command -v osascript >/dev/null 2>&1`.
+/// 2. **Flushing after the redirects are restored.** Rust's `Stdout` is a
+///    `LineWriter`: `print!` with no trailing newline stays buffered, so
+///    `restore_saved_fds` swapped fd 1 back *before* the bytes were written and
+///    they landed on the terminal. `printf abc >file` wrote an EMPTY file and
+///    printed `abc` — silent data loss, not a cosmetic leak.
+///
+/// Entering through this guard closes both: the fds are applied on construction
+/// and the buffers are flushed *before* they are restored, on every return path
+/// including `?` and panics.
+struct RedirectScope {
+    saved: Vec<(std::os::fd::RawFd, std::os::fd::RawFd)>,
+}
+
+impl RedirectScope {
+    /// Apply `redirects` to the current process, returning the guard.
+    ///
+    /// An empty list is a no-op that touches nothing — important, because
+    /// cycling an *untouched* fd deletes any kqueue registration bound to it
+    /// (see [`save_and_apply_redirects`]).
+    fn enter(redirects: &[frost_parser::ast::Redirect]) -> Result<Self, redirect::RedirectError> {
+        if redirects.is_empty() {
+            return Ok(Self { saved: Vec::new() });
+        }
+        Ok(Self {
+            saved: save_and_apply_redirects(redirects)?,
+        })
+    }
+}
+
+impl Drop for RedirectScope {
+    fn drop(&mut self) {
+        // Flush BEFORE restoring: anything still buffered belongs to the
+        // redirected fd, and once the original is dup2'd back it would be
+        // written to the terminal instead. This is failure mode (2) above.
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        restore_saved_fds(std::mem::take(&mut self.saved));
     }
 }
 
