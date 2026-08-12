@@ -38,7 +38,12 @@ ishou-tokens = { workspace = true }
 # state, pending VT response queries, current command, history file)
 # so operator tools and external MCP servers query the actual shell
 # state. Closes the 'frost hangs and we can't see why' class.
-kanshou = { git = "https://github.com/pleme-io/kanshou" }
+# Registry, not git. The bare `git = "..."` pin here carried no rev, so it
+# floated on whatever main happened to be — the crate2nix-vs-fetchgit
+# hash-drift class — and a git dependency makes the depending crate
+# structurally unpublishable. kanshou 0.1.3 carries spawn_sidecar, which
+# is what this repo needed from main in the first place.
+kanshou = "0.1"
 parking_lot = "0.12"
 serde_json = "1"
 tokio = { workspace = true }

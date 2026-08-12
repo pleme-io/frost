@@ -1974,36 +1974,16 @@ fn main() {
     // below is untouched. Best-effort — bind failure logs and
     // continues, the shell runs without introspection.
     let kanshou_shell_state = std::sync::Arc::new(kanshou_state::FrostShellState::new());
-    {
-        let state_for_kanshou = std::sync::Arc::clone(&kanshou_shell_state);
-        std::thread::Builder::new()
-            .name("frost-kanshou".into())
-            .spawn(move || {
-                match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .thread_name("frost-kanshou-tokio")
-                    .build()
-                {
-                    Ok(rt) => rt.block_on(async {
-                        match kanshou_state::spawn_server("frost", state_for_kanshou) {
-                            Ok(path) => {
-                                tracing::info!(
-                                    socket = %path.display(),
-                                    "kanshou introspection live"
-                                );
-                                std::future::pending::<()>().await;
-                            }
-                            Err(e) => {
-                                tracing::warn!(err = %e, "kanshou bind failed; introspection disabled");
-                            }
-                        }
-                    }),
-                    Err(e) => {
-                        tracing::warn!(err = %e, "could not create kanshou tokio runtime");
-                    }
-                }
-            })
-            .ok(); // .ok() — thread-spawn failure is non-fatal.
+    // The whole sidecar — bind, runtime, thread, serve — is one call now.
+    // frost was the ONLY one of the three copies that degraded as its own doc
+    // comment promised; mado and tear-daemon `.expect()`ed and panicked at
+    // startup on thread-spawn EAGAIN. kanshou::Server::spawn_sidecar makes
+    // that decision once, non-fatally, so the divergence cannot come back.
+    if let Some(path) = kanshou::Server::spawn_sidecar(
+        "frost",
+        std::sync::Arc::clone(&kanshou_shell_state),
+    ) {
+        tracing::info!(socket = %path.display(), "kanshou introspection live");
     }
 
     // Tatara-Lisp rc file — declarative authoring surface for aliases,
