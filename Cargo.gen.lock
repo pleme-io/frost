@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "61b5ee267463987bab17fc833662d9a5b7c2da44b320338b738ac54735e0576e",
+  "cargo_lock_sha256": "90f7124553b9e7a784da58ebddb0e1d1933fe9e15d379506aec4ae220ddc7caf",
   "manifest_sha256": {
     "Cargo.toml": "4e3636ee583ddf3d7c8d419a7dc530254419d676c00f95d1c7360f312043abeb",
     "crates/frost-builtins/Cargo.toml": "9c3f46cf0585359618f321ca7f27e1a17f8728b6247848a6936e3d85c8d998a7",
@@ -20,7 +20,7 @@
     "crates/frost-spec/Cargo.toml": "082c08dec4f2603084515d6bc2f80ea9d654c017813db35d7e1d8ef90067ef44",
     "crates/frost-verify/Cargo.toml": "1fb16dccf197f8336e93383d21eac2e38b5053e3e21750661d37a1ff10ecd677",
     "crates/frost-zle/Cargo.toml": "62926aa897a2395d61ef28c331f43df1e5d892016533c0301590e0ced0a195f3",
-    "crates/frost/Cargo.toml": "1b94b0cfea5a487a01c85a2e1b06c673e0acf18b22abd2835ebd2e13ddb03005"
+    "crates/frost/Cargo.toml": "2159a53d755d24254a2b59a0d8b9092cc6f4ae4acefe9abbe57c81dcea5f707a"
   },
   "target_resolves": {
     "base": {
@@ -1899,7 +1899,7 @@
           },
           {
             "name": "kanshou",
-            "package_key": "kanshou-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f",
+            "package_key": "kanshou-0.1.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3935,11 +3935,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "kanshou-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": {
+      "kanshou-0.1.5": {
         "runtime_dependencies": [
           {
             "name": "kanshou_derive",
-            "package_key": "kanshou-derive-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f",
+            "package_key": "kanshou-derive-0.1.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4013,7 +4013,7 @@
           "derive"
         ]
       },
-      "kanshou-derive-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": {
+      "kanshou-derive-0.1.5": {
         "runtime_dependencies": [
           {
             "name": "proc_macro2",
@@ -11333,10 +11333,10 @@
     "itoa-1.0.18": {
       "edition": "2021"
     },
-    "kanshou-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": {
+    "kanshou-0.1.5": {
       "edition": "2024"
     },
-    "kanshou-derive-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": {
+    "kanshou-derive-0.1.5": {
       "edition": "2024",
       "proc_macro": true
     },
@@ -11812,8 +11812,6 @@
     "gen-platform-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
     "gen-types-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
     "ishou-tokens-0.1.3-0197aeba1e9a7e17ff516272689dbca6a3ccc967": "sha256-kETqdHgzg9jFmR0SMhRT6mP1EYbHI6cqKLPbyj/rDuk=",
-    "kanshou-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": "sha256-qxi/pBubzx4MfFDtJL4qLEoOSV43WF9Hc2VriRNlpCA=",
-    "kanshou-derive-0.1.2-b9acf052864616c16e9d8ccc8e1512f00e0a6e8f": "sha256-qxi/pBubzx4MfFDtJL4qLEoOSV43WF9Hc2VriRNlpCA=",
     "reedline-0.42.0-0ac421893585a6cc140fe301065e50f9d686a704": "sha256-3iFmmvWlnq5eaBBDAM8N40wIGYecMelbSwcY6hmW/ns=",
     "shigoto-budget-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
     "shigoto-dag-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
