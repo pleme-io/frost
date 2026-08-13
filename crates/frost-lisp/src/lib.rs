@@ -1359,20 +1359,52 @@ pub fn load_rc(path: impl AsRef<Path>, env: &mut ShellEnv) -> LispResult<ApplySu
 
 /// Resolve the default rc file path — `$FROSTRC` if set, else
 /// `$XDG_CONFIG_HOME/frost/rc.lisp`, else `$HOME/.frostrc.lisp`.
+///
+/// Every arm ignores a non-absolute value instead of joining it. The
+/// `$FROSTRC` arm checked `!is_empty()` and stopped there, so
+/// `FROSTRC=rc.lisp` made the shell source whatever `rc.lisp` sat in the
+/// directory it was launched from — an rc file is arbitrary code, so a
+/// cwd-relative one is the worst arm of the three to leave raw. The
+/// `$XDG_CONFIG_HOME` arm had no check at all: empty resolved to
+/// `frost/rc.lisp` and `HOME=""` to a bare `.frostrc.lisp`, both relative
+/// to the cwd.
+///
+/// Deliberately NOT routed through `okiba`: this chain gates the XDG arm
+/// on `exists()` and falls back to `$HOME/.frostrc.lisp`, whereas okiba's
+/// `Tier::Config` would resolve an unset `$XDG_CONFIG_HOME` to
+/// `$HOME/.config/frost/rc.lisp`. That would relocate a valid operator
+/// rc, so the chain keeps its shape and gains only the absolute filter.
 pub fn default_rc_path() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("FROSTRC") {
-        if !p.is_empty() {
-            return std::path::PathBuf::from(p);
-        }
+    resolve_rc_path(|k| std::env::var_os(k))
+}
+
+/// The resolution above, over an explicit lookup — the seam a test
+/// drives, so the invariant is pinned without mutating `std::env`
+/// (which races under parallel test execution).
+fn resolve_rc_path<F>(var: F) -> std::path::PathBuf
+where
+    F: Fn(&str) -> Option<std::ffi::OsString>,
+{
+    let absolute = |k: &str| {
+        var(k)
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute())
+    };
+    if let Some(p) = absolute("FROSTRC") {
+        return p;
     }
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        let p = std::path::PathBuf::from(xdg).join("frost").join("rc.lisp");
+    if let Some(xdg) = absolute("XDG_CONFIG_HOME") {
+        let p = xdg.join("frost").join("rc.lisp");
         if p.exists() {
             return p;
         }
     }
-    let home = std::env::var("HOME").unwrap_or_default();
-    std::path::PathBuf::from(home).join(".frostrc.lisp")
+    match absolute("HOME") {
+        Some(home) => home.join(".frostrc.lisp"),
+        // Unchanged terminal behaviour: with no usable `$HOME` this
+        // already yielded a bare `.frostrc.lisp`.
+        None => std::path::PathBuf::from(".frostrc.lisp"),
+    }
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────
@@ -3073,5 +3105,95 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&bindir);
         let _ = std::fs::remove_dir_all(&repodir);
+    }
+
+    // ── default rc path: no arm may yield a relative path ─────────
+
+    /// Drive the resolver over an explicit lookup — never `std::env`,
+    /// which is process-global and races under parallel tests.
+    fn rc_path_for(env: &[(&str, &str)]) -> std::path::PathBuf {
+        let owned: Vec<(String, String)> = env
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        resolve_rc_path(move |k| {
+            owned
+                .iter()
+                .find(|(name, _)| name == k)
+                .map(|(_, v)| std::ffi::OsString::from(v))
+        })
+    }
+
+    #[test]
+    fn frostrc_override_resolves_the_rc() {
+        assert_eq!(
+            rc_path_for(&[("FROSTRC", "/etc/frost/rc.lisp"), ("HOME", "/home/op")]),
+            std::path::PathBuf::from("/etc/frost/rc.lisp"),
+        );
+    }
+
+    #[test]
+    fn a_non_absolute_frostrc_is_ignored_not_sourced() {
+        // The partial-guard sub-family: the arm checked `!is_empty()`
+        // and stopped one step short, so `FROSTRC=rc.lisp` sourced
+        // whatever `rc.lisp` sat in the launch directory — and an rc
+        // file is arbitrary shell code.
+        for bad in ["", "rc.lisp", "./rc.lisp", "../rc.lisp"] {
+            assert_eq!(
+                rc_path_for(&[("FROSTRC", bad), ("HOME", "/home/op")]),
+                std::path::PathBuf::from("/home/op/.frostrc.lisp"),
+                "FROSTRC={bad:?} must fall through, not resolve",
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_absolute_xdg_config_home_is_ignored_not_joined() {
+        for bad in ["", "rel/x", "./x"] {
+            assert_eq!(
+                rc_path_for(&[("XDG_CONFIG_HOME", bad), ("HOME", "/home/op")]),
+                std::path::PathBuf::from("/home/op/.frostrc.lisp"),
+                "XDG_CONFIG_HOME={bad:?} must fall through, not resolve",
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_absolute_home_yields_no_joined_relative_path() {
+        for bad in ["", "rel/x", "./x"] {
+            assert_eq!(
+                rc_path_for(&[("HOME", bad)]),
+                std::path::PathBuf::from(".frostrc.lisp"),
+                "HOME={bad:?} must not be joined",
+            );
+        }
+    }
+
+    #[test]
+    fn an_absolute_xdg_config_home_still_wins_when_the_rc_exists() {
+        // The XDG arm is `exists()`-gated and falls back to
+        // `$HOME/.frostrc.lisp`, which is why this chain is NOT routed
+        // through okiba's `Tier::Config`. Pin the live behaviour so a
+        // later "use the shared primitive" pass cannot relocate it.
+        let root = std::env::temp_dir().join(format!("frost-rc-{}", std::process::id()));
+        let dir = root.join("frost");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("rc.lisp"), "").unwrap();
+
+        let found = rc_path_for(&[
+            ("XDG_CONFIG_HOME", root.to_str().unwrap()),
+            ("HOME", "/home/op"),
+        ]);
+        assert_eq!(found, dir.join("rc.lisp"));
+
+        // Absent the file, the XDG arm declines and `$HOME` answers.
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(
+            rc_path_for(&[
+                ("XDG_CONFIG_HOME", root.to_str().unwrap()),
+                ("HOME", "/home/op"),
+            ]),
+            std::path::PathBuf::from("/home/op/.frostrc.lisp"),
+        );
     }
 }

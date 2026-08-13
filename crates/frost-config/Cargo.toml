@@ -9,6 +9,11 @@ homepage.workspace = true
 description = "Shikumi-backed typed configuration for the frost shell. Mirrors mado's / tear's shape so operators learn one config grammar fleet-wide."
 
 [dependencies]
+# The XDG resolver with the absolute-path invariant enforced at the
+# boundary: a relative or empty `$XDG_CONFIG_HOME` is ignored, never
+# joined into a cwd-relative config path. Pinned to 0.2 deliberately —
+# 0.3 returns `AbsPath` instead of `PathBuf` and is a separate migration.
+okiba = "0.2"
 shikumi = "0.1"
 serde = { workspace = true }
 serde_yaml = "0.9"

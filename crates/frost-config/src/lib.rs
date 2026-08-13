@@ -301,21 +301,29 @@ pub fn load(
 /// XDG-canonical default path for the operator's frost config.
 /// Resolves at call time so env tweaks (`XDG_CONFIG_HOME`) take
 /// effect.
+///
+/// Both env arms used to take their variable verbatim, so
+/// `XDG_CONFIG_HOME=""` resolved the operator's config to
+/// `frost/frost.yaml` — relative to whatever directory the shell
+/// happened to start in — and `HOME=""` to `.config/frost/frost.yaml`.
+/// Nothing failed; frost simply read (and shikumi's watcher watched) a
+/// different file per cwd. okiba resolves the identical chain
+/// (`$XDG_CONFIG_HOME/frost/frost.yaml`, else
+/// `$HOME/.config/frost/frost.yaml`) with the one difference that a
+/// relative or empty override is IGNORED rather than joined, so no
+/// valid configuration moves.
 pub fn default_config_path() -> std::path::PathBuf {
-    if let Some(d) = std::env::var_os("XDG_CONFIG_HOME") {
-        let mut p = std::path::PathBuf::from(d);
-        p.push("frost");
-        p.push("frost.yaml");
-        return p;
-    }
-    if let Some(h) = std::env::var_os("HOME") {
-        let mut p = std::path::PathBuf::from(h);
-        p.push(".config");
-        p.push("frost");
-        p.push("frost.yaml");
-        return p;
-    }
-    std::path::PathBuf::from("frost.yaml")
+    config_path_in(&okiba::Okiba::for_app("frost"))
+}
+
+/// The resolution above, over an explicit [`okiba::Okiba`] — the seam a
+/// test drives, so the invariant is pinned without mutating
+/// `std::env` (which races under parallel test execution).
+fn config_path_in(base: &okiba::Okiba) -> std::path::PathBuf {
+    // Err means no usable override AND no usable `$HOME`; keep the
+    // pre-existing terminal literal rather than inventing a new home.
+    base.try_path(okiba::Tier::Config, "frost.yaml")
+        .unwrap_or_else(|_| std::path::PathBuf::from("frost.yaml"))
 }
 
 #[cfg(test)]
@@ -522,5 +530,78 @@ mod tests {
         let a_pos = y.find("a_first").unwrap();
         let z_pos = y.find("z_last").unwrap();
         assert!(a_pos < z_pos, "yaml: {y}");
+    }
+
+    // ── default config path: no arm may yield a relative path ─────
+
+    /// Drive the resolver over an explicit environment — never
+    /// `std::env`, which is process-global and races under `cargo
+    /// test`'s parallel threads.
+    fn path_for(env: &[(&str, &str)]) -> std::path::PathBuf {
+        let owned: Vec<(String, String)> = env
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        config_path_in(&okiba::Okiba::from_env("frost", move |k| {
+            owned
+                .iter()
+                .find(|(name, _)| name == k)
+                .map(|(_, v)| v.clone())
+        }))
+    }
+
+    #[test]
+    fn xdg_config_home_resolves_the_config() {
+        assert_eq!(
+            path_for(&[("XDG_CONFIG_HOME", "/xdg"), ("HOME", "/home/op")]),
+            std::path::PathBuf::from("/xdg/frost/frost.yaml"),
+        );
+    }
+
+    #[test]
+    fn home_resolves_the_config_when_xdg_is_unset() {
+        assert_eq!(
+            path_for(&[("HOME", "/home/op")]),
+            std::path::PathBuf::from("/home/op/.config/frost/frost.yaml"),
+        );
+    }
+
+    #[test]
+    fn a_non_absolute_xdg_config_home_is_ignored_not_joined() {
+        // The masked-branch class: the literal third arm made this read
+        // as safe while the two env arms took their variable verbatim.
+        // `XDG_CONFIG_HOME=""` used to yield `frost/frost.yaml`, i.e. a
+        // different config file per working directory.
+        for bad in ["", "rel/x", "./x", ".."] {
+            assert_eq!(
+                path_for(&[("XDG_CONFIG_HOME", bad), ("HOME", "/home/op")]),
+                std::path::PathBuf::from("/home/op/.config/frost/frost.yaml"),
+                "XDG_CONFIG_HOME={bad:?} must fall through, not resolve",
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_absolute_home_is_ignored_not_joined() {
+        for bad in ["", "rel/x", "./x"] {
+            let p = path_for(&[("HOME", bad)]);
+            assert_eq!(
+                p,
+                std::path::PathBuf::from("frost.yaml"),
+                "HOME={bad:?} must fall through to the terminal literal",
+            );
+        }
+    }
+
+    #[test]
+    fn every_arm_with_a_usable_base_is_absolute() {
+        for env in [
+            vec![("XDG_CONFIG_HOME", "/xdg"), ("HOME", "/home/op")],
+            vec![("XDG_CONFIG_HOME", "rel"), ("HOME", "/home/op")],
+            vec![("HOME", "/home/op")],
+        ] {
+            let p = path_for(&env);
+            assert!(p.is_absolute(), "{env:?} yielded a relative {p:?}");
+        }
     }
 }
