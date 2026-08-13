@@ -1,12 +1,12 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "cabe7898377beee707d0f353d25bf2f4dac7cb11e1509035d0f650993343905b",
+  "cargo_lock_sha256": "c2c3cde589f1d67725b4923e4463094640f0239681a3ecb74019e7ee6d27645c",
   "manifest_sha256": {
     "Cargo.toml": "edde28643abe7698757762be6c27e0956f064a17a74aaf47ac9e844ebdea1a5e",
     "crates/frost-builtins/Cargo.toml": "9c3f46cf0585359618f321ca7f27e1a17f8728b6247848a6936e3d85c8d998a7",
     "crates/frost-compat/Cargo.toml": "fbab5dc8909d4a076781da9c7f708165e0c88364c5e43cdc9bd25652ab2ccbd9",
     "crates/frost-complete/Cargo.toml": "4cb9cae288430552cd6c21236cb29b5d06f77b8cf0407c3a30b0a4117763bb3e",
-    "crates/frost-config/Cargo.toml": "307cf3eca853368ea11e1c2f383688f9495d672065231567f834b0085bfdc0ae",
+    "crates/frost-config/Cargo.toml": "a3ec4a23ffe340b79698ad22ee3e1f26e3aa95fd010cd6bf86b642e115e69684",
     "crates/frost-exec/Cargo.toml": "2c9d22cb0941adc951df79f2d24425d9b5b7fe1b1635451a22dc44631cf41b5a",
     "crates/frost-expand/Cargo.toml": "52c8d99215fc84165b0db9c49644fefe9747e66a35c13a90ef91a9c3a346c6d9",
     "crates/frost-glob/Cargo.toml": "f321f663121511bbcfbd4f89d6382d28d5aaf54ddf873aa2f27b191229bc8148",
@@ -2155,6 +2155,16 @@
       },
       "frost-config-0.1.7": {
         "runtime_dependencies": [
+          {
+            "name": "okiba",
+            "package_key": "okiba-0.2.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
           {
             "name": "serde",
             "package_key": "serde-1.0.228",
@@ -4497,6 +4507,11 @@
           "unaligned",
           "xcoff"
         ]
+      },
+      "okiba-0.2.1": {
+        "runtime_dependencies": [],
+        "build_dependencies": [],
+        "features": []
       },
       "once_cell-1.21.4": {
         "runtime_dependencies": [],
@@ -11406,6 +11421,9 @@
     "object-0.37.3": {
       "edition": "2018",
       "build_script": "build.rs"
+    },
+    "okiba-0.2.1": {
+      "edition": "2024"
     },
     "once_cell-1.21.4": {
       "edition": "2021"
