@@ -83,7 +83,7 @@ name: ci
 #
 # Everything above is an accurate record of a real measurement, and the
 # conclusion drawn from it was wrong. The pool was not broken — camelot was
-# PARKED. `akeylesslabs/k8s` `clusters/camelot-eks/kustomization.yaml` carries
+# PARKED. The cluster's GitOps kustomization carries
 # `components: [park]`, which floors the cluster to ~7% of its bill by setting
 # the ARC controller Deployment to `replicaCount: 0` and every runner scale set
 # to `maxRunners: 0`. Flux reports both ARC HelmReleases Ready/succeeded
@@ -95,7 +95,7 @@ name: ci
 # Routing around a parked pool onto `ubuntu-24.04` is what actually cost us:
 # on 2026-08-08 those pins exhausted the org's Actions spending limit, and
 # every private repo in pleme-io then refused to start any job at all. The
-# standing rule is closed-source -> Camelot CI in akeyless-development,
+# standing rule is closed-source -> Camelot self-hosted CI,
 # open-source -> free GitHub-hosted; a metered runner on a private repo is
 # never the answer. A job queued against a parked Camelot costs nothing and
 # runs the moment it is unparked. A metered job bills whether it passes or not.
