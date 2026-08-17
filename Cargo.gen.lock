@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "16bad8c01d0b345f207c91aeb0b5b79cbeb297a59c4a5e2a00e6b97e16e06c6b",
+  "cargo_lock_sha256": "6138dbaeaeb26b5f9aa34580f07a5a53a35ee8390e4f00fd37442de5bea5e226",
   "manifest_sha256": {
-    "Cargo.toml": "48cb433d1926d91343f025ceacbc7b9c3c2fb48009c2a11e06d4224c18f67140",
+    "Cargo.toml": "7b208bd28cbd4b30f57308aca58f0025ea58cbc044a233aa62dd5d2b76911b29",
     "crates/frost-builtins/Cargo.toml": "9c3f46cf0585359618f321ca7f27e1a17f8728b6247848a6936e3d85c8d998a7",
     "crates/frost-compat/Cargo.toml": "fbab5dc8909d4a076781da9c7f708165e0c88364c5e43cdc9bd25652ab2ccbd9",
     "crates/frost-complete/Cargo.toml": "4cb9cae288430552cd6c21236cb29b5d06f77b8cf0407c3a30b0a4117763bb3e",
@@ -1743,7 +1743,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-0.1.8": {
+      "frost-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "clap",
@@ -1769,7 +1769,7 @@
           },
           {
             "name": "frost_builtins",
-            "package_key": "frost-builtins-0.1.8",
+            "package_key": "frost-builtins-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1779,7 +1779,7 @@
           },
           {
             "name": "frost_complete",
-            "package_key": "frost-complete-0.1.8",
+            "package_key": "frost-complete-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1789,7 +1789,7 @@
           },
           {
             "name": "frost_config",
-            "package_key": "frost-config-0.1.8",
+            "package_key": "frost-config-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1799,7 +1799,7 @@
           },
           {
             "name": "frost_exec",
-            "package_key": "frost-exec-0.1.8",
+            "package_key": "frost-exec-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1809,7 +1809,7 @@
           },
           {
             "name": "frost_history",
-            "package_key": "frost-history-0.1.8",
+            "package_key": "frost-history-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1819,7 +1819,7 @@
           },
           {
             "name": "frost_lexer",
-            "package_key": "frost-lexer-0.1.8",
+            "package_key": "frost-lexer-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1829,7 +1829,7 @@
           },
           {
             "name": "frost_lisp",
-            "package_key": "frost-lisp-0.1.8",
+            "package_key": "frost-lisp-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1839,7 +1839,7 @@
           },
           {
             "name": "frost_mcp",
-            "package_key": "frost-mcp-0.1.8",
+            "package_key": "frost-mcp-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1849,7 +1849,7 @@
           },
           {
             "name": "frost_options",
-            "package_key": "frost-options-0.1.8",
+            "package_key": "frost-options-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1859,7 +1859,7 @@
           },
           {
             "name": "frost_parser",
-            "package_key": "frost-parser-0.1.8",
+            "package_key": "frost-parser-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1869,7 +1869,7 @@
           },
           {
             "name": "frost_prompt",
-            "package_key": "frost-prompt-0.1.8",
+            "package_key": "frost-prompt-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1879,7 +1879,7 @@
           },
           {
             "name": "frost_zle",
-            "package_key": "frost-zle-0.1.8",
+            "package_key": "frost-zle-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -1987,7 +1987,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-builtins-0.1.8": {
+      "frost-builtins-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "libc",
@@ -2013,7 +2013,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-compat-0.1.8": {
+      "frost-compat-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "clap",
@@ -2053,7 +2053,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-complete-0.1.8": {
+      "frost-complete-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "clap",
@@ -2069,7 +2069,7 @@
           },
           {
             "name": "frost_lisp",
-            "package_key": "frost-lisp-0.1.8",
+            "package_key": "frost-lisp-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2079,7 +2079,7 @@
           },
           {
             "name": "frost_options",
-            "package_key": "frost-options-0.1.8",
+            "package_key": "frost-options-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2089,7 +2089,7 @@
           },
           {
             "name": "frost_zle",
-            "package_key": "frost-zle-0.1.8",
+            "package_key": "frost-zle-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2153,7 +2153,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-config-0.1.8": {
+      "frost-config-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "okiba",
@@ -2211,7 +2211,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-exec-0.1.8": {
+      "frost-exec-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "awase",
@@ -2245,7 +2245,7 @@
           },
           {
             "name": "frost_builtins",
-            "package_key": "frost-builtins-0.1.8",
+            "package_key": "frost-builtins-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2255,7 +2255,7 @@
           },
           {
             "name": "frost_expand",
-            "package_key": "frost-expand-0.1.8",
+            "package_key": "frost-expand-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2265,7 +2265,7 @@
           },
           {
             "name": "frost_glob",
-            "package_key": "frost-glob-0.1.8",
+            "package_key": "frost-glob-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2275,7 +2275,7 @@
           },
           {
             "name": "frost_lexer",
-            "package_key": "frost-lexer-0.1.8",
+            "package_key": "frost-lexer-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2285,7 +2285,7 @@
           },
           {
             "name": "frost_options",
-            "package_key": "frost-options-0.1.8",
+            "package_key": "frost-options-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2295,7 +2295,7 @@
           },
           {
             "name": "frost_parser",
-            "package_key": "frost-parser-0.1.8",
+            "package_key": "frost-parser-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2375,7 +2375,7 @@
           "frecency-wadachi"
         ]
       },
-      "frost-expand-0.1.8": {
+      "frost-expand-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "compact_str",
@@ -2389,7 +2389,7 @@
           },
           {
             "name": "frost_glob",
-            "package_key": "frost-glob-0.1.8",
+            "package_key": "frost-glob-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2399,7 +2399,7 @@
           },
           {
             "name": "frost_lexer",
-            "package_key": "frost-lexer-0.1.8",
+            "package_key": "frost-lexer-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2409,7 +2409,7 @@
           },
           {
             "name": "frost_parser",
-            "package_key": "frost-parser-0.1.8",
+            "package_key": "frost-parser-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2441,7 +2441,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-glob-0.1.8": {
+      "frost-glob-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "thiserror",
@@ -2457,7 +2457,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-history-0.1.8": {
+      "frost-history-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "thiserror",
@@ -2473,7 +2473,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-lexer-0.1.8": {
+      "frost-lexer-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "bstr",
@@ -2509,7 +2509,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-lisp-0.1.8": {
+      "frost-lisp-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "compact_str",
@@ -2523,7 +2523,7 @@
           },
           {
             "name": "frost_builtins",
-            "package_key": "frost-builtins-0.1.8",
+            "package_key": "frost-builtins-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2533,7 +2533,7 @@
           },
           {
             "name": "frost_exec",
-            "package_key": "frost-exec-0.1.8",
+            "package_key": "frost-exec-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2543,7 +2543,7 @@
           },
           {
             "name": "frost_lexer",
-            "package_key": "frost-lexer-0.1.8",
+            "package_key": "frost-lexer-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2553,7 +2553,7 @@
           },
           {
             "name": "frost_options",
-            "package_key": "frost-options-0.1.8",
+            "package_key": "frost-options-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2563,7 +2563,7 @@
           },
           {
             "name": "frost_parser",
-            "package_key": "frost-parser-0.1.8",
+            "package_key": "frost-parser-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2627,7 +2627,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-mcp-0.1.8": {
+      "frost-mcp-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -2641,7 +2641,7 @@
           },
           {
             "name": "frost_lisp",
-            "package_key": "frost-lisp-0.1.8",
+            "package_key": "frost-lisp-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2720,7 +2720,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-options-0.1.8": {
+      "frost-options-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "thiserror",
@@ -2736,7 +2736,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-parser-0.1.8": {
+      "frost-parser-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "compact_str",
@@ -2750,7 +2750,7 @@
           },
           {
             "name": "frost_lexer",
-            "package_key": "frost-lexer-0.1.8",
+            "package_key": "frost-lexer-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2772,7 +2772,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-prompt-0.1.8": {
+      "frost-prompt-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "itoa",
@@ -2808,7 +2808,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-spec-0.1.8": {
+      "frost-spec-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "serde",
@@ -2846,7 +2846,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-verify-0.1.8": {
+      "frost-verify-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "blake3",
@@ -2918,7 +2918,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "frost-zle-0.1.8": {
+      "frost-zle-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "crossterm",
@@ -2932,7 +2932,7 @@
           },
           {
             "name": "frost_lexer",
-            "package_key": "frost-lexer-0.1.8",
+            "package_key": "frost-lexer-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2942,7 +2942,7 @@
           },
           {
             "name": "frost_options",
-            "package_key": "frost-options-0.1.8",
+            "package_key": "frost-options-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -11083,7 +11083,7 @@
     "fixedbitset-0.4.2": {
       "edition": "2015"
     },
-    "frost-0.1.8": {
+    "frost-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost",
@@ -11096,14 +11096,14 @@
         }
       ]
     },
-    "frost-builtins-0.1.8": {
+    "frost-builtins-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_builtins",
         "path": "src/lib.rs"
       }
     },
-    "frost-compat-0.1.8": {
+    "frost-compat-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_compat",
@@ -11116,7 +11116,7 @@
         }
       ]
     },
-    "frost-complete-0.1.8": {
+    "frost-complete-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_complete",
@@ -11129,91 +11129,91 @@
         }
       ]
     },
-    "frost-config-0.1.8": {
+    "frost-config-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_config",
         "path": "src/lib.rs"
       }
     },
-    "frost-exec-0.1.8": {
+    "frost-exec-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_exec",
         "path": "src/lib.rs"
       }
     },
-    "frost-expand-0.1.8": {
+    "frost-expand-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_expand",
         "path": "src/lib.rs"
       }
     },
-    "frost-glob-0.1.8": {
+    "frost-glob-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_glob",
         "path": "src/lib.rs"
       }
     },
-    "frost-history-0.1.8": {
+    "frost-history-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_history",
         "path": "src/lib.rs"
       }
     },
-    "frost-lexer-0.1.8": {
+    "frost-lexer-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_lexer",
         "path": "src/lib.rs"
       }
     },
-    "frost-lisp-0.1.8": {
+    "frost-lisp-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_lisp",
         "path": "src/lib.rs"
       }
     },
-    "frost-mcp-0.1.8": {
+    "frost-mcp-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_mcp",
         "path": "src/lib.rs"
       }
     },
-    "frost-options-0.1.8": {
+    "frost-options-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_options",
         "path": "src/lib.rs"
       }
     },
-    "frost-parser-0.1.8": {
+    "frost-parser-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_parser",
         "path": "src/lib.rs"
       }
     },
-    "frost-prompt-0.1.8": {
+    "frost-prompt-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_prompt",
         "path": "src/lib.rs"
       }
     },
-    "frost-spec-0.1.8": {
+    "frost-spec-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_spec",
         "path": "src/lib.rs"
       }
     },
-    "frost-verify-0.1.8": {
+    "frost-verify-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_verify",
@@ -11226,7 +11226,7 @@
         }
       ]
     },
-    "frost-zle-0.1.8": {
+    "frost-zle-0.1.9": {
       "edition": "2024",
       "lib_target": {
         "name": "frost_zle",

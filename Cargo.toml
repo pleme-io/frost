@@ -23,7 +23,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-version = "0.1.8"
+version = "0.1.9"
 license = "MIT"
 authors = ["pleme-io"]
 repository = "https://github.com/pleme-io/frost"
