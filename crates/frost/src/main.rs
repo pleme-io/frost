@@ -1979,10 +1979,9 @@ fn main() {
     // comment promised; mado and tear-daemon `.expect()`ed and panicked at
     // startup on thread-spawn EAGAIN. kanshou::Server::spawn_sidecar makes
     // that decision once, non-fatally, so the divergence cannot come back.
-    if let Some(path) = kanshou::Server::spawn_sidecar(
-        "frost",
-        std::sync::Arc::clone(&kanshou_shell_state),
-    ) {
+    if let Some(path) =
+        kanshou::Server::spawn_sidecar("frost", std::sync::Arc::clone(&kanshou_shell_state))
+    {
         tracing::info!(socket = %path.display(), "kanshou introspection live");
     }
 

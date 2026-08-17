@@ -190,8 +190,8 @@ pub fn frecent_commands_from(db: &Path, limit: usize) -> Result<Vec<String>, Usa
     let spec = FrecencyRankingSpec::skimtab_parity();
     // Empty needle: `MatchNeedle` and `CollapseDescendants` are both no-ops,
     // so this is pure frecency order with no path tokenization applied.
-    let ranked = query::top_n(&store, &spec, "", limit)
-        .map_err(|e| UsageError::Store(e.to_string()))?;
+    let ranked =
+        query::top_n(&store, &spec, "", limit).map_err(|e| UsageError::Store(e.to_string()))?;
     Ok(ranked
         .into_iter()
         .map(|r| r.path.to_string_lossy().into_owned())

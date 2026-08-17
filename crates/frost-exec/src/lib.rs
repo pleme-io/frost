@@ -18,11 +18,11 @@ pub mod tty_takeover;
 pub mod usage;
 
 pub use env::{ShellEnv, frecent_dirs};
-pub use usage::{frecent_commands, record_command};
 pub use execute::{ControlFlow, ExecError, Executor};
 pub use job::{Job, JobTable};
 pub use modal::{FrostMode, KeyDecision, ModalState};
 pub use trap::{TrapAction, TrapTable};
+pub use usage::{frecent_commands, record_command};
 
 /// Tokenize a string into a token stream.
 ///
