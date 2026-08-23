@@ -2,7 +2,7 @@
   "schema_version": 2,
   "cargo_lock_sha256": "1a9f79951b4ff2468082c93d95108ea4a962c08b897ba7b5c0f4798c07ba4cdb",
   "manifest_sha256": {
-    "Cargo.toml": "a4aa8e13a178f4f1c917d841d57c8e5e2f4cf71a7b6c5feddd7c5916028f7cb9",
+    "Cargo.toml": "67d671ddecac4ddc1da89bb6896a68feadff36c05cd8800b347779c07508bed7",
     "crates/frost-builtins/Cargo.toml": "9c3f46cf0585359618f321ca7f27e1a17f8728b6247848a6936e3d85c8d998a7",
     "crates/frost-compat/Cargo.toml": "fbab5dc8909d4a076781da9c7f708165e0c88364c5e43cdc9bd25652ab2ccbd9",
     "crates/frost-complete/Cargo.toml": "4cb9cae288430552cd6c21236cb29b5d06f77b8cf0407c3a30b0a4117763bb3e",

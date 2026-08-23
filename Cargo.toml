@@ -143,21 +143,35 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # shell). Fork repo created GitOps-natively by the (wedge-fixed) rio
 # operator from org.yaml; upstream v0.42.0 + the painter patch.
 #
-# ── THIS LINE IS WHY frost NEEDS A REPO-LEVEL `BOT_PAT` SECRET ──────────
-# The fork repo is PRIVATE, and so is frost. pleme-io is on the GitHub Free
-# plan, where an ORG secret reaches PUBLIC repos only — so `secrets.BOT_PAT`
-# arrives EMPTY in every private repo's workflow, and `pleme-io/actions/
-# git-credentials` falls back to `GITHUB_TOKEN`, which is scoped to THIS repo
-# alone. `cargo metadata` then 404s on the fork and the failure reads as
-# "Repository not found", never as "missing credential":
+# ── THIS BLOCK USED TO SAY frost NEEDS A REPO-LEVEL `BOT_PAT`. IT DOES NOT,
+#    AND THAT SECRET IS NOW THE PROBLEM — CORRECTED 2026-08-22 ─────────────
 #
-#   remote: Repository not found.
-#   error: failed to load source for dependency `reedline`
+# The retired text argued: "the fork repo is PRIVATE, and so is frost", so an
+# ORG secret cannot reach either on the Free plan, so frost must carry a
+# REPO-level BOT_PAT — set 2026-08-07 — and "deleting that secret re-breaks
+# CI". Every load-bearing premise has since expired. Measured 2026-08-22 with
+# `gh repo view`: reedline PUBLIC, frost PUBLIC, and so are substrate, gen and
+# ishou. Nothing this repo resolves needs a credential.
 #
-# That killed gen-spec's "Repair and commit" step on run 31219940848 — the
-# autoheal could not regenerate Cargo.gen.lock at all. The fix is a
-# REPO-level BOT_PAT (set 2026-08-07; the workaround pangea-operator already
-# carries). Deleting that secret re-breaks CI while every local build stays
-# green, because a workstation's own git credentials cover the fork.
+# The reasoning inverted with the facts. That repo-level secret still holds
+# the revoked classic PAT, and a repo secret SHADOWS the org one — so while
+# four sibling repos authenticated fine against the live org BOT_PAT inside
+# the same 67 seconds, frost alone was told "Bad credentials". A dead token is
+# worse than none: nix attaches `access-tokens` to EVERY github.com request,
+# so GitHub answered 401 for PUBLIC repos too, and all three of this repo's
+# workflows died in under 25 seconds without reaching a test.
+#
+# So the sentence to carry forward is the opposite of the old one: KEEPING
+# that secret is what breaks CI, and deleting it is the fix. All three
+# workflows now withhold BOT_PAT and pass; see the notes in ci.yml,
+# auto-release.yml and gen-spec.yml. Deleting the repo-level secret needs
+# operator access — nix/docs/github-token-distribution.md is the destination
+# (BOT_PAT to zero consumers).
+#
+# Kept, because it is still true and still the reason to pin by rev rather
+# than float: a bare `git = "..."` with no rev floats on whatever main is,
+# which is the crate2nix-vs-fetchgit hash-drift class. This entry is a
+# `[patch.crates-io]`, which is stripped from a published manifest, so unlike
+# a real git dependency it needs no `version` to stay publishable.
 [patch.crates-io]
 reedline = { git = "https://github.com/pleme-io/reedline" }
