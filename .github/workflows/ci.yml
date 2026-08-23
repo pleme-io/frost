@@ -75,8 +75,9 @@ name: ci
 #
 # Post-repair baseline, aarch64-darwin:
 #   cargo check --workspace --all-targets  -> clean
-#   cargo test --workspace --no-fail-fast, with the six --skips below
-#                                          -> exit 0, 1015 passed / 0 failed
+#   cargo test --workspace --no-fail-fast, with the six --skips this file
+#   carried at the time (it is down to ONE as of 2026-08-22 — see the
+#   `cargo-test` job)              -> exit 0, 1015 passed / 0 failed
 
 #
 # ── CORRECTED 2026-08-08: the GitHub-hosted pin is GONE ─────────────────────
@@ -188,17 +189,39 @@ jobs:
       # darwin `cargo test`; that is a real darwin bug for someone to fix, and
       # this workflow is not the place to hide it.
       #
-      # WHAT REMAINS SKIPPED, each named exactly (libtest `--skip` is a
-      # SUBSTRING match, so a loose filter is a silent over-skip). Neither is
-      # `#[ignore]`d and neither is deleted — both still fail a local run, and
-      # the ledger job prints their real output on every push:
+      # ── THE FIRST SKIP IS GONE (2026-08-22), AND WHY THAT MATTERS ────────
       #
-      #   tests::apply_deftheme_merges_onto_borealis_default   (frost-lisp)
-      #     Red on BOTH platforms — darwin and the runner agree:
-      #       left Some("#D7C489")  right Some("#EDC980")
-      #     The test pins a colour the current ishou-tokens rev no longer
-      #     emits. A genuine pre-existing defect, verified failing at c3434ca,
-      #     before this branch. Not this workflow's to fix.
+      # `tests::apply_deftheme_merges_onto_borealis_default` (frost-lisp) was
+      # skipped here on the reasoning that it was "a genuine pre-existing
+      # defect … not this workflow's to fix". Both halves were wrong, and the
+      # combination is the shape worth naming.
+      #
+      # It was not a defect in the SHELL: `borealis_night()` was correct the
+      # whole time. The test carried a second, hand-copied hex of two
+      # `ishou_tokens::VellumPalette` tokens it was supposed to be reading
+      # from that one source, and `first_light` moved to `#D7C489` upstream
+      # while the copy stayed `#EDC980`. Fixed at the class, not the value:
+      # the test now asserts against `borealis_night()` itself, so the token
+      # may move whenever it likes and this test simply follows it.
+      #
+      # And the skip was doing REAL damage, not merely hiding one red row.
+      # `ci` and `auto-release` do not share a skip list — substrate's
+      # `rust-auto-release.yml` Test gate runs the workspace unfiltered — so
+      # this suppression made `ci` green and `auto-release` red on the SAME
+      # commit, for four consecutive pushes (32010480672, 32011111951,
+      # 32013117846, 32277327119). Every one of them failed at `Test gate`
+      # with exit 100, blocking the crates.io publish of frost-lisp, which is
+      # the crate other repos depend on. A suppression that reaches one
+      # workflow and not the other does not remove a failure — it relocates
+      # it somewhere nobody is reading.
+      #
+      # Standing rule this leaves behind: a `--skip` here is a claim that the
+      # ONLY consumer of this test suite is this workflow. It is not.
+      #
+      # WHAT REMAINS SKIPPED, named exactly (libtest `--skip` is a SUBSTRING
+      # match, so a loose filter is a silent over-skip). It is not `#[ignore]`d
+      # and not deleted, and the ledger job prints its real output on every
+      # push:
       #
       #   interactive_session_terminates_on_sigterm_with_no_trap (persona_pty)
       #     PASSES on the runner, and is skipped anyway — the one deliberate
@@ -210,9 +233,12 @@ jobs:
       #     `timeout-minutes`, so it burns the 6h default. One test is not
       #     worth that tail. Revisit if persona_pty ever gets a bounded harness.
       #
-      # WHAT THE REMAINING EXCLUSION COSTS: a new failure landing on either of
-      # those two names is skipped here too. The ledger is the compensating
-      # control and it is advisory, so the honest tier is only-mitigated.
+      # WHAT THE REMAINING EXCLUSION COSTS: a new failure landing on that one
+      # name is skipped here too. The ledger is the compensating control and
+      # it is advisory, so the honest tier is only-mitigated. Note the cost is
+      # now bounded to `ci` alone — `auto-release` runs that test unfiltered,
+      # so the exclusion can no longer split the two workflows' verdicts the
+      # way the deftheme skip did.
       #
       # `--all-features` is deliberately dropped from the reusable's default.
       # frost's only non-default-off feature is frost-exec's
@@ -220,7 +246,6 @@ jobs:
       # widen the subject set by exactly zero tests here.
       test-args: >-
         --workspace --no-fail-fast --
-        --skip tests::apply_deftheme_merges_onto_borealis_default
         --skip interactive_session_terminates_on_sigterm_with_no_trap
     secrets: inherit
 
