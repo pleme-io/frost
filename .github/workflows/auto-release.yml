@@ -39,4 +39,35 @@ jobs:
     uses: pleme-io/substrate/.github/workflows/rust-auto-release.yml@main
     with:
       bump-type: ${{ inputs.bump-type || 'patch' }}
-    secrets: inherit
+    # ── BOT_PAT WITHHELD — the same call ci.yml already made on 2026-08-22,
+    #    now made here too, because this file is the half that still 401s.
+    #
+    # ci.yml omits `secrets: inherit` and is GREEN. This file inherited it and
+    # is RED, at the same commit, in the same minute. That is the whole diff.
+    #
+    # WHY IT IS THIS REPO AND NOT THE FLEET. The org BOT_PAT was dead
+    # fleet-wide from 2026-08-22T00:25-00:33Z, but it has since been rotated
+    # and is LIVE again. Measured 2026-08-23T00:47:33-00:48:40Z — five repos,
+    # same reusable, same `secrets: inherit`, inside 67 seconds:
+    #
+    #   omoya 00:47:33  routed via bot-pat  checkout OK  Resolve test env OK
+    #   gen   00:47:44  routed via bot-pat  checkout OK  Resolve test env OK
+    #   frost 00:47:57  ---                 checkout 401 Resolve test env 401
+    #   mado  00:48:16  routed via bot-pat  full success, tag re-triggered
+    #   mukae 00:48:40  routed via bot-pat  checkout OK  Resolve test env OK
+    #
+    # An org secret has ONE value, so four repos cannot authenticate with it
+    # while a fifth is told "Bad credentials". And frost is not merely missing
+    # it: an ABSENT BOT_PAT makes nix-installer-action write no `access-tokens`
+    # line at all, which fetches PUBLIC substrate anonymously and PASSES. Only
+    # a present-and-invalid token produces a 401 against a public repo.
+    #
+    # So frost resolves a DIFFERENT value than its siblings, and the only
+    # mechanism that does that is a REPOSITORY-level `BOT_PAT` shadowing the
+    # org one (repo secrets win) and still holding the revoked classic PAT.
+    # Deleting that repo-level secret is the real fix and needs operator
+    # access; withholding here is correct regardless, because every input this
+    # repo resolves is PUBLIC (ishou, reedline included) and frost has no
+    # `on: push: tags:` workflow to lose.
+    secrets:
+      CRATES_API_TOKEN: ${{ secrets.CRATES_API_TOKEN }}
