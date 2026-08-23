@@ -139,9 +139,13 @@ jobs:
 
   # ── The gate ───────────────────────────────────────────────────────────
   #
-  # `cargo fmt --all -- --check` + `cargo test` inside `.#default`, with the
-  # private-git-dependency credential wiring the private `pleme-io/reedline`
-  # fork requires. Red here blocks.
+  # `cargo fmt --all -- --check` + `cargo test` inside `.#default`. Red here
+  # blocks.
+  #
+  # This used to say "with the private-git-dependency credential wiring the
+  # private `pleme-io/reedline` fork requires". Both premises expired:
+  # reedline is PUBLIC and so is frost (measured 2026-08-22), so no credential
+  # is wired here at all — see the `secrets:` note at the end of this job.
   cargo-test:
     uses: pleme-io/substrate/.github/workflows/nix-devshell-cargo-test.yml@main
     with:
@@ -247,7 +251,30 @@ jobs:
       test-args: >-
         --workspace --no-fail-fast --
         --skip interactive_session_terminates_on_sigterm_with_no_trap
-    secrets: inherit
+
+    # ── NO `secrets: inherit` — 2026-08-22, and it is the FIX, not an omission
+    #
+    # `nix-devshell-cargo-test.yml` declares no `secrets:` block, so
+    # `secrets.BOT_PAT` inside it is populated by inheritance ALONE. Not
+    # inheriting leaves it empty, and empty is exactly what this repo wants:
+    # `pleme-io/actions/nix-build` writes its `access-tokens` line only when
+    # the token is non-empty, so an absent BOT_PAT means nix fetches
+    # `github:pleme-io/substrate` anonymously — which works, because
+    # substrate is PUBLIC.
+    #
+    # A present-but-DEAD token is worse than an absent one, and this is the
+    # measurement: the org BOT_PAT has answered 401 "Bad credentials" since
+    # 2026-08-22, nix attached it to every github.com request, and GitHub
+    # answers 401 for PUBLIC repos too. Run 32608212908 failed in 18s with
+    #   unable to download
+    #   'https://api.github.com/repos/pleme-io/substrate/commits/HEAD':
+    #   HTTP error 401
+    # on a public repo, from a public repo. The credential was not protecting
+    # the fetch; it was the only thing breaking it.
+    #
+    # The key is OMITTED rather than set to an empty mapping: this reusable
+    # declares no secrets at all, so there is nothing a caller is allowed to
+    # name here.
 
   # ── Termination as a property — the gate that already existed and ran
   #    nowhere ─────────────────────────────────────────────────────────────
@@ -274,16 +301,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # `pleme-io/reedline` is PRIVATE and so is frost, so on the Free plan the
-      # ORG BOT_PAT arrives EMPTY here and the fallback lands on the repo-scoped
-      # GITHUB_TOKEN, which cannot read a sibling private repo. frost carries a
-      # REPO-level BOT_PAT (set 2026-08-07) for exactly this; delete it and
-      # cargo dies with "Repository not found", which reads as a missing repo
-      # rather than a missing credential.
-      - uses: pleme-io/actions/git-credentials@2018933f32d08f29b5c4de5aeba207f31ae1d755
-        with:
-          bot-pat: ${{ secrets.BOT_PAT }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      # ── NO git-credentials step, and no `github-token:` below — 2026-08-22
+      #
+      # THE PREMISE THAT PUT THEM HERE IS GONE. This block used to read
+      # "`pleme-io/reedline` is PRIVATE and so is frost", and both halves are
+      # now false. Measured today with `gh repo view`:
+      #   frost PUBLIC · substrate PUBLIC · reedline PUBLIC · ishou PUBLIC
+      # frost's flake declares exactly ONE input (`github:pleme-io/substrate`)
+      # and its only cargo git deps are ishou + reedline. Every one of them is
+      # publicly readable, so this job needs no GitHub credential at all — an
+      # anonymous fetch is not a degraded path here, it is the correct one.
+      #
+      # Leaving them wired was not merely redundant, it was THE failure. The
+      # org BOT_PAT has answered 401 "Bad credentials" since 2026-08-22, and a
+      # dead credential is worse than none: nix attaches it to every
+      # github.com request and GitHub then answers 401 for PUBLIC repos too.
+      # Run 32608212908, this job, on a PINNED rev of a PUBLIC repo:
+      #   error: Failed to open archive (Source threw exception: error: unable
+      #   to download 'https://api.github.com/repos/pleme-io/substrate/tarball/
+      #   1c8110fe712c8fd3d7b6bd1ca4649b8d320e7b82': HTTP error 401)
+      # `pleme-io/actions/nix-build` writes its `access-tokens` line only for a
+      # NON-EMPTY token, so withholding it is what restores the anonymous
+      # fetch. Same reasoning as auto-release.yml (commit 3dbf38b).
+      #
+      # Restore both if frost or any dependency ever goes private again — and
+      # then pass a LIVE token, per-owner, never a bare `github.com=` entry.
 
       # nix-build, NOT cargo-run-bin. MEASURED 2026-08-08, run 31244565419:
       # `cargo-run-bin` died on the Camelot pool with
@@ -303,7 +345,6 @@ jobs:
         uses: pleme-io/actions/nix-build@3c76f440fdfa406ba5c314c1d6032b2f9da7eaf5
         with:
           flake-ref: .#frost
-          github-token: ${{ secrets.BOT_PAT }}
 
       # `script-file:`, never an inline `script:` — the latter rides to the
       # runner as TATARA_SCRIPT_SRC and GitHub echoes every env value into the
@@ -380,19 +421,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pleme-io/actions/git-credentials@2018933f32d08f29b5c4de5aeba207f31ae1d755
-        with:
-          bot-pat: ${{ secrets.BOT_PAT }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # `access-tokens` is nix's OWN fetcher credential and is separate from
-      # the git credential above: frost's flake pulls PRIVATE pleme-io inputs,
-      # and without this nix 404s on them and reports a missing REPOSITORY
-      # rather than a missing token.
+      # ── The `access-tokens` line is GONE — 2026-08-22
+      #
+      # It read `access-tokens = github.com=${{ secrets.BOT_PAT }}`, justified
+      # by "frost's flake pulls PRIVATE pleme-io inputs". It does not: the
+      # flake declares ONE input, `github:pleme-io/substrate`, and substrate
+      # is PUBLIC (as are frost, reedline and ishou — measured 2026-08-22).
+      # The git-credentials step above it is gone for the same reason.
+      #
+      # And a bare `github.com=<token>` entry is the sharp edge the fleet
+      # already has a name for: nix attaches it to EVERY github.com request,
+      # so one dead token 401s the anonymous path too. With BOT_PAT dead since
+      # 2026-08-22 this job died in 16s on substrate's own tarball URL, never
+      # reaching a single test — an advisory ledger whose whole purpose is to
+      # keep known-reds visible, rendered blind by its own credential.
+      # Anonymous is correct here; if a private input is ever added, scope the
+      # entry `github.com/pleme-io=<live token>`, never bare `github.com=`.
       - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            access-tokens = github.com=${{ secrets.BOT_PAT }}
 
       # The one `run:` in this file, and it is glue: nix brings the compiler,
       # `cargo test` is the entire payload. No skips — that is the point of
