@@ -13,4 +13,30 @@ on:
 jobs:
   gen-spec:
     uses: pleme-io/substrate/.github/workflows/reusable-gen-spec.yml@main
-    secrets: inherit
+
+    # ── BOT_PAT WITHHELD — the third and last workflow in this repo to need it
+    #
+    # ci.yml and auto-release.yml already withhold it. This file was the one
+    # left inheriting, and it broke the moment anything touched a Cargo.toml:
+    # run 32609258106, "Repair and commit",
+    #
+    #   … while fetching the input 'github:pleme-io/gen'
+    #   error: unable to download
+    #   'https://api.github.com/repos/pleme-io/gen/commits/HEAD':
+    #   HTTP error 401 — "Bad credentials"
+    #
+    # `pleme-io/gen` is PUBLIC. The fetch needs no credential and succeeds
+    # anonymously; it failed only because a dead token was attached to it.
+    # frost resolves a repository-level BOT_PAT that still holds the revoked
+    # classic PAT, which is why four sibling repos authenticate fine against
+    # the live ORG secret while this one is told "Bad credentials" — see
+    # auto-release.yml for that five-repo, 67-second comparison.
+    #
+    # `reusable-gen-spec.yml` declares no `secrets:` block, so inheritance is
+    # the only path BOT_PAT has into it, and it carries
+    # `permissions: contents: write` — so the autoheal's push falls back to
+    # GITHUB_TOKEN and still works.
+    #
+    # Deleting the repo-level secret is the real fix and needs operator
+    # access. Withholding is correct regardless: every input this repo
+    # resolves is public.
