@@ -2055,9 +2055,28 @@ mod tests {
         assert_eq!(s.theme.name.as_deref(), Some("my-custom"));
         assert_eq!(s.theme.hint.as_deref(), Some("#FFFFFF"));
         assert_eq!(s.theme.command.as_deref(), Some("#00FF00"));
-        // Non-overlaid fields retain Borealis defaults (BORN tokens).
-        assert_eq!(s.theme.unknown_command.as_deref(), Some("#EDC980")); // first_light
-        assert_eq!(s.theme.string.as_deref(), Some("#73C6D9")); // ice_cyan
+
+        // Non-overlaid fields retain the Borealis defaults — asserted
+        // against `borealis_night()` itself, NOT against a hand-copied
+        // hex. The literals this replaced (`#EDC980` / `#73C6D9`) were a
+        // second copy of two `ishou_tokens::VellumPalette` tokens, free
+        // to disagree with the one they mirrored — and `first_light` did
+        // move to `#D7C489`, turning this test red on both platforms
+        // while `borealis_night()` was perfectly correct. A palette
+        // token is the token source's value by definition, so the only
+        // honest expectation is a read of that same source.
+        let base = borealis_night();
+        // Anti-vacuity: `None == None` would pass while proving nothing,
+        // so the expectation must first BE a value.
+        assert!(
+            base.unknown_command.is_some() && base.string.is_some(),
+            "borealis_night() must populate the slots this test compares; \
+             got unknown_command={:?} string={:?}",
+            base.unknown_command,
+            base.string
+        );
+        assert_eq!(s.theme.unknown_command, base.unknown_command); // first_light
+        assert_eq!(s.theme.string, base.string); // ice_cyan
     }
 
     #[test]
