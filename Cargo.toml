@@ -30,21 +30,46 @@ repository = "https://github.com/pleme-io/frost"
 homepage = "https://github.com/pleme-io/frost"
 
 [workspace.dependencies]
-# Internal crates
-frost-lexer = { path = "crates/frost-lexer" }
-frost-parser = { path = "crates/frost-parser" }
-frost-expand = { path = "crates/frost-expand" }
-frost-glob = { path = "crates/frost-glob" }
-frost-prompt = { path = "crates/frost-prompt" }
-frost-history = { path = "crates/frost-history" }
-frost-lisp = { path = "crates/frost-lisp" }
-frost-exec = { path = "crates/frost-exec" }
-frost-zle = { path = "crates/frost-zle" }
-frost-complete = { path = "crates/frost-complete" }
-frost-builtins = { path = "crates/frost-builtins" }
-frost-options = { path = "crates/frost-options" }
-frost-config = { path = "crates/frost-config" }
-frost-mcp = { path = "crates/frost-mcp" }
+# ── Internal crates: `path` AND `version`, never `path` alone ─────────────
+#
+# The `version` is not decoration and not a duplicate of the path — it is
+# what makes these crates PUBLISHABLE. `cargo publish` strips `path` (the
+# registry has no local directories) and falls back to the version
+# requirement, so a bare `{ path = … }` fails the manifest check outright:
+#
+#   error: failed to verify manifest at crates/frost-complete/Cargo.toml
+#     all dependencies must have a version requirement specified when
+#     publishing.  dependency `frost-lisp` does not specify a version
+#
+# MEASURED, not anticipated: run 32608455667's "Ship workspace to registry"
+# reported `permanent failures: frost-parser, frost-zle, frost-expand,
+# frost-exec, frost-lisp, frost-mcp, frost-complete, frost` — eight of the
+# fourteen, every one for this and nothing else. It was the FIRST time that
+# job had ever executed: the Test gate had failed ahead of it on every prior
+# push, so the publish leg was untested ground the moment the gate went
+# green. auto-release.yml's header wants `frost-lisp` on crates.io precisely
+# because other repos (estante) cannot publish while it is absent, and this
+# is the line item that was blocking it.
+#
+# The pins stay in lockstep by construction, not by discipline: every member
+# above declares `version.workspace = true` (verified for all 14), which is
+# the exact condition `pleme-io/actions/rust-workspace-bump` requires before
+# it rewrites an intra-workspace pin — so each bump moves the workspace
+# version and these requirements together, in one pass.
+frost-lexer = { path = "crates/frost-lexer", version = "0.1.10" }
+frost-parser = { path = "crates/frost-parser", version = "0.1.10" }
+frost-expand = { path = "crates/frost-expand", version = "0.1.10" }
+frost-glob = { path = "crates/frost-glob", version = "0.1.10" }
+frost-prompt = { path = "crates/frost-prompt", version = "0.1.10" }
+frost-history = { path = "crates/frost-history", version = "0.1.10" }
+frost-lisp = { path = "crates/frost-lisp", version = "0.1.10" }
+frost-exec = { path = "crates/frost-exec", version = "0.1.10" }
+frost-zle = { path = "crates/frost-zle", version = "0.1.10" }
+frost-complete = { path = "crates/frost-complete", version = "0.1.10" }
+frost-builtins = { path = "crates/frost-builtins", version = "0.1.10" }
+frost-options = { path = "crates/frost-options", version = "0.1.10" }
+frost-config = { path = "crates/frost-config", version = "0.1.10" }
+frost-mcp = { path = "crates/frost-mcp", version = "0.1.10" }
 
 # Error handling
 thiserror = "2"
@@ -89,7 +114,13 @@ tatara-lisp = "0.3.41"
 # resolves through this crate at apply time, killing the duplicate-bind
 # class of bug (2026-05-21 Ctrl-R incident). HTTPS like tatara-lisp so
 # the Nix daemon vendors via access-tokens.conf inside the sandbox.
-ishou-tokens = { git = "https://github.com/pleme-io/ishou", rev = "0197aeba1e9a7e17ff516272689dbca6a3ccc967" }
+# `version` alongside `git` for the same reason the internal crates above
+# carry one: a git dependency has no version requirement, and `cargo publish`
+# rejects the manifest without it. Locally and in CI the `rev` still wins and
+# nothing about how frost builds changes; the version is what a PUBLISHED
+# frost-lisp hands its consumers, resolved from crates.io. 0.1.3 is the
+# version the pinned rev declares (see Cargo.lock) and it is published.
+ishou-tokens = { git = "https://github.com/pleme-io/ishou", rev = "0197aeba1e9a7e17ff516272689dbca6a3ccc967", version = "0.1.3" }
 
 # Testing
 pretty_assertions = "1"
