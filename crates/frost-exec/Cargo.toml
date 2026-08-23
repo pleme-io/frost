@@ -27,7 +27,18 @@ fancy-regex = { workspace = true }
 # can route keystrokes through Normal (passthrough), Command (`:` prefix),
 # and Search (`/` `?` scrollback) modes. Re-uses the same primitive that
 # mado / ayatsuri / namimado consume — no duplicate state machine.
-awase = { git = "https://github.com/pleme-io/awase" }
+# `version` beside `git` — without it this crate is unpublishable, and it
+# took the five crates downstream of it with it. Run 32609258067's Ship leg:
+#   error: failed to verify manifest at crates/frost-exec/Cargo.toml
+#     all dependencies must have a version requirement specified when
+#     publishing.  dependency `awase` does not specify a version
+# then `frost-expand, frost-lisp, frost-mcp, frost-complete, frost` all
+# deferred on `frost-exec = "^0.1.11"` and the pass aborted with "no
+# progress across two consecutive passes". ONE version-less git dep on a
+# mid-graph crate blocks everything beneath it.
+# The git source still wins locally and in CI; 0.1.0 is what Cargo.lock
+# resolves and awase is published (0.1.10 latest), so `^0.1.0` is satisfiable.
+awase = { git = "https://github.com/pleme-io/awase", version = "0.1.0" }
 # wadachi (轍) — directory frecency. frost is the SOLE recorder: it records
 # every dir change at the chdir chokepoint and resolves smart-cd, both IN-PROCESS
 # (lib is imported as `wadachi`; package is pleme-io-wadachi). Behind a default
