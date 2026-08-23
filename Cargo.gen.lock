@@ -7,7 +7,7 @@
     "crates/frost-compat/Cargo.toml": "fbab5dc8909d4a076781da9c7f708165e0c88364c5e43cdc9bd25652ab2ccbd9",
     "crates/frost-complete/Cargo.toml": "4cb9cae288430552cd6c21236cb29b5d06f77b8cf0407c3a30b0a4117763bb3e",
     "crates/frost-config/Cargo.toml": "a3ec4a23ffe340b79698ad22ee3e1f26e3aa95fd010cd6bf86b642e115e69684",
-    "crates/frost-exec/Cargo.toml": "2c9d22cb0941adc951df79f2d24425d9b5b7fe1b1635451a22dc44631cf41b5a",
+    "crates/frost-exec/Cargo.toml": "6f462bff5b6f74e40e5689d82cfbc094785843ef67116e49f678dd56688575a5",
     "crates/frost-expand/Cargo.toml": "52c8d99215fc84165b0db9c49644fefe9747e66a35c13a90ef91a9c3a346c6d9",
     "crates/frost-glob/Cargo.toml": "f321f663121511bbcfbd4f89d6382d28d5aaf54ddf873aa2f27b191229bc8148",
     "crates/frost-history/Cargo.toml": "39b5926b3093320850fa05797fc9fcf38fa8f6eba9bbdb0adb1739974e8a2693",
