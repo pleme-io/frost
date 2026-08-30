@@ -23,7 +23,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-version = "0.1.12"
+version = "0.1.13"
 license = "MIT"
 authors = ["pleme-io"]
 repository = "https://github.com/pleme-io/frost"
@@ -56,20 +56,20 @@ homepage = "https://github.com/pleme-io/frost"
 # the exact condition `pleme-io/actions/rust-workspace-bump` requires before
 # it rewrites an intra-workspace pin — so each bump moves the workspace
 # version and these requirements together, in one pass.
-frost-lexer = { path = "crates/frost-lexer", version = "0.1.12" }
-frost-parser = { path = "crates/frost-parser", version = "0.1.12" }
-frost-expand = { path = "crates/frost-expand", version = "0.1.12" }
-frost-glob = { path = "crates/frost-glob", version = "0.1.12" }
-frost-prompt = { path = "crates/frost-prompt", version = "0.1.12" }
-frost-history = { path = "crates/frost-history", version = "0.1.12" }
-frost-lisp = { path = "crates/frost-lisp", version = "0.1.12" }
-frost-exec = { path = "crates/frost-exec", version = "0.1.12" }
-frost-zle = { path = "crates/frost-zle", version = "0.1.12" }
-frost-complete = { path = "crates/frost-complete", version = "0.1.12" }
-frost-builtins = { path = "crates/frost-builtins", version = "0.1.12" }
-frost-options = { path = "crates/frost-options", version = "0.1.12" }
-frost-config = { path = "crates/frost-config", version = "0.1.12" }
-frost-mcp = { path = "crates/frost-mcp", version = "0.1.12" }
+frost-lexer = { path = "crates/frost-lexer", version = "0.1.13" }
+frost-parser = { path = "crates/frost-parser", version = "0.1.13" }
+frost-expand = { path = "crates/frost-expand", version = "0.1.13" }
+frost-glob = { path = "crates/frost-glob", version = "0.1.13" }
+frost-prompt = { path = "crates/frost-prompt", version = "0.1.13" }
+frost-history = { path = "crates/frost-history", version = "0.1.13" }
+frost-lisp = { path = "crates/frost-lisp", version = "0.1.13" }
+frost-exec = { path = "crates/frost-exec", version = "0.1.13" }
+frost-zle = { path = "crates/frost-zle", version = "0.1.13" }
+frost-complete = { path = "crates/frost-complete", version = "0.1.13" }
+frost-builtins = { path = "crates/frost-builtins", version = "0.1.13" }
+frost-options = { path = "crates/frost-options", version = "0.1.13" }
+frost-config = { path = "crates/frost-config", version = "0.1.13" }
+frost-mcp = { path = "crates/frost-mcp", version = "0.1.13" }
 
 # Error handling
 thiserror = "2"
