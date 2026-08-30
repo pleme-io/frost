@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "8867cdc8179d82a58c5b8df2fb38e9c6293070d0ac4dc1669c594b9a7854eb97",
+  "cargo_lock_sha256": "4e77a185ca16bae9c403cb06052962ddb872af2996cd569f9c7fc978fd7115bd",
   "manifest_sha256": {
     "Cargo.toml": "c5cac5b115a8516982281c7a0d2e78ceec6ff86ecd45629a911734a7f0d30e1e",
     "crates/frost-builtins/Cargo.toml": "9c3f46cf0585359618f321ca7f27e1a17f8728b6247848a6936e3d85c8d998a7",
@@ -2099,7 +2099,7 @@
           },
           {
             "name": "reedline",
-            "package_key": "reedline-0.42.0-75357e08147f72e254ddfa98ff7ccb4aa0da1e1b",
+            "package_key": "reedline-0.42.0-e93e4b4fd2303db7aa86333eb36819825b704e19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -2977,7 +2977,7 @@
           },
           {
             "name": "reedline",
-            "package_key": "reedline-0.42.0-75357e08147f72e254ddfa98ff7ccb4aa0da1e1b",
+            "package_key": "reedline-0.42.0-e93e4b4fd2303db7aa86333eb36819825b704e19",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -4968,7 +4968,7 @@
           "proc-macro"
         ]
       },
-      "reedline-0.42.0-75357e08147f72e254ddfa98ff7ccb4aa0da1e1b": {
+      "reedline-0.42.0-e93e4b4fd2303db7aa86333eb36819825b704e19": {
         "runtime_dependencies": [
           {
             "name": "chrono",
@@ -11486,7 +11486,7 @@
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "reedline-0.42.0-75357e08147f72e254ddfa98ff7ccb4aa0da1e1b": {
+    "reedline-0.42.0-e93e4b4fd2303db7aa86333eb36819825b704e19": {
       "edition": "2021"
     },
     "ref-cast-1.0.25": {
@@ -11830,7 +11830,7 @@
     "gen-platform-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
     "gen-types-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": "sha256-7BNW4JfFa8nTvkq9O7Thxt1P6fSgcmPU4sthBdBfMgM=",
     "ishou-tokens-0.1.3-0197aeba1e9a7e17ff516272689dbca6a3ccc967": "sha256-kETqdHgzg9jFmR0SMhRT6mP1EYbHI6cqKLPbyj/rDuk=",
-    "reedline-0.42.0-75357e08147f72e254ddfa98ff7ccb4aa0da1e1b": "sha256-XIkeEaDP6m2DNFFgdB8tRYRm1bxhx8PEAVZJnWlK5Fw=",
+    "reedline-0.42.0-e93e4b4fd2303db7aa86333eb36819825b704e19": "sha256-o8X+Lzfw+9oREbY5W67WDvBTPBTwOapKv3YpMBFe4Zs=",
     "shigoto-budget-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
     "shigoto-dag-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
     "shigoto-emit-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": "sha256-ScM7rAuDChSHnp35fGzOeQIxV/oix/7YpbiLmU/cDXc=",
