@@ -814,7 +814,52 @@ impl<'env> Executor<'env> {
 
     // ── Simple command ───────────────────────────────────────────
 
+    /// Prefix assignments (`VAR=val cmd`) are **scoped to that command and
+    /// exported into its environment** — `FOO=bar env` must show `FOO`, and
+    /// `$FOO` must be gone once the command returns.
+    ///
+    /// Both halves were wrong before 2026-09-02 and wrong in the SILENT
+    /// direction: the assignment was applied as an ordinary shell variable,
+    /// so it was neither exported (the child never saw it) nor scoped (it
+    /// leaked into the shell afterwards). The command still ran and still
+    /// exited 0 — it simply ran without the variable it was given. Measured
+    /// against zsh, which does both correctly.
+    ///
+    /// Found the long way round: `XDG_RUNTIME_DIR=… tear list` over ssh kept
+    /// resolving the fallback socket path, which reads as a tear bug and is
+    /// not one. `env VAR=val cmd` worked throughout, which is what makes the
+    /// difference invisible until something depends on it.
+    ///
+    /// This is a WRAPPER, deliberately. The body below is ~560 lines with 36
+    /// exit paths and three dispatch arms (function / builtin / external);
+    /// pushing and popping around the whole of it is exception-safe on every
+    /// one of those paths, where a scope pop threaded through them would not
+    /// be. The scope is seeded with each name's CURRENT value rather than
+    /// with the empty string so that `PATH+=:/x cmd` still appends to the
+    /// real `PATH`.
     pub fn execute_simple(&mut self, cmd: &SimpleCommand) -> ExecResult {
+        // Assignments with no command word are ordinary shell assignments and
+        // MUST persist — `FOO=bar` on its own line is not a prefix.
+        let scoped = !cmd.words.is_empty() && !cmd.assignments.is_empty();
+        if scoped {
+            self.env.push_scope();
+            for assign in &cmd.assignments {
+                let seed = self.env.get_var(&assign.name).unwrap_or("").to_owned();
+                self.env.declare_var(&assign.name, &seed);
+                // Marks the copy just declared in the innermost scope. The
+                // body's `set_var` then updates that same copy in place and
+                // leaves `export` set.
+                self.env.export_var(&assign.name);
+            }
+        }
+        let result = self.execute_simple_scoped(cmd);
+        if scoped {
+            self.env.pop_scope();
+        }
+        result
+    }
+
+    fn execute_simple_scoped(&mut self, cmd: &SimpleCommand) -> ExecResult {
         use frost_parser::ast::AssignOp;
         for assign in &cmd.assignments {
             if let Some(ref arr_words) = assign.array_value {
