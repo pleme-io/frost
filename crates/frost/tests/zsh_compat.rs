@@ -651,3 +651,68 @@ mod w01_scripts {
         let _ = std::fs::remove_file(&path);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// A08 — Prefix assignments (`VAR=val cmd`)
+//
+// Both invariants below were VIOLATED until 2026-09-02, and silently:
+// the assignment landed as an ordinary shell variable, so the child
+// never received it and the shell kept it afterwards. Nothing errored
+// — `VAR=val cmd` ran the command without the variable and exited 0.
+// Every expectation here is the MEASURED behaviour of zsh 5.9.
+// ═══════════════════════════════════════════════════════════════
+mod a08_prefix_assignment {
+    use super::*;
+
+    /// The whole point: the child must SEE it.
+    #[test]
+    fn prefix_assignment_is_exported_to_the_child() {
+        assert!(
+            stdout("FOO=bar env").lines().any(|l| l == "FOO=bar"),
+            "prefix assignment never reached the child environment"
+        );
+    }
+
+    /// ...and only for that command.
+    #[test]
+    fn prefix_assignment_does_not_leak_into_the_shell() {
+        assert_eq!(stdout("FOO=bar true; echo \"[$FOO]\""), "[]\n");
+    }
+
+    /// The other half of the pair: an assignment with NO command word
+    /// is not a prefix, and must persist. Scoping every assignment
+    /// would break this, so it is asserted next to its opposite.
+    #[test]
+    fn bare_assignment_still_persists() {
+        assert_eq!(stdout("FOO=bar; echo \"[$FOO]\""), "[bar]\n");
+    }
+
+    /// The scope is seeded with the CURRENT value, so `+=` appends to
+    /// the real one rather than to an empty string.
+    #[test]
+    fn append_assignment_sees_the_outer_value() {
+        assert!(
+            stdout("BASE=a; BASE+=b env")
+                .lines()
+                .any(|l| l == "BASE=ab"),
+            "`+=` prefix lost the outer value"
+        );
+    }
+
+    /// An outer exported variable must be RESTORED, not clobbered.
+    #[test]
+    fn outer_value_survives_the_command() {
+        assert_eq!(
+            stdout("export V=outer; V=inner true; echo \"[$V]\""),
+            "[outer]\n"
+        );
+    }
+
+    /// Multiple prefixes on one command all arrive.
+    #[test]
+    fn multiple_prefix_assignments_all_reach_the_child() {
+        let out = stdout("A=1 B=2 env");
+        assert!(out.lines().any(|l| l == "A=1"), "A missing");
+        assert!(out.lines().any(|l| l == "B=2"), "B missing");
+    }
+}
