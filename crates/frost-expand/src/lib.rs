@@ -59,6 +59,19 @@ pub trait ExpandEnv {
     fn ifs(&self) -> String {
         " \t\n".to_string()
     }
+    /// Whether `shwordsplit` is set.
+    ///
+    /// zsh does NOT field-split an unquoted parameter expansion — `$var` is
+    /// one word — which is the single loudest difference from `sh`/`bash` and
+    /// is deliberate. `setopt shwordsplit` restores the POSIX behaviour for
+    /// PARAMETER expansion only; an unquoted command substitution splits
+    /// either way (see the `CommandSub` arm).
+    ///
+    /// Defaults false, i.e. zsh semantics, so an environment that does not
+    /// model options keeps the shell's normal behaviour.
+    fn sh_word_split(&self) -> bool {
+        false
+    }
     /// Side-effect hook for `${name:=word}` / `${name=word}`: assign the
     /// resolved default back into the environment. The default is a no-op
     /// (read-only environments — e.g. the test mock — simply ignore the
@@ -252,12 +265,19 @@ impl<'a> ExpandCtx<'a> {
                 // for everything else the result is a single word.
                 parts
             }
-            WordPart::DollarVar(name) => self.expand_dollar_var(name),
+            WordPart::DollarVar(name) => {
+                let fields = self.expand_dollar_var(name);
+                self.apply_sh_word_split(fields)
+            }
             WordPart::DollarBrace {
                 param,
                 operator,
                 arg,
-            } => self.expand_dollar_brace(param, operator.as_deref(), arg.as_deref()),
+            } => {
+                let fields =
+                    self.expand_dollar_brace(param, operator.as_deref(), arg.as_deref());
+                self.apply_sh_word_split(fields)
+            }
             WordPart::CommandSub(program) => {
                 let output = self.env.capture_command_sub(program);
                 // Trim trailing newlines (POSIX/zsh behavior)
@@ -299,7 +319,10 @@ impl<'a> ExpandCtx<'a> {
                 };
                 vec![ch.to_string()]
             }
-            WordPart::ParamExp(pe) => self.expand_param_exp(pe),
+            WordPart::ParamExp(pe) => {
+                let fields = self.expand_param_exp(pe);
+                self.apply_sh_word_split(fields)
+            }
             WordPart::BraceExp(_) => {
                 // Brace expansion is handled at a higher level before param expansion.
                 // If we reach here, pass through as literal.
@@ -324,6 +347,29 @@ impl<'a> ExpandCtx<'a> {
     }
 
     /// Expand `$name` — special params and ordinary variables.
+    /// Apply `shwordsplit` to a PARAMETER expansion's result.
+    ///
+    /// A no-op unless all three hold: the option is set, we are in a
+    /// field-splitting context (argv, a `for` list — not a scalar assignment),
+    /// and we are not inside double quotes. `"$var"` stays one word under every
+    /// option, which is the whole point of quoting.
+    ///
+    /// ★ This exists because `ShellOption::ShWordSplit` was DEFINED and PARSED
+    /// and then read by nothing: `setopt shwordsplit` reported success and
+    /// changed no behaviour. The semantics were already documented correctly in
+    /// the `CommandSub` arm ("that option governs *parameter* expansion only")
+    /// — only the parameter half was missing.
+    fn apply_sh_word_split(&self, fields: Vec<String>) -> Vec<String> {
+        if !(self.split_fields && !self.in_double_quote && self.env.sh_word_split()) {
+            return fields;
+        }
+        let ifs = self.env.ifs();
+        fields
+            .iter()
+            .flat_map(|f| split_on_ifs(f, &ifs))
+            .collect()
+    }
+
     fn expand_dollar_var(&self, name: &CompactString) -> Vec<String> {
         match name.as_str() {
             "?" => vec![self.env.exit_status().to_string()],

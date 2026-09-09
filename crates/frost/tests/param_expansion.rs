@@ -282,6 +282,61 @@ fn shwordsplit_inside_double_quotes() {
     );
 }
 
+// ── The `setopt shwordsplit` OPTION, as distinct from the `${=x}` flag ──
+//
+// ★ Every test above exercises `${=x}` — the inline flag. Until 2026-09-09 NO
+// test used `setopt shwordsplit`, the global option, and that is exactly how
+// the gap survived: `ShellOption::ShWordSplit` was defined and parsed and then
+// read by nothing, so `setopt shwordsplit` reported success and changed no
+// behaviour, while a grep for the feature name showed healthy coverage.
+//
+// Oracles below captured from /bin/zsh 5.9 on 2026-09-09.
+
+#[test]
+fn setopt_shwordsplit_splits_unquoted_parameter() {
+    parity(
+        r#"setopt shwordsplit; x="a b c"; for w in $x; do echo "[$w]"; done"#,
+        "[a]\n[b]\n[c]\n",
+    );
+}
+
+#[test]
+fn without_shwordsplit_an_unquoted_parameter_is_one_word() {
+    // The zsh default, and the loudest difference from sh/bash. Guards against
+    // "fixing" the option by making splitting unconditional.
+    parity(
+        r#"x="a b c"; for w in $x; do echo "[$w]"; done"#,
+        "[a b c]\n",
+    );
+}
+
+#[test]
+fn setopt_shwordsplit_still_respects_quoting() {
+    parity(
+        r#"setopt shwordsplit; x="a b c"; for w in "$x"; do echo "[$w]"; done"#,
+        "[a b c]\n",
+    );
+}
+
+#[test]
+fn setopt_shwordsplit_leaves_scalar_assignment_alone() {
+    // Field splitting is a property of the CONTEXT, not of the expansion:
+    // an assignment takes one value however the option is set.
+    parity(
+        r#"setopt shwordsplit; x="a b c"; y=$x; echo "[$y]""#,
+        "[a b c]\n",
+    );
+}
+
+#[test]
+fn setopt_shwordsplit_applies_to_the_brace_form_too() {
+    // ${x} is a parameter expansion like $x and must behave identically.
+    parity(
+        r#"setopt shwordsplit; x="a b c"; for w in ${x}; do echo "[$w]"; done"#,
+        "[a]\n[b]\n[c]\n",
+    );
+}
+
 #[test]
 fn shwordsplit_empty_yields_nothing() {
     parity(
