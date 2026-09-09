@@ -2221,6 +2221,11 @@ impl ExpandEnv for ExpandBridge<'_> {
             .map_or_else(|| " \t\n".to_string(), |s| s.to_string())
     }
 
+    fn sh_word_split(&self) -> bool {
+        self.env
+            .is_option_set(frost_options::ShellOption::ShWordSplit)
+    }
+
     fn get_var_value(&self, name: &str) -> Option<frost_expand::ExpandValue> {
         self.env
             .get_value(name)
