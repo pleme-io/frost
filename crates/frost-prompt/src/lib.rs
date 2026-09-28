@@ -66,6 +66,10 @@ pub struct PromptEnv {
     pub is_root: bool,
     /// Additional variables to make available for `$VAR` expansion.
     pub extra_vars: std::collections::HashMap<String, String>,
+    /// zsh `%_`: the open parser constructs at a continuation prompt,
+    /// innermost last (`quote`, `dquote`, `cmdsubst`, `for`, ...),
+    /// space-joined. Empty at PS1.
+    pub parser_state: String,
 }
 
 impl PromptEnv {
@@ -91,6 +95,7 @@ impl PromptEnv {
             exit_status,
             is_root,
             extra_vars: std::collections::HashMap::new(),
+            parser_state: String::new(),
         }
     }
 
@@ -177,6 +182,7 @@ where
             out.push_str(short);
         }
         'M' => out.push_str(&env.hostname),
+        '_' => out.push_str(&env.parser_state),
         'd' | '/' => out.push_str(&env.cwd),
         '~' => out.push_str(&cwd_with_tilde(&env.cwd, &env.home)),
         'c' | 'C' => {
@@ -512,6 +518,7 @@ mod tests {
             exit_status: 0,
             is_root: false,
             extra_vars: Default::default(),
+            parser_state: String::new(),
         }
     }
 
@@ -618,6 +625,16 @@ mod tests {
         let env = PromptEnv::default();
         // `%F` without `{...}` just passes through.
         assert_eq!(render("%Fhi", &env, false), "%Fhi");
+    }
+
+    #[test]
+    fn percent_underscore_renders_parser_state() {
+        let env = PromptEnv {
+            parser_state: "for dquote".into(),
+            ..PromptEnv::default()
+        };
+        assert_eq!(render("%_> ", &env, false), "for dquote> ");
+        assert_eq!(render("%_> ", &PromptEnv::default(), false), "> ");
     }
 
     #[test]

@@ -1240,141 +1240,420 @@ fn tokenize(input: &str) -> Vec<frost_lexer::Token> {
     frost_lexer::tokenize_str(input)
 }
 
+/// zsh's default `PS2`: the open constructs, then `> ` (`quote> `,
+/// `for dquote> `). A continuation must never look like PS1.
+const DEFAULT_PS2: &str = "%_> ";
+
 /// Cheap "does this input look complete?" check for the interactive REPL.
 /// False → re-prompt with PS2 and concatenate the next line.
-///
-/// Heuristic — counts open/close pairs on the raw source (respecting simple
-/// quote context) and checks for trailing `\`. This is intentionally not a
-/// full parse: shell grammar is too ambiguous for that and we want the check
-/// to be cheap and never panic.
+#[cfg(test)]
 fn is_complete(src: &str) -> bool {
-    // Trailing backslash → classic line continuation
-    if src
-        .trim_end_matches(|c: char| c == ' ' || c == '\t')
-        .ends_with('\\')
-    {
-        return false;
+    continuation_context(src).is_none()
+}
+
+/// The open constructs that make `src` an incomplete command, outermost
+/// first, named with zsh's `%_` vocabulary (`quote`, `dquote`, `bquote`,
+/// `cmdsubst`, `mathsubst`, `subsh`, `cursh`, `if`, `then`, `else`,
+/// `elif`, `for`, `while`, `until`, `select`, `repeat`, `case`,
+/// `heredoc`, `pipe`, `cmdand`, `cmdor`). `None` means complete. A
+/// trailing `\` continues with an empty context, which zsh renders as a
+/// bare `> `.
+///
+/// Heuristic scan, not a parse: it must be cheap and never panic. A
+/// closer that matches nothing open is ignored (`case x in a) … esac`
+/// has more `)` than `(`), so stray closers can never wedge the prompt
+/// in continuation.
+fn continuation_context(src: &str) -> Option<Vec<&'static str>> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Ctx {
+        Quote,
+        AnsiQuote,
+        DQuote,
+        BQuote,
+        CmdSubst,
+        MathSubst,
+        Subsh,
+        Cursh,
+        Kw(&'static str),
+    }
+    impl Ctx {
+        fn name(self) -> &'static str {
+            match self {
+                Ctx::Quote | Ctx::AnsiQuote => "quote",
+                Ctx::DQuote => "dquote",
+                Ctx::BQuote => "bquote",
+                Ctx::CmdSubst => "cmdsubst",
+                Ctx::MathSubst => "mathsubst",
+                Ctx::Subsh => "subsh",
+                Ctx::Cursh => "cursh",
+                Ctx::Kw(k) => k,
+            }
+        }
     }
 
     let bytes = src.as_bytes();
     let mut i = 0;
-    let mut paren = 0i32;
-    let mut brace = 0i32;
-    let mut bracket = 0i32;
-    let mut in_single = false;
-    let mut in_double = false;
-    // Stack of keyword openers awaiting their closer.
-    // `if→fi`, `do→done`, `case→esac`, `{<space>→}`.
-    let mut kw: Vec<&'static str> = Vec::new();
+    let mut stack: Vec<Ctx> = Vec::new();
+    let mut heredocs: Vec<(String, bool)> = Vec::new();
+    let mut at_cmd_start = true;
 
     while i < bytes.len() {
         let c = bytes[i];
-        if in_single {
-            if c == b'\'' {
-                in_single = false;
-            }
-            i += 1;
-            continue;
-        }
-        if in_double {
-            if c == b'\\' && i + 1 < bytes.len() {
-                i += 2;
+        match stack.last().copied() {
+            Some(Ctx::Quote) => {
+                if c == b'\'' {
+                    stack.pop();
+                }
+                i += 1;
                 continue;
             }
-            if c == b'"' {
-                in_double = false;
+            Some(Ctx::AnsiQuote) => {
+                if c == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if c == b'\'' {
+                    stack.pop();
+                }
+                i += 1;
+                continue;
             }
+            Some(Ctx::DQuote) | Some(Ctx::BQuote) => {
+                let closer = if stack.last() == Some(&Ctx::DQuote) {
+                    b'"'
+                } else {
+                    b'`'
+                };
+                if c == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if c == closer {
+                    stack.pop();
+                    i += 1;
+                    continue;
+                }
+                if c == b'$' && bytes.get(i + 1) == Some(&b'(') {
+                    if bytes.get(i + 2) == Some(&b'(') {
+                        stack.push(Ctx::MathSubst);
+                        i += 3;
+                    } else {
+                        stack.push(Ctx::CmdSubst);
+                        i += 2;
+                    }
+                    at_cmd_start = true;
+                    continue;
+                }
+                if c == b'`' && closer == b'"' {
+                    stack.push(Ctx::BQuote);
+                    at_cmd_start = true;
+                }
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        if c == b'\n' {
             i += 1;
+            at_cmd_start = true;
+            // A newline ends the line that introduced pending heredocs:
+            // their bodies follow, up to each delimiter line in order.
+            while !heredocs.is_empty() {
+                let (delim, strip_tabs) = heredocs.remove(0);
+                let mut found = false;
+                while i < bytes.len() {
+                    let line_end = src[i..].find('\n').map_or(bytes.len(), |n| i + n);
+                    let line = &src[i..line_end];
+                    let line = if strip_tabs {
+                        line.trim_start_matches('\t')
+                    } else {
+                        line
+                    };
+                    i = (line_end + 1).min(bytes.len());
+                    if line == delim {
+                        found = true;
+                        break;
+                    }
+                    if line_end == bytes.len() {
+                        break;
+                    }
+                }
+                if !found {
+                    let mut ctx: Vec<&'static str> = stack.iter().map(|c| c.name()).collect();
+                    ctx.push("heredoc");
+                    return Some(ctx);
+                }
+            }
             continue;
         }
+
         match c {
-            b'\'' => {
-                in_single = true;
+            b' ' | b'\t' => {
                 i += 1;
+                continue;
+            }
+            b'\\' => {
+                if i + 1 >= bytes.len() {
+                    // Trailing backslash: classic line continuation.
+                    return Some(stack.iter().map(|c| c.name()).collect());
+                }
+                i += 2;
+                at_cmd_start = false;
+                continue;
+            }
+            b'\'' => {
+                stack.push(Ctx::Quote);
+                i += 1;
+                at_cmd_start = false;
+                continue;
             }
             b'"' => {
-                in_double = true;
+                stack.push(Ctx::DQuote);
                 i += 1;
+                at_cmd_start = false;
+                continue;
             }
-            b'\\' if i + 1 < bytes.len() => {
-                i += 2;
+            b'`' => {
+                stack.push(Ctx::BQuote);
+                i += 1;
+                at_cmd_start = true;
+                continue;
+            }
+            b'$' => {
+                match bytes.get(i + 1) {
+                    Some(b'\'') => {
+                        stack.push(Ctx::AnsiQuote);
+                        i += 2;
+                    }
+                    Some(b'(') if bytes.get(i + 2) == Some(&b'(') => {
+                        stack.push(Ctx::MathSubst);
+                        i += 3;
+                    }
+                    Some(b'(') => {
+                        stack.push(Ctx::CmdSubst);
+                        i += 2;
+                        at_cmd_start = true;
+                        continue;
+                    }
+                    _ => i += 1,
+                }
+                at_cmd_start = false;
+                continue;
             }
             b'(' => {
-                paren += 1;
+                stack.push(Ctx::Subsh);
                 i += 1;
+                at_cmd_start = true;
+                continue;
             }
             b')' => {
-                paren -= 1;
-                i += 1;
+                if stack.last() == Some(&Ctx::MathSubst) && bytes.get(i + 1) == Some(&b')') {
+                    stack.pop();
+                    i += 2;
+                } else {
+                    if matches!(stack.last(), Some(Ctx::CmdSubst | Ctx::Subsh)) {
+                        stack.pop();
+                    }
+                    i += 1;
+                }
+                // `f() {` — a brace group may follow a closing paren.
+                at_cmd_start = true;
+                continue;
             }
-            b'[' => {
-                bracket += 1;
+            b'{' if at_cmd_start => {
+                stack.push(Ctx::Cursh);
                 i += 1;
+                continue;
             }
-            b']' => {
-                bracket -= 1;
+            b'}' if stack.last() == Some(&Ctx::Cursh)
+                && (at_cmd_start || matches!(bytes[i - 1], b' ' | b'\t')) =>
+            {
+                stack.pop();
                 i += 1;
+                at_cmd_start = false;
+                continue;
             }
-            b'{' => {
-                brace += 1;
-                i += 1;
-            }
-            b'}' => {
-                brace -= 1;
-                i += 1;
-            }
-            b'#' => {
-                // Line comment — skip to newline
+            b'#' if at_cmd_start || matches!(bytes[i - 1], b' ' | b'\t') => {
                 while i < bytes.len() && bytes[i] != b'\n' {
                     i += 1;
                 }
+                continue;
+            }
+            b';' | b'|' | b'&' => {
+                i += 1;
+                at_cmd_start = true;
+                continue;
+            }
+            b'<' if bytes.get(i + 1) == Some(&b'<') && bytes.get(i + 2) == Some(&b'<') => {
+                // Here-string, not a heredoc.
+                i += 3;
+                at_cmd_start = false;
+                continue;
+            }
+            b'<' if bytes.get(i + 1) == Some(&b'<') => {
+                i += 2;
+                let strip_tabs = bytes.get(i) == Some(&b'-');
+                if strip_tabs {
+                    i += 1;
+                }
+                while i < bytes.len() && matches!(bytes[i], b' ' | b'\t') {
+                    i += 1;
+                }
+                let mut delim = String::new();
+                while i < bytes.len()
+                    && !matches!(
+                        bytes[i],
+                        b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'<' | b'>' | b'(' | b')'
+                    )
+                {
+                    let ch = bytes[i];
+                    if ch == b'\'' || ch == b'"' {
+                        let q = ch;
+                        i += 1;
+                        while i < bytes.len() && bytes[i] != q {
+                            delim.push(bytes[i] as char);
+                            i += 1;
+                        }
+                        i += 1;
+                    } else if ch == b'\\' {
+                        i += 1;
+                    } else {
+                        delim.push(ch as char);
+                        i += 1;
+                    }
+                }
+                if !delim.is_empty() {
+                    heredocs.push((delim, strip_tabs));
+                }
+                at_cmd_start = false;
+                continue;
             }
             c if c.is_ascii_alphabetic() || c == b'_' => {
                 let start = i;
                 while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                     i += 1;
                 }
-                // Only treat this as a keyword at a command-start boundary:
-                // preceded by BOL / whitespace / `;` / `|` / `&` / `(` / `{`.
-                let is_command_start = start == 0
+                let ends_word = i >= bytes.len()
                     || matches!(
-                        bytes[start - 1],
-                        b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b'{'
+                        bytes[i],
+                        b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')'
                     );
-                if !is_command_start {
-                    continue;
+                if at_cmd_start && ends_word {
+                    let top = stack.last().copied();
+                    let word = &src[start..i];
+                    match word {
+                        "if" => stack.push(Ctx::Kw("if")),
+                        "while" | "until" | "for" | "select" | "repeat" => {
+                            stack.push(Ctx::Kw(match word {
+                                "while" => "while",
+                                "until" => "until",
+                                "for" => "for",
+                                "select" => "select",
+                                _ => "repeat",
+                            }))
+                        }
+                        "case" => stack.push(Ctx::Kw("case")),
+                        "then" | "else" | "elif"
+                            if matches!(top, Some(Ctx::Kw("if" | "then" | "else" | "elif"))) =>
+                        {
+                            stack.pop();
+                            stack.push(Ctx::Kw(match word {
+                                "then" => "then",
+                                "else" => "else",
+                                _ => "elif",
+                            }));
+                        }
+                        "fi" if matches!(top, Some(Ctx::Kw("if" | "then" | "else" | "elif"))) => {
+                            stack.pop();
+                        }
+                        "done"
+                            if matches!(
+                                top,
+                                Some(Ctx::Kw("while" | "until" | "for" | "select" | "repeat"))
+                            ) =>
+                        {
+                            stack.pop();
+                        }
+                        "esac" if top == Some(Ctx::Kw("case")) => {
+                            stack.pop();
+                        }
+                        _ => {}
+                    }
+                    // Keywords are followed by another command position
+                    // (`if true`, `do echo`, `then x`); ordinary words are not.
+                    at_cmd_start = matches!(
+                        word,
+                        "if" | "then"
+                            | "else"
+                            | "elif"
+                            | "do"
+                            | "while"
+                            | "until"
+                            | "fi"
+                            | "done"
+                            | "esac"
+                            | "time"
+                            | "!"
+                    );
+                } else {
+                    at_cmd_start = false;
                 }
-                let word = &src[start..i];
-                match word {
-                    "if" => kw.push("fi"),
-                    "while" | "until" | "for" | "select" | "repeat" => kw.push("done"),
-                    "case" => kw.push("esac"),
-                    // Intermediate markers — do/then/else/elif/in live
-                    // inside an already-open construct; no stack change.
-                    "do" | "then" | "else" | "elif" | "in" => {}
-                    "fi" if kw.last().copied() == Some("fi") => {
-                        kw.pop();
-                    }
-                    "done" if kw.last().copied() == Some("done") => {
-                        kw.pop();
-                    }
-                    "esac" if kw.last().copied() == Some("esac") => {
-                        kw.pop();
-                    }
-                    _ => {}
-                }
+                continue;
             }
             _ => {
                 i += 1;
+                at_cmd_start = false;
+                continue;
             }
         }
     }
 
-    // Only unclosed openers (positive counts) imply incomplete input.
-    // `case x in a) … esac` legitimately has more `)` than `(`, and `a}` /
-    // `b]` alone aren't real user input at the prompt — so negative counts
-    // shouldn't cause us to hang in continuation mode.
-    !in_single && !in_double && paren <= 0 && brace <= 0 && bracket <= 0 && kw.is_empty()
+    if !heredocs.is_empty() {
+        // The heredoc-introducing line is the last one: its body has not
+        // started yet.
+        let mut ctx: Vec<&'static str> = stack.iter().map(|c| c.name()).collect();
+        ctx.push("heredoc");
+        return Some(ctx);
+    }
+    if !stack.is_empty() {
+        return Some(stack.iter().map(|c| c.name()).collect());
+    }
+    // A command line ending in a connector continues (zsh `pipe>`,
+    // `cmdand>`, `cmdor>`), comments aside.
+    let code_tail = src
+        .lines()
+        .last()
+        .map(|l| strip_trailing_comment(l).trim_end())
+        .unwrap_or("");
+    if code_tail.ends_with("&&") {
+        return Some(vec!["cmdand"]);
+    }
+    if code_tail.ends_with("||") {
+        return Some(vec!["cmdor"]);
+    }
+    if code_tail.ends_with('|') {
+        return Some(vec!["pipe"]);
+    }
+    None
+}
+
+/// `line` minus a trailing `# comment` (a `#` starting a word, outside
+/// quotes). Only used for the connector tail check above.
+fn strip_trailing_comment(line: &str) -> &str {
+    let b = line.as_bytes();
+    let (mut sq, mut dq) = (false, false);
+    for (i, &c) in b.iter().enumerate() {
+        match c {
+            b'\'' if !dq => sq = !sq,
+            b'"' if !sq => dq = !dq,
+            b'#' if !sq && !dq && (i == 0 || matches!(b[i - 1], b' ' | b'\t')) => {
+                return &line[..i];
+            }
+            _ => {}
+        }
+    }
+    line
 }
 
 /// How many history entries reedline keeps, resolved from the rc.
@@ -1550,7 +1829,7 @@ fn interactive(
         let ps2_raw = env
             .get_var("PS2")
             .map(|s| s.to_string())
-            .unwrap_or_else(|| "> ".to_string());
+            .unwrap_or_else(|| DEFAULT_PS2.to_string());
         let rps1_raw = env
             .get_var("RPS1")
             .map(|s| s.to_string())
@@ -1584,11 +1863,12 @@ fn interactive(
         };
         zle.set_edit_mode(wanted);
 
-        let outcome = zle.read_line(|src| {
-            if is_complete(src) {
-                InputStatus::Complete
-            } else {
-                InputStatus::Incomplete
+        let outcome = zle.read_line(|src| match continuation_context(src) {
+            None => InputStatus::Complete,
+            Some(open) => {
+                let mut pe2 = pe.clone();
+                pe2.parser_state = open.join(" ");
+                InputStatus::Continue(frost_prompt::render(&ps2_raw, &pe2, prompt_subst))
             }
         });
         match outcome {
@@ -1772,6 +2052,17 @@ fn interactive(
             Ok(ReadLineOutcome::Interrupted) => {
                 // Match zsh: Ctrl-C just discards the current line.
                 cpr_retries = 0;
+                continue;
+            }
+            Ok(ReadLineOutcome::Unterminated(pending)) => {
+                // zsh: EOF inside an open construct is a parse error for
+                // that command only — report it, drop it, back to PS1.
+                cpr_retries = 0;
+                let what = continuation_context(&pending)
+                    .and_then(|open| open.last().copied())
+                    .unwrap_or("input");
+                eprintln!("frost: parse error: unterminated {what}");
+                env.exit_status = 1;
                 continue;
             }
             Ok(ReadLineOutcome::Eof) => break,
@@ -2443,5 +2734,106 @@ mod tests {
     #[test]
     fn comments_do_not_affect_balance() {
         assert!(is_complete("echo hi # a ( b { c ["));
+    }
+    fn ctx(src: &str) -> Option<Vec<&'static str>> {
+        super::continuation_context(src)
+    }
+
+    // Regression: `git pull origin main'` (stray trailing quote) left the
+    // REPL in an invisible continuation. The context names what is open
+    // so PS2 (`%_> `) can say `quote>`.
+    #[test]
+    fn stray_trailing_quote_names_quote() {
+        assert_eq!(ctx("git pull origin main'"), Some(vec!["quote"]));
+        assert_eq!(ctx("echo x'\necho AAA"), Some(vec!["quote"]));
+        assert_eq!(ctx("echo x'\necho AAA\n'"), None);
+        assert_eq!(ctx("echo \"a\nb"), Some(vec!["dquote"]));
+        assert_eq!(ctx("echo $'a\\'b"), Some(vec!["quote"]));
+        assert_eq!(ctx("echo `date"), Some(vec!["bquote"]));
+    }
+
+    #[test]
+    fn quotes_hide_openers_and_keywords() {
+        assert_eq!(ctx("echo 'if ( { $('"), None);
+        assert_eq!(ctx("echo \"it's\""), None);
+        assert_eq!(ctx("echo 'say \"hi'"), None);
+        assert_eq!(ctx("echo \\'"), None);
+        assert_eq!(ctx("echo a#b'"), Some(vec!["quote"]));
+    }
+
+    #[test]
+    fn substitutions_nest() {
+        assert_eq!(ctx("echo $(date"), Some(vec!["cmdsubst"]));
+        assert_eq!(
+            ctx("echo \"$(echo 'x"),
+            Some(vec!["dquote", "cmdsubst", "quote"])
+        );
+        assert_eq!(ctx("echo \"$(echo x)\""), None);
+        assert_eq!(ctx("echo $((1 + 2"), Some(vec!["mathsubst"]));
+        assert_eq!(ctx("echo $((1 + (2 * 3)))"), None);
+        assert_eq!(ctx("(cd /tmp"), Some(vec!["subsh"]));
+    }
+
+    #[test]
+    fn keyword_contexts_follow_zsh_names() {
+        assert_eq!(ctx("for i in 1 2"), Some(vec!["for"]));
+        assert_eq!(ctx("for i in 1 2; do echo $i"), Some(vec!["for"]));
+        assert_eq!(ctx("if true"), Some(vec!["if"]));
+        assert_eq!(ctx("if true; then"), Some(vec!["then"]));
+        assert_eq!(ctx("if true; then a; else"), Some(vec!["else"]));
+        assert_eq!(ctx("if a; then for x in y; do"), Some(vec!["then", "for"]));
+        assert_eq!(ctx("f() {"), Some(vec!["cursh"]));
+        assert_eq!(ctx("{ echo hi }"), None);
+        assert_eq!(ctx("echo done fi esac"), None);
+        assert_eq!(ctx("echo {a,b}"), None);
+        assert_eq!(ctx("iffy"), None);
+    }
+
+    #[test]
+    fn stray_closers_never_wedge_continuation() {
+        assert_eq!(ctx("echo )"), None);
+        assert_eq!(ctx("fi"), None);
+        assert_eq!(ctx("}"), None);
+        assert_eq!(ctx("echo a]"), None);
+        assert_eq!(ctx("echo ["), None);
+    }
+
+    #[test]
+    fn connectors_continue() {
+        assert_eq!(ctx("ls |"), Some(vec!["pipe"]));
+        assert_eq!(ctx("true &&"), Some(vec!["cmdand"]));
+        assert_eq!(ctx("false ||  "), Some(vec!["cmdor"]));
+        assert_eq!(ctx("ls | # comment"), Some(vec!["pipe"]));
+        assert_eq!(ctx("echo '|'"), None);
+        assert_eq!(ctx("ls &"), None);
+    }
+
+    #[test]
+    fn trailing_backslash_has_empty_context() {
+        assert_eq!(ctx("echo hi \\"), Some(vec![]));
+        assert_eq!(ctx("echo \"a \\"), Some(vec!["dquote"]));
+        assert_eq!(ctx("echo a\\ b"), None);
+    }
+
+    #[test]
+    fn heredoc_waits_for_delimiter_line() {
+        assert_eq!(ctx("cat <<EOF"), Some(vec!["heredoc"]));
+        assert_eq!(ctx("cat <<EOF\nhi"), Some(vec!["heredoc"]));
+        assert_eq!(ctx("cat <<EOF\nhi\nEOF"), None);
+        assert_eq!(ctx("cat <<'EOF'\n$x'\nEOF"), None);
+        assert_eq!(ctx("cat << \"END\"\nEOF\n"), Some(vec!["heredoc"]));
+        assert_eq!(ctx("cat <<-EOF\n\tx\n\tEOF"), None);
+        assert_eq!(ctx("cat <<EOF\n  EOF"), Some(vec!["heredoc"]));
+        assert_eq!(ctx("cat <<A <<B\n1\nA\n2"), Some(vec!["heredoc"]));
+        assert_eq!(ctx("cat <<A <<B\n1\nA\n2\nB"), None);
+        assert_eq!(ctx("cat <<<word"), None);
+        assert_eq!(ctx("cat <<EOF\nhi\nEOF\necho 'x"), Some(vec!["quote"]));
+    }
+
+    #[test]
+    fn empty_and_whitespace_are_complete() {
+        assert_eq!(ctx(""), None);
+        assert_eq!(ctx("   \t"), None);
+        assert_eq!(ctx("\n\n"), None);
     }
 }

@@ -66,6 +66,10 @@ pub enum InputStatus {
     /// etc.) — the engine should re-prompt with the continuation prompt and
     /// concatenate the next line.
     Incomplete,
+    /// Incomplete, and the next physical line is prompted with this
+    /// already-rendered continuation prompt (zsh `PS2` with `%_`
+    /// expanded to the open constructs, e.g. `quote> `).
+    Continue(String),
 }
 
 /// What [`ZleEngine::read_line`] returned to the caller.
@@ -76,6 +80,10 @@ pub enum ReadLineOutcome {
     Interrupted,
     /// EOF / Ctrl-D — caller should exit the shell.
     Eof,
+    /// Ctrl-D at a continuation prompt: the pending multi-line input
+    /// was abandoned unterminated (zsh reports a parse error and returns
+    /// to PS1; the shell does NOT exit). Carries the discarded text.
+    Unterminated(String),
 }
 
 /// A frost prompt: `PS1` for the primary line, `PS2` for continuations,
@@ -94,6 +102,10 @@ pub struct FrostPrompt {
     /// in its own prompt character, so an unconditional suffix would
     /// change every operator's prompt for no information gain.
     emacs_indicator: String,
+    /// Set while reading a continuation line: replaces PS1 on the left
+    /// and blanks RPS1, so a pending quote/heredoc/loop is never drawn
+    /// with the primary prompt.
+    continuation: Option<String>,
 }
 
 /// Default vi NORMAL / vi INSERT indicators.
@@ -125,6 +137,7 @@ impl FrostPrompt {
             vi_normal_indicator: DEFAULT_VI_NORMAL_INDICATOR.to_string(),
             vi_insert_indicator: DEFAULT_VI_INSERT_INDICATOR.to_string(),
             emacs_indicator: String::new(),
+            continuation: None,
         }
     }
 
@@ -158,9 +171,15 @@ impl Default for FrostPrompt {
 
 impl Prompt for FrostPrompt {
     fn render_prompt_left(&self) -> std::borrow::Cow<'_, str> {
-        std::borrow::Cow::Borrowed(&self.ps1)
+        match &self.continuation {
+            Some(ps2) => std::borrow::Cow::Borrowed(ps2),
+            None => std::borrow::Cow::Borrowed(&self.ps1),
+        }
     }
     fn render_prompt_right(&self) -> std::borrow::Cow<'_, str> {
+        if self.continuation.is_some() {
+            return std::borrow::Cow::Borrowed("");
+        }
         std::borrow::Cow::Borrowed(&self.rps1)
     }
     /// The vi mode is the one piece of editor state a user cannot infer
@@ -487,7 +506,8 @@ impl ZleEngine {
         F: FnMut(&str) -> InputStatus,
     {
         let mut buf = String::new();
-        loop {
+        self.prompt.continuation = None;
+        let outcome = loop {
             match self.inner.read_line(&self.prompt) {
                 Ok(Signal::Success(line)) => {
                     if !buf.is_empty() {
@@ -495,15 +515,25 @@ impl ZleEngine {
                     }
                     buf.push_str(&line);
                     match is_complete(&buf) {
-                        InputStatus::Complete => return Ok(ReadLineOutcome::Input(buf)),
-                        InputStatus::Incomplete => continue,
+                        InputStatus::Complete => break Ok(ReadLineOutcome::Input(buf)),
+                        InputStatus::Incomplete => {
+                            self.prompt.continuation = Some(self.prompt.ps2.clone());
+                        }
+                        InputStatus::Continue(ps2) => self.prompt.continuation = Some(ps2),
                     }
                 }
-                Ok(Signal::CtrlC) => return Ok(ReadLineOutcome::Interrupted),
-                Ok(Signal::CtrlD) => return Ok(ReadLineOutcome::Eof),
-                Err(e) => return Err(ZleError::Reedline(e.to_string())),
+                // zsh: Ctrl-C at any prompt discards the WHOLE pending
+                // command, every continuation line included.
+                Ok(Signal::CtrlC) => break Ok(ReadLineOutcome::Interrupted),
+                Ok(Signal::CtrlD) if !buf.is_empty() => {
+                    break Ok(ReadLineOutcome::Unterminated(buf));
+                }
+                Ok(Signal::CtrlD) => break Ok(ReadLineOutcome::Eof),
+                Err(e) => break Err(ZleError::Reedline(e.to_string())),
             }
-        }
+        };
+        self.prompt.continuation = None;
+        outcome
     }
 
     /// Flush reedline's in-memory history to its backing `$HISTFILE` now.
@@ -864,6 +894,19 @@ mod tests {
         let p = FrostPrompt::default();
         assert_eq!(p.render_prompt_left(), "frost> ");
         assert_eq!(p.render_prompt_multiline_indicator(), "> ");
+    }
+
+    /// Regression: continuation lines were drawn with PS1, so an
+    /// unclosed quote was invisible and every later command silently
+    /// joined it.
+    #[test]
+    fn continuation_replaces_ps1_and_blanks_rps1() {
+        let mut p = FrostPrompt::new("main$ ", "> ").with_rps1("clock");
+        assert_eq!(p.render_prompt_left(), "main$ ");
+        assert_eq!(p.render_prompt_right(), "clock");
+        p.continuation = Some("quote> ".into());
+        assert_eq!(p.render_prompt_left(), "quote> ");
+        assert_eq!(p.render_prompt_right(), "");
     }
 
     /// Regression: `render_prompt_indicator` took the mode and threw it

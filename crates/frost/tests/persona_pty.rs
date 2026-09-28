@@ -779,3 +779,256 @@ fn sigterm_no_trap_probe() -> Result<(), String> {
         }
     }
 }
+
+// ── continuation (PS2) regressions ─────────────────────────────────────
+//
+// Incident 2026-09-28: the operator typed `git pull origin main'` (stray
+// trailing quote). Every later line — `clear`, `exit`, ... — silently
+// joined the open quote because continuation lines were drawn with PS1,
+// Ctrl-C followed by fast typing lost the typed-ahead keys, and a lone
+// `'` meant as "close it" opened a NEW quote. Each row below replays one
+// sub-case against the real binary on a real PTY with a CPR-answering
+// terminal. Output markers are arithmetic (`$((6*7))` -> `42`) so the
+// echoed input can never satisfy an output assertion.
+
+fn keys(steps: &[&'static [u8]]) -> Vec<Send> {
+    steps
+        .iter()
+        .enumerate()
+        .map(|(i, b)| Send {
+            at: Duration::from_millis(1500 + 600 * i as u64),
+            bytes: b,
+        })
+        .collect()
+}
+
+/// The rows are timer-driven; run concurrently they starve each other's
+/// shells of CPU and keys land before the prompt is up. One at a time.
+static CONTINUATION_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn drive_answering(steps: &[&'static [u8]]) -> Option<Outcome> {
+    let _serial = CONTINUATION_SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let script = keys(steps);
+    let total = Duration::from_millis(1500 + 600 * steps.len() as u64 + 2500);
+    drive(
+        persona(AnswerPolicy::Answer {
+            latency: Duration::from_millis(20),
+        }),
+        &script,
+        total,
+        None,
+    )
+}
+
+/// The transcript with CSI / OSC / charset escapes stripped, for failure
+/// messages a human can read.
+fn plain(o: &Outcome) -> String {
+    let raw = String::from_utf8_lossy(&o.transcript);
+    let mut out = String::new();
+    let mut it = raw.chars().peekable();
+    while let Some(c) = it.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match it.next() {
+            Some('[') => {
+                for c in it.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                for c in it.by_ref() {
+                    if c == '\x07' {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn tail(o: &Outcome) -> String {
+    let out = plain(o);
+    let start = out.char_indices().rev().nth(1200).map_or(0, |(i, _)| i);
+    out[start..].to_string()
+}
+
+fn seen(o: &Outcome, needle: &str) -> usize {
+    plain(o).matches(needle).count()
+}
+
+/// The operator's exact sequence: unclosed quote, a line that joins it,
+/// Ctrl-C, a command, close-by-opening, a command, exit.
+#[test]
+fn continuation_stray_quote_replay() {
+    let Some(o) = drive_answering(&[
+        b"echo x'\r",
+        b"echo $((10+1))A\r",
+        b"\x03",
+        b"echo $((20+2))B\r",
+        b"echo $((30+3))C'\r",
+        b"'\r",
+        b"echo $((40+4))D\r",
+        b"exit\r",
+    ]) else {
+        return;
+    };
+    assert!(
+        seen(&o, "quote> ") > 0,
+        "unclosed ' must show `quote> `: {}",
+        tail(&o)
+    );
+    assert_eq!(
+        seen(&o, "11A"),
+        0,
+        "^C must discard the pending quote, never run it: {}",
+        tail(&o)
+    );
+    assert_eq!(
+        seen(&o, "22B"),
+        1,
+        "command after ^C must run exactly once: {}",
+        tail(&o)
+    );
+    assert_eq!(
+        seen(&o, "33C"),
+        1,
+        "closing the quote must run the buffer exactly once: {}",
+        tail(&o)
+    );
+    assert_eq!(
+        seen(&o, "44D"),
+        1,
+        "PS1 must be back after the close: {}",
+        tail(&o)
+    );
+    assert!(
+        !o.alive_at_end,
+        "exit after recovery must exit: {}",
+        tail(&o)
+    );
+}
+
+#[test]
+fn continuation_unclosed_double_quote() {
+    let Some(o) = drive_answering(&[b"echo \"$((6*7))\r", b"z\"\r", b"exit\r"]) else {
+        return;
+    };
+    assert!(seen(&o, "dquote> ") > 0, "{}", tail(&o));
+    assert_eq!(seen(&o, "42"), 1, "{}", tail(&o));
+    assert!(!o.alive_at_end, "{}", tail(&o));
+}
+
+#[test]
+fn continuation_unclosed_command_substitution() {
+    let Some(o) = drive_answering(&[b"echo $(echo $((6*7))\r", b")\r", b"exit\r"]) else {
+        return;
+    };
+    assert!(seen(&o, "cmdsubst> ") > 0, "{}", tail(&o));
+    assert_eq!(seen(&o, "\n42"), 1, "{}", tail(&o));
+    assert!(!o.alive_at_end, "{}", tail(&o));
+}
+
+/// The heredoc body is collected under `heredoc> ` up to the delimiter,
+/// then the REPL is back at PS1 (the next command runs).
+#[test]
+fn continuation_heredoc_collects_until_delimiter() {
+    let Some(o) = drive_answering(&[
+        b"cat <<EOF\r",
+        b"body\r",
+        b"EOF\r",
+        b"echo $((6*7))H\r",
+        b"exit\r",
+    ]) else {
+        return;
+    };
+    assert!(seen(&o, "heredoc> ") > 0, "{}", tail(&o));
+    assert_eq!(seen(&o, "42H"), 1, "{}", tail(&o));
+    assert!(!o.alive_at_end, "{}", tail(&o));
+}
+
+#[test]
+fn continuation_trailing_backslash() {
+    let Some(o) = drive_answering(&[b"echo $((6*7)) \\\r", b"T\r", b"exit\r"]) else {
+        return;
+    };
+    assert!(
+        seen(&o, "\n> ") > 0,
+        "trailing \\ must show `> `: {}",
+        tail(&o)
+    );
+    assert_eq!(seen(&o, "42 T"), 1, "{}", tail(&o));
+    assert!(!o.alive_at_end, "{}", tail(&o));
+}
+
+/// zsh: Ctrl-D inside an open construct is a parse error for that
+/// command only; the shell stays up.
+#[test]
+fn continuation_ctrl_d_abandons_without_exiting() {
+    let Some(o) = drive_answering(&[b"for i in 1\r", b"\x04", b"echo $((6*7))E\r", b"exit\r"])
+    else {
+        return;
+    };
+    assert!(seen(&o, "unterminated for") > 0, "{}", tail(&o));
+    assert_eq!(
+        seen(&o, "42E"),
+        1,
+        "shell must survive ^D at PS2: {}",
+        tail(&o)
+    );
+    assert!(!o.alive_at_end, "{}", tail(&o));
+}
+
+/// Keys typed behind a Ctrl-C while the prompt is still painting (a slow
+/// or CPR-mute terminal: every prompt waits ~2s for a cursor answer)
+/// arrive in the same read batch as the Ctrl-C. They are type-ahead for
+/// the next prompt; upstream reedline dropped every event after the one
+/// that ended `read_line`, so the next command silently never ran. Fixed
+/// in the pleme-io reedline fork (`pending_events`).
+#[test]
+fn continuation_typeahead_behind_ctrl_c_survives() {
+    let _serial = CONTINUATION_SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let ms = Duration::from_millis;
+    let script = [
+        Send {
+            at: ms(3000),
+            bytes: b"echo x'\r",
+        },
+        Send {
+            at: ms(4000),
+            bytes: b"echo $((10+1))A\r",
+        },
+        Send {
+            at: ms(5000),
+            bytes: b"\x03",
+        },
+        Send {
+            at: ms(6000),
+            bytes: b"echo $((3*5))Q\r",
+        },
+    ];
+    let Some(o) = drive(
+        persona(AnswerPolicy::Mute),
+        &script,
+        Duration::from_secs(14),
+        None,
+    ) else {
+        return;
+    };
+    assert_eq!(seen(&o, "11A"), 0, "{}", tail(&o));
+    assert_eq!(
+        seen(&o, "15Q"),
+        1,
+        "type-ahead behind ^C was lost: {}",
+        tail(&o)
+    );
+}

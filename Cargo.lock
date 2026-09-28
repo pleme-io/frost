@@ -1785,7 +1785,7 @@ dependencies = [
 [[package]]
 name = "reedline"
 version = "0.42.0"
-source = "git+https://github.com/pleme-io/reedline#0f4d28571a01121b3884ced82a36faa5626b9776"
+source = "git+https://github.com/pleme-io/reedline#5643ba03e199d9d75919731ed4704238abd76416"
 dependencies = [
  "chrono",
  "crossterm 0.28.1",
