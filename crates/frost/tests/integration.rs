@@ -26,6 +26,7 @@ mod cli {
     #[test]
     fn help_prints_usage_and_exits_zero() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .arg("--help")
             .output()
             .expect("failed to run frost");
@@ -41,6 +42,7 @@ mod cli {
     #[test]
     fn version_prints_version_and_exits_zero() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .arg("--version")
             .output()
             .expect("failed to run frost");
@@ -66,6 +68,7 @@ mod cli {
     #[test]
     fn c_flag_without_argument_shows_error() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .arg("-c")
             .output()
             .expect("failed to run frost");
@@ -85,6 +88,7 @@ mod cli {
     #[test]
     fn nonexistent_file_shows_error_and_exits_nonzero() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .arg("/tmp/frost-test-nonexistent-file-that-does-not-exist.sh")
             .output()
             .expect("failed to run frost");
@@ -113,6 +117,7 @@ mod execution {
     #[test]
     fn true_exits_zero() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .args(["-c", "true"])
             .output()
             .expect("failed to run frost");
@@ -127,6 +132,7 @@ mod execution {
     #[test]
     fn false_exits_one() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .args(["-c", "false"])
             .output()
             .expect("failed to run frost");
@@ -142,6 +148,7 @@ mod execution {
     #[test]
     fn echo_hello() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .args(["-c", "echo hello"])
             .output()
             .expect("failed to run frost");
@@ -157,6 +164,7 @@ mod execution {
     #[test]
     fn echo_multiple_words() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .args(["-c", "echo hello world"])
             .output()
             .expect("failed to run frost");
@@ -172,6 +180,7 @@ mod execution {
     #[test]
     fn exit_with_code() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .args(["-c", "exit 42"])
             .output()
             .expect("failed to run frost");
@@ -187,6 +196,7 @@ mod execution {
     #[test]
     fn export_and_variable_expansion() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .args(["-c", "export FOO=bar; echo $FOO"])
             .output()
             .expect("failed to run frost");
@@ -206,6 +216,7 @@ mod execution {
         let _ = std::fs::remove_file(test_file);
 
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .args(["-c", "echo hello > /tmp/frost-test-redir.txt"])
             .output()
             .expect("failed to run frost");
@@ -222,6 +233,7 @@ mod execution {
     #[test]
     fn pipeline() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .args(["-c", "echo a | cat"])
             .output()
             .expect("failed to run frost");
@@ -237,6 +249,7 @@ mod execution {
     #[test]
     fn and_list_success() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .args(["-c", "true && echo yes"])
             .output()
             .expect("failed to run frost");
@@ -252,6 +265,7 @@ mod execution {
     #[test]
     fn or_list_fallback() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .args(["-c", "false || echo fallback"])
             .output()
             .expect("failed to run frost");
@@ -267,6 +281,7 @@ mod execution {
     #[test]
     fn and_list_short_circuit() {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .args(["-c", "false && echo nope"])
             .output()
             .expect("failed to run frost");
@@ -301,6 +316,7 @@ mod script {
         }
 
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .arg(script_path.to_str().unwrap())
             .output()
             .expect("failed to run frost");
@@ -327,6 +343,7 @@ mod script {
         }
 
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .arg(script_path.to_str().unwrap())
             .output()
             .expect("failed to run frost");
@@ -352,6 +369,7 @@ mod script {
         }
 
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .arg(script_path.to_str().unwrap())
             .output()
             .expect("failed to run frost");
@@ -392,6 +410,7 @@ mod redirect_seam {
     /// Run `script` under `frost -c` and return `(stdout, stderr)`.
     fn run(script: &str) -> (String, String) {
         let output = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
             .arg("-c")
             .arg(script)
             .output()

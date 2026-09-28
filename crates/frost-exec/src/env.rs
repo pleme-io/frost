@@ -1089,9 +1089,9 @@ mod tests {
 
     #[test]
     fn shell_value_float() {
-        let var = ShellVar::with_value(ShellValue::Float(3.14));
+        let var = ShellVar::with_value(ShellValue::Float(2.75));
         // zsh default: 10 decimal places
-        assert_eq!(var.as_str(), "3.1400000000");
+        assert_eq!(var.as_str(), "2.7500000000");
     }
 
     #[test]

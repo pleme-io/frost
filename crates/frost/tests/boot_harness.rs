@@ -188,8 +188,7 @@ impl RecordingJob for BootStepJob {
 /// `..` hops climb to `frost/`, where `../frostmourne/` is the
 /// sibling checkout.
 fn frostmourne_lisp_dir() -> PathBuf {
-    let manifest_dir = option_env!("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR is always set by cargo at compile time");
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest_dir)
         .join("..") // crates/
         .join("..") // frost/

@@ -28,6 +28,7 @@ fn frost_bin() -> PathBuf {
 /// Run `code` through `frost -c` and return `(stdout, exit_code)`.
 fn run(code: &str) -> (String, i32) {
     let out = Command::new(frost_bin())
+        .env("FROSTRC", "/dev/null")
         .arg("-c")
         .arg(code)
         .output()

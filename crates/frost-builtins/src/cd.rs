@@ -154,19 +154,23 @@ impl Builtin for Pwd {
 /// Search CDPATH entries for a directory matching `name`.
 fn try_cdpath(name: &str, env: &dyn ShellEnvironment) -> Option<String> {
     let cdpath = env.get_var("CDPATH")?;
-    for dir in cdpath.split(':') {
-        let candidate = if dir.is_empty() {
-            name.to_owned()
-        } else {
-            format!("{dir}/{name}")
-        };
-        // We can't stat from here (no filesystem access in the trait),
-        // so we return the first candidate and let chdir() validate it.
-        // A real implementation would probe the filesystem, but this
-        // keeps the builtin free of OS deps.
-        return Some(candidate);
-    }
-    None
+    let candidates: Vec<String> = cdpath
+        .split(':')
+        .map(|dir| {
+            if dir.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{dir}/{name}")
+            }
+        })
+        .collect();
+    // zsh takes the first CDPATH entry that is a directory. When none is,
+    // the first candidate still goes to chdir() so the error names a path.
+    candidates
+        .iter()
+        .find(|c| std::path::Path::new(c).is_dir())
+        .or_else(|| candidates.first())
+        .cloned()
 }
 
 #[cfg(test)]
