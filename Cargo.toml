@@ -120,7 +120,7 @@ tatara-lisp = "0.3.41"
 # nothing about how frost builds changes; the version is what a PUBLISHED
 # frost-lisp hands its consumers, resolved from crates.io. 0.1.3 is the
 # version the pinned rev declares (see Cargo.lock) and it is published.
-ishou-tokens = { git = "https://github.com/pleme-io/ishou", rev = "0197aeba1e9a7e17ff516272689dbca6a3ccc967", version = "0.1.3" }
+ishou-tokens = "0.1.18"
 
 # Testing
 pretty_assertions = "1"
