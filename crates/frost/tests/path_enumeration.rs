@@ -69,7 +69,7 @@ impl Sandbox {
     /// Returns `(exit_code, stderr)`. Never blocks past `ROW_TIMEOUT`.
     fn run_frost(&self, script: &str) -> (i32, String) {
         let mut child = Command::new(frost_bin())
-        .env("FROSTRC", "/dev/null")
+            .env("FROSTRC", "/dev/null")
             .arg("-c")
             .arg(script)
             .env_clear()

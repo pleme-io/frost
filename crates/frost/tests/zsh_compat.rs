@@ -610,7 +610,7 @@ mod w01_scripts {
             writeln!(f, "fi").unwrap();
         }
         let output = Command::new(frost_bin())
-        .env("FROSTRC", "/dev/null")
+            .env("FROSTRC", "/dev/null")
             .arg(path.to_str().unwrap())
             .output()
             .unwrap();
@@ -629,7 +629,7 @@ mod w01_scripts {
             writeln!(f, "done").unwrap();
         }
         let output = Command::new(frost_bin())
-        .env("FROSTRC", "/dev/null")
+            .env("FROSTRC", "/dev/null")
             .arg(path.to_str().unwrap())
             .output()
             .unwrap();
@@ -647,7 +647,7 @@ mod w01_scripts {
             writeln!(f, "greet world").unwrap();
         }
         let output = Command::new(frost_bin())
-        .env("FROSTRC", "/dev/null")
+            .env("FROSTRC", "/dev/null")
             .arg(path.to_str().unwrap())
             .output()
             .unwrap();

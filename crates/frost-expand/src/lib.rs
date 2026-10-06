@@ -274,8 +274,7 @@ impl<'a> ExpandCtx<'a> {
                 operator,
                 arg,
             } => {
-                let fields =
-                    self.expand_dollar_brace(param, operator.as_deref(), arg.as_deref());
+                let fields = self.expand_dollar_brace(param, operator.as_deref(), arg.as_deref());
                 self.apply_sh_word_split(fields)
             }
             WordPart::CommandSub(program) => {
@@ -364,10 +363,7 @@ impl<'a> ExpandCtx<'a> {
             return fields;
         }
         let ifs = self.env.ifs();
-        fields
-            .iter()
-            .flat_map(|f| split_on_ifs(f, &ifs))
-            .collect()
+        fields.iter().flat_map(|f| split_on_ifs(f, &ifs)).collect()
     }
 
     fn expand_dollar_var(&self, name: &CompactString) -> Vec<String> {
