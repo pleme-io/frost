@@ -1339,11 +1339,12 @@ dependencies = [
 
 [[package]]
 name = "kanshou"
-version = "0.1.5"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8368f950d8975d48114c8acf480fb17a5f6c7b788c1791b6db1a14f1b3dd43f"
+checksum = "40b277bb151a354301a5ba8006a93e4b8d404896fbdc50830205a2e611a1551f"
 dependencies = [
  "kanshou-derive",
+ "okiba",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

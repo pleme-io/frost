@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "e51ed3f177f2d18715aeae805da5012cef2460691bbdb8e5ff198f452f095838",
+  "cargo_lock_sha256": "295dd0237e0df6de78c9eacfcfee51df43cba626e142b4486b63cb6e891a016a",
   "manifest_sha256": {
     "Cargo.toml": "b02f5fbf2a6169531a8cca9375318d91e791132953131c623959eb91628d2308",
     "crates/frost-builtins/Cargo.toml": "9c3f46cf0585359618f321ca7f27e1a17f8728b6247848a6936e3d85c8d998a7",
@@ -1899,7 +1899,7 @@
           },
           {
             "name": "kanshou",
-            "package_key": "kanshou-0.1.5",
+            "package_key": "kanshou-0.1.9",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3945,7 +3945,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "kanshou-0.1.5": {
+      "kanshou-0.1.9": {
         "runtime_dependencies": [
           {
             "name": "kanshou_derive",
@@ -3956,6 +3956,16 @@
             "optional": true,
             "target": null,
             "tree": "host"
+          },
+          {
+            "name": "okiba",
+            "package_key": "okiba-0.2.1",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
           },
           {
             "name": "serde",
@@ -11348,7 +11358,7 @@
     "itoa-1.0.18": {
       "edition": "2021"
     },
-    "kanshou-0.1.5": {
+    "kanshou-0.1.9": {
       "edition": "2024"
     },
     "kanshou-derive-0.1.5": {
