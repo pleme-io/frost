@@ -2256,6 +2256,25 @@ fn main() {
 
     let mut env = frost_exec::ShellEnv::new();
 
+    // ── Nix system PATH integration ──────────────────────────────────
+    // frost sources none of nix-darwin's /etc/zshrc / path_helper chain,
+    // so a GUI-launched spawn inherits a PATH with no nix profile dirs —
+    // on a nix host that hides every home-manager tool. Append the ones
+    // genuinely missing (reachability, not reordering) so the rc and every
+    // child frost spawns can see them. Default on; `FROST_NIX_PATH=0`
+    // turns it off; a no-op off a nix system. See boot_posture.rs.
+    //
+    // PATH was seeded into `env` as an exported var by ShellEnv::new, so
+    // set_var updates it in place with the export flag intact — child env
+    // is built from `env.to_env_vec()`, so children inherit the enriched
+    // value without touching the (unsafe, edition-2024) process env.
+    if let Some(enriched) =
+        frost::boot_posture::nix_enriched_path(&std::env::var("PATH").unwrap_or_default())
+    {
+        env.set_var("PATH", &enriched);
+        tracing::info!("nix profile dirs appended to PATH");
+    }
+
     // ── Kanshou introspection server ─────────────────────────────────
     // Opens a Unix socket exposing this frost shell's live state
     // (rc-load posture, current command, pending VT response queries,
