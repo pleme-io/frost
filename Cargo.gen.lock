@@ -20,7 +20,7 @@
     "crates/frost-spec/Cargo.toml": "082c08dec4f2603084515d6bc2f80ea9d654c017813db35d7e1d8ef90067ef44",
     "crates/frost-verify/Cargo.toml": "1fb16dccf197f8336e93383d21eac2e38b5053e3e21750661d37a1ff10ecd677",
     "crates/frost-zle/Cargo.toml": "62926aa897a2395d61ef28c331f43df1e5d892016533c0301590e0ced0a195f3",
-    "crates/frost/Cargo.toml": "2159a53d755d24254a2b59a0d8b9092cc6f4ae4acefe9abbe57c81dcea5f707a"
+    "crates/frost/Cargo.toml": "230fdecdd41238f5c5667a7430b0e2c5b49b67033e91bcf5e347392b4a23e667"
   },
   "target_resolves": {
     "base": {
