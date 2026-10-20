@@ -27,6 +27,16 @@ A zsh-compatible shell written in Rust. Frost aims for behavioral parity with zs
 - **Trap infrastructure** — signal handlers, pseudo-signals (EXIT, DEBUG, ERR, ZERR)
 - **Job control** — job table, `jobs`, `fg`, `bg`, `wait`, `disown` (stubs)
 
+## Install
+
+```bash
+cargo install frost                   # from crates.io
+nix run github:pleme-io/frost         # without installing
+```
+
+Prebuilt binaries for Linux and macOS (x86_64, aarch64) are attached to each
+[GitHub release](https://github.com/pleme-io/frost/releases).
+
 ## Building
 
 ### With Cargo

@@ -7,6 +7,9 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "A zsh-compatible shell written in Rust"
+readme = "../../README.md"
+keywords = ["shell", "zsh", "terminal", "cli", "repl"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "frost"
