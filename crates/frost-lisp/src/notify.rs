@@ -37,6 +37,32 @@
 use serde::{Deserialize, Serialize};
 use tatara_lisp::DeriveTataraDomain;
 
+const DEFAULT_THRESHOLD_MS: u64 = 30_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NotifyVia {
+    #[default]
+    Osc,
+    Osascript,
+    Libnotify,
+}
+
+impl NotifyVia {
+    pub const ACCEPTED: &'static str = "osc, osascript, libnotify";
+
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        match raw {
+            "osc" => Ok(Self::Osc),
+            "osascript" => Ok(Self::Osascript),
+            "libnotify" => Ok(Self::Libnotify),
+            other => Err(format!(
+                "defnotify :via {other:?} is not accepted; accepted: {}",
+                Self::ACCEPTED
+            )),
+        }
+    }
+}
+
 #[derive(DeriveTataraDomain, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 #[tatara(keyword = "defnotify")]
@@ -47,33 +73,73 @@ pub struct NotifySpec {
     pub title: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub via: Option<String>,
+}
+
+fn osc_field(raw: &str) -> String {
+    raw.chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, ';' | '\'' | '\\' | '%') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+const ESC: &str = "\\033";
+const BEL: &str = "\\007";
+
+fn osc777_prefix(title: &str) -> String {
+    format!("{ESC}]777;notify;{};", osc_field(title))
 }
 
 impl NotifySpec {
-    /// Emit the precmd hook body that implements the notification
-    /// policy. Uses POSIX-portable `[ -z "$X" ]` tests so it runs on
-    /// any shell frost targets, and a platform probe via `uname` so
-    /// Darwin vs Linux dispatches to `osascript` vs `notify-send`.
-    pub fn synthesize_precmd_body(&self) -> String {
-        let threshold = self.threshold_ms.unwrap_or(30_000);
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+
+    pub fn resolved_via(&self) -> Result<NotifyVia, String> {
+        self.via
+            .as_deref()
+            .map_or(Ok(NotifyVia::default()), NotifyVia::parse)
+    }
+
+    pub fn synthesize_precmd_body(&self) -> Result<Option<String>, String> {
+        if !self.is_enabled() {
+            return Ok(None);
+        }
+        let via = self.resolved_via()?;
+        let threshold = self.threshold_ms.unwrap_or(DEFAULT_THRESHOLD_MS);
         let title = self.title.as_deref().unwrap_or("frost");
         let message = self.message.as_deref().unwrap_or("command finished");
-        format!(
-            "\
-__frost_notify_threshold={threshold}
-__frost_notify_title={title:?}
-__frost_notify_message={message:?}
-if [ \"${{FROST_CMD_DURATION_MS:-0}}\" -ge \"$__frost_notify_threshold\" ] 2>/dev/null; then
-  if command -v osascript >/dev/null 2>&1; then
-    osascript -e \"display notification \\\"$__frost_notify_message\\\" with title \\\"$__frost_notify_title\\\"\" >/dev/null 2>&1
-  elif command -v notify-send >/dev/null 2>&1; then
-    notify-send \"$__frost_notify_title\" \"$__frost_notify_message\" 2>/dev/null
-  elif command -v dunstify >/dev/null 2>&1; then
-    dunstify \"$__frost_notify_title\" \"$__frost_notify_message\" 2>/dev/null
-  fi
-fi\
-",
-        )
+        let guard = format!(
+            "if [ \"${{FROST_CMD_DURATION_MS:-0}}\" -ge {threshold} ] 2>/dev/null; then"
+        );
+        let fact = "__frost_notify_text=\"$__frost_notify_message (exit ${FROST_LAST_EXIT:-0}, $((FROST_CMD_DURATION_MS / 1000))s)\"";
+        let message_var = format!("__frost_notify_message={message:?}");
+        let fire = match via {
+            NotifyVia::Osc => format!(
+                "  printf '{}%s{}' \"$__frost_notify_text\"",
+                osc777_prefix(title),
+                BEL,
+            ),
+            NotifyVia::Osascript => format!(
+                "  osascript -e \"display notification \\\"$__frost_notify_text\\\" with title \\\"{}\\\"\" >/dev/null 2>&1",
+                osc_field(title)
+            ),
+            NotifyVia::Libnotify => format!(
+                "  notify-send {:?} \"$__frost_notify_text\" 2>/dev/null",
+                osc_field(title)
+            ),
+        };
+        Ok(Some(format!(
+            "{message_var}\n{guard}\n  {fact}\n{fire}\nfi"
+        )))
     }
 }
 
@@ -81,14 +147,50 @@ fi\
 mod tests {
     use super::*;
 
+    fn body(spec: &NotifySpec) -> String {
+        spec.synthesize_precmd_body().unwrap().unwrap()
+    }
+
     #[test]
-    fn default_body_includes_threshold_and_title() {
-        let spec = NotifySpec::default();
-        let body = spec.synthesize_precmd_body();
-        assert!(body.contains("30000"));
-        assert!(body.contains("\"frost\""));
-        assert!(body.contains("osascript"));
-        assert!(body.contains("notify-send"));
+    fn default_route_is_osc777_and_spawns_nothing() {
+        let b = body(&NotifySpec::default());
+        assert!(b.contains("30000"));
+        assert!(b.contains("\\033]777;notify;frost;"));
+        assert!(!b.contains("osascript"));
+        assert!(!b.contains("notify-send"));
+        assert!(!b.contains("command -v"));
+    }
+
+    #[test]
+    fn message_carries_exit_status_and_duration() {
+        let b = body(&NotifySpec::default());
+        assert!(b.contains("FROST_LAST_EXIT"));
+        assert!(b.contains("FROST_CMD_DURATION_MS / 1000"));
+    }
+
+    #[test]
+    fn osascript_is_an_explicit_opt_in() {
+        let spec = NotifySpec { via: Some("osascript".into()), ..Default::default() };
+        assert!(body(&spec).contains("osascript"));
+    }
+
+    #[test]
+    fn libnotify_is_an_explicit_opt_in() {
+        let spec = NotifySpec { via: Some("libnotify".into()), ..Default::default() };
+        assert!(body(&spec).contains("notify-send"));
+    }
+
+    #[test]
+    fn unknown_route_is_refused_and_names_what_is_accepted() {
+        let spec = NotifySpec { via: Some("carrier-pigeon".into()), ..Default::default() };
+        let err = spec.synthesize_precmd_body().unwrap_err();
+        assert!(err.contains("carrier-pigeon") && err.contains("osc, osascript, libnotify"));
+    }
+
+    #[test]
+    fn disabled_emits_no_body_but_the_form_stays_declared() {
+        let spec = NotifySpec { enabled: Some(false), ..Default::default() };
+        assert_eq!(spec.synthesize_precmd_body().unwrap(), None);
     }
 
     #[test]
@@ -97,21 +199,20 @@ mod tests {
             threshold_ms: Some(60_000),
             title: Some("build done".into()),
             message: Some("ok".into()),
+            ..Default::default()
         };
-        let body = spec.synthesize_precmd_body();
-        assert!(body.contains("60000"));
-        assert!(body.contains("\"build done\""));
-        assert!(body.contains("\"ok\""));
+        let b = body(&spec);
+        assert!(b.contains("60000"));
+        assert!(b.contains("\"ok\""));
     }
 
     #[test]
-    fn body_uses_portable_duration_env_var() {
-        let spec = NotifySpec::default();
-        let body = spec.synthesize_precmd_body();
-        // FROST_CMD_DURATION_MS is set by the frostmourne 20-hooks
-        // precmd; defnotify's body reads this var without
-        // assuming any particular source, so ANY hook that sets
-        // it works (user-authored or built-in).
-        assert!(body.contains("FROST_CMD_DURATION_MS"));
+    fn separators_in_the_title_cannot_split_the_osc_payload() {
+        assert_eq!(osc_field("a;b\x07c%d"), "a b c d");
+    }
+
+    #[test]
+    fn body_reads_the_portable_duration_env_var() {
+        assert!(body(&NotifySpec::default()).contains("FROST_CMD_DURATION_MS"));
     }
 }
