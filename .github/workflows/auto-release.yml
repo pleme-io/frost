@@ -67,7 +67,25 @@ jobs:
     # org one (repo secrets win) and still holding the revoked classic PAT.
     # Deleting that repo-level secret is the real fix and needs operator
     # access; withholding here is correct regardless, because every input this
-    # repo resolves is PUBLIC (ishou, reedline included) and frost has no
-    # `on: push: tags:` workflow to lose.
+    # repo resolves is PUBLIC (ishou, reedline included). The binary release
+    # does not depend on a PAT either: the `binaries` job below dispatches it
+    # with the workflow token, which GitHub allows where a tag push is not.
     secrets:
       CRATES_API_TOKEN: ${{ secrets.CRATES_API_TOKEN }}
+
+  binaries:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: dispatch the binary release for a tag that has none
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(git tag --list 'v*' --sort=-v:refname | head -n 1)
+          gh release view "$tag" >/dev/null 2>&1 || gh workflow run release-binaries.yml --ref "$tag"
