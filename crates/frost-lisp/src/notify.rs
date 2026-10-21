@@ -117,9 +117,8 @@ impl NotifySpec {
         let threshold = self.threshold_ms.unwrap_or(DEFAULT_THRESHOLD_MS);
         let title = self.title.as_deref().unwrap_or("frost");
         let message = self.message.as_deref().unwrap_or("command finished");
-        let guard = format!(
-            "if [ \"${{FROST_CMD_DURATION_MS:-0}}\" -ge {threshold} ] 2>/dev/null; then"
-        );
+        let guard =
+            format!("if [ \"${{FROST_CMD_DURATION_MS:-0}}\" -ge {threshold} ] 2>/dev/null; then");
         let fact = "__frost_notify_text=\"$__frost_notify_message (exit ${FROST_LAST_EXIT:-0}, $((FROST_CMD_DURATION_MS / 1000))s)\"";
         let message_var = format!("__frost_notify_message={message:?}");
         let fire = match via {
@@ -170,26 +169,38 @@ mod tests {
 
     #[test]
     fn osascript_is_an_explicit_opt_in() {
-        let spec = NotifySpec { via: Some("osascript".into()), ..Default::default() };
+        let spec = NotifySpec {
+            via: Some("osascript".into()),
+            ..Default::default()
+        };
         assert!(body(&spec).contains("osascript"));
     }
 
     #[test]
     fn libnotify_is_an_explicit_opt_in() {
-        let spec = NotifySpec { via: Some("libnotify".into()), ..Default::default() };
+        let spec = NotifySpec {
+            via: Some("libnotify".into()),
+            ..Default::default()
+        };
         assert!(body(&spec).contains("notify-send"));
     }
 
     #[test]
     fn unknown_route_is_refused_and_names_what_is_accepted() {
-        let spec = NotifySpec { via: Some("carrier-pigeon".into()), ..Default::default() };
+        let spec = NotifySpec {
+            via: Some("carrier-pigeon".into()),
+            ..Default::default()
+        };
         let err = spec.synthesize_precmd_body().unwrap_err();
         assert!(err.contains("carrier-pigeon") && err.contains("osc, osascript, libnotify"));
     }
 
     #[test]
     fn disabled_emits_no_body_but_the_form_stays_declared() {
-        let spec = NotifySpec { enabled: Some(false), ..Default::default() };
+        let spec = NotifySpec {
+            enabled: Some(false),
+            ..Default::default()
+        };
         assert_eq!(spec.synthesize_precmd_body().unwrap(), None);
     }
 

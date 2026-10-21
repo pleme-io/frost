@@ -789,10 +789,7 @@ fn apply_source_with_context(
     let notifies: Vec<NotifySpec> = tatara_lisp::compile_typed_from_expanded(forms)
         .map_err(|e| LispError::Parse(e.to_string()))?;
     for n in notifies {
-        let Some(body) = n
-            .synthesize_precmd_body()
-            .map_err(LispError::Parse)?
-        else {
+        let Some(body) = n.synthesize_precmd_body().map_err(LispError::Parse)? else {
             continue;
         };
         match &mut synthetic_precmd {
@@ -2126,7 +2123,10 @@ mod tests {
         // Duration env var consulted.
         assert!(rendered.contains("FROST_CMD_DURATION_MS"));
         // Default route is OSC 777 through the terminal; no notifier is spawned.
-        assert!(rendered.contains("]777;notify;my-shell;"), "osc missing: {rendered}");
+        assert!(
+            rendered.contains("]777;notify;my-shell;"),
+            "osc missing: {rendered}"
+        );
         assert!(!rendered.contains("osascript"));
         assert!(!rendered.contains("notify-send"));
     }
