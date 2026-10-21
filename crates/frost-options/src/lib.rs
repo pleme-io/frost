@@ -109,6 +109,10 @@ pub enum ShellOption {
     Beep,
     Emacs,
     Vi,
+    /// frost extension (not a zsh option): while a line is edited, ask the
+    /// terminal for the kitty keyboard protocol so modified keys arrive
+    /// unambiguously. Off by default; `setopt kittykeyboard` turns it on.
+    KittyKeyboard,
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +240,7 @@ impl Options {
             "beep" => ShellOption::Beep,
             "emacs" => ShellOption::Emacs,
             "vi" => ShellOption::Vi,
+            "kittykeyboard" => ShellOption::KittyKeyboard,
             _ => return None,
         };
 
@@ -293,5 +298,32 @@ impl Default for Options {
             ShellOption::BareGlobQual,
         ]);
         Self { enabled }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kitty_keyboard_is_a_named_option_and_off_by_default() {
+        assert_eq!(
+            Options::from_name("kittykeyboard"),
+            Some(ShellOption::KittyKeyboard)
+        );
+        assert_eq!(
+            Options::from_name(&normalize_option_name("KITTY_KEYBOARD")),
+            Some(ShellOption::KittyKeyboard)
+        );
+        assert!(!Options::default().is_set(ShellOption::KittyKeyboard));
+    }
+
+    #[test]
+    fn setopt_turns_kitty_keyboard_on_and_unsetopt_off() {
+        let mut o = Options::default();
+        o.set(ShellOption::KittyKeyboard);
+        assert!(o.is_set(ShellOption::KittyKeyboard));
+        o.unset(ShellOption::KittyKeyboard);
+        assert!(!o.is_set(ShellOption::KittyKeyboard));
     }
 }

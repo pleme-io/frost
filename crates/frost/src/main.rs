@@ -1862,6 +1862,7 @@ fn interactive(
             EditModeKind::Emacs
         };
         zle.set_edit_mode(wanted);
+        zle.set_kitty_keyboard(env.is_option_set(frost_options::ShellOption::KittyKeyboard));
 
         let outcome = zle.read_line(|src| match continuation_context(src) {
             None => InputStatus::Complete,

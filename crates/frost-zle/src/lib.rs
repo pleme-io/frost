@@ -226,6 +226,9 @@ impl Prompt for FrostPrompt {
 pub struct ZleEngine {
     inner: Reedline,
     prompt: FrostPrompt,
+    /// Whether the kitty keyboard protocol is requested for line reads, so
+    /// `set_kitty_keyboard` rebuilds the editor only when the setting changes.
+    kitty_keyboard: bool,
     /// Rc-authored keybindings captured via `with_bindings`. Stored so
     /// `set_edit_mode` can re-apply them whenever reedline's edit mode
     /// is rebuilt (e.g. when `setopt vi` toggles). Without this cache
@@ -298,6 +301,7 @@ impl ZleEngine {
             prompt: FrostPrompt::default(),
             custom_bindings: Vec::new(),
             current_mode: None,
+            kitty_keyboard: false,
             history_error,
         })
     }
@@ -319,6 +323,7 @@ impl ZleEngine {
             prompt: FrostPrompt::default(),
             custom_bindings: Vec::new(),
             current_mode: None,
+            kitty_keyboard: false,
             // In-memory is the REQUESTED backing here, not a fallback
             // from a failed open — there is no error to report.
             history_error: None,
@@ -412,6 +417,19 @@ impl ZleEngine {
         rps1: impl Into<String>,
     ) {
         self.prompt = FrostPrompt::new(ps1, ps2).with_rps1(rps1);
+    }
+
+    /// Ask the terminal for the kitty keyboard protocol while a line is read
+    /// (`setopt kittykeyboard`). reedline pushes the flags when the read
+    /// starts and pops them when it ends, so a program the shell runs never
+    /// inherits them. A terminal that lacks the protocol is left as it is.
+    pub fn set_kitty_keyboard(&mut self, on: bool) {
+        if self.kitty_keyboard == on {
+            return;
+        }
+        self.kitty_keyboard = on;
+        let taken = std::mem::replace(&mut self.inner, Reedline::create());
+        self.inner = taken.use_kitty_keyboard_enhancement(on);
     }
 
     /// Switch the line editor into vi or emacs mode. Idempotent —
