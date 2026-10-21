@@ -113,6 +113,9 @@ pub enum ShellOption {
     /// terminal for the kitty keyboard protocol so modified keys arrive
     /// unambiguously. Off by default; `setopt kittykeyboard` turns it on.
     KittyKeyboard,
+    /// frost extension (not a zsh option): write OSC 133 prompt/command
+    /// marks to the terminal. On by default; `unsetopt osc133` turns it off.
+    Osc133,
 }
 
 #[derive(Debug, Clone)]
@@ -241,6 +244,7 @@ impl Options {
             "emacs" => ShellOption::Emacs,
             "vi" => ShellOption::Vi,
             "kittykeyboard" => ShellOption::KittyKeyboard,
+            "osc133" => ShellOption::Osc133,
             _ => return None,
         };
 
@@ -296,6 +300,7 @@ impl Default for Options {
             ShellOption::CaseMatch,
             ShellOption::Hup,
             ShellOption::BareGlobQual,
+            ShellOption::Osc133,
         ]);
         Self { enabled }
     }
@@ -325,5 +330,15 @@ mod tests {
         assert!(o.is_set(ShellOption::KittyKeyboard));
         o.unset(ShellOption::KittyKeyboard);
         assert!(!o.is_set(ShellOption::KittyKeyboard));
+    }
+
+    #[test]
+    fn osc133_is_a_named_option_and_on_by_default() {
+        assert_eq!(Options::from_name("osc133"), Some(ShellOption::Osc133));
+        assert_eq!(Options::from_name("noosc133"), Some(ShellOption::Osc133));
+        assert!(Options::default().is_set(ShellOption::Osc133));
+        let mut o = Options::default();
+        o.unset(ShellOption::Osc133);
+        assert!(!o.is_set(ShellOption::Osc133));
     }
 }

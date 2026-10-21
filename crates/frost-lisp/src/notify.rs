@@ -12,6 +12,9 @@
 //!
 //! Apply behavior: synthesize a `precmd` hook body that:
 //!
+//! 0. Skips while `$FROST_OSC133_ACTIVE` is set: the terminal then owns
+//!    the finished-command card through OSC 133, so one command makes
+//!    one notification.
 //! 1. Checks `$FROST_CMD_DURATION_MS` against the threshold.
 //! 2. Skips if the last command was itself a notifier invocation
 //!    (avoid self-loops when precmd notifies and the user's ENTER
@@ -117,8 +120,9 @@ impl NotifySpec {
         let threshold = self.threshold_ms.unwrap_or(DEFAULT_THRESHOLD_MS);
         let title = self.title.as_deref().unwrap_or("frost");
         let message = self.message.as_deref().unwrap_or("command finished");
-        let guard =
-            format!("if [ \"${{FROST_CMD_DURATION_MS:-0}}\" -ge {threshold} ] 2>/dev/null; then");
+        let guard = format!(
+            "if [ -z \"${{FROST_OSC133_ACTIVE:-}}\" ] && [ \"${{FROST_CMD_DURATION_MS:-0}}\" -ge {threshold} ] 2>/dev/null; then"
+        );
         let fact = "__frost_notify_text=\"$__frost_notify_message (exit ${FROST_LAST_EXIT:-0}, $((FROST_CMD_DURATION_MS / 1000))s)\"";
         let message_var = format!("__frost_notify_message={message:?}");
         let fire = match via {
@@ -225,5 +229,12 @@ mod tests {
     #[test]
     fn body_reads_the_portable_duration_env_var() {
         assert!(body(&NotifySpec::default()).contains("FROST_CMD_DURATION_MS"));
+    }
+
+    #[test]
+    fn body_yields_while_osc133_integration_is_active() {
+        let b = body(&NotifySpec::default());
+        assert!(b.starts_with("__frost_notify_message="));
+        assert!(b.contains("if [ -z \"${FROST_OSC133_ACTIVE:-}\" ] && [ \"${FROST_CMD_DURATION_MS:-0}\" -ge 30000 ]"));
     }
 }

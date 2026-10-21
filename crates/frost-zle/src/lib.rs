@@ -28,6 +28,8 @@
 //! * Prompt substitution (`PROMPT_SUBST`) — the caller should expand the
 //!   prompt string before passing it to [`ZleEngine::set_prompt`].
 
+pub mod osc133;
+
 use std::path::{Path, PathBuf};
 
 use reedline::{
@@ -106,6 +108,7 @@ pub struct FrostPrompt {
     /// and blanks RPS1, so a pending quote/heredoc/loop is never drawn
     /// with the primary prompt.
     continuation: Option<String>,
+    input_mark: bool,
 }
 
 /// Default vi NORMAL / vi INSERT indicators.
@@ -138,6 +141,7 @@ impl FrostPrompt {
             vi_insert_indicator: DEFAULT_VI_INSERT_INDICATOR.to_string(),
             emacs_indicator: String::new(),
             continuation: None,
+            input_mark: false,
         }
     }
 
@@ -188,19 +192,11 @@ impl Prompt for FrostPrompt {
     /// live mode in on every repaint; discarding it (this returned `""`
     /// for every mode) threw that signal away.
     fn render_prompt_indicator(&self, mode: PromptEditMode) -> std::borrow::Cow<'_, str> {
-        match mode {
-            PromptEditMode::Vi(PromptViMode::Normal) => {
-                std::borrow::Cow::Borrowed(&self.vi_normal_indicator)
-            }
-            PromptEditMode::Vi(PromptViMode::Insert) => {
-                std::borrow::Cow::Borrowed(&self.vi_insert_indicator)
-            }
-            PromptEditMode::Emacs => std::borrow::Cow::Borrowed(&self.emacs_indicator),
-            // `Default` is reedline's pre-edit-mode-selection state and
-            // `Custom` belongs to an edit mode frost does not install;
-            // neither has a frost-authored indicator, so render nothing
-            // rather than mislabel the mode.
-            PromptEditMode::Default | PromptEditMode::Custom(_) => std::borrow::Cow::Borrowed(""),
+        let indicator = self.mode_indicator(mode);
+        if self.input_mark {
+            std::borrow::Cow::Owned(format!("{indicator}{}", osc133::Mark::InputStart.render()))
+        } else {
+            indicator
         }
     }
     fn render_prompt_multiline_indicator(&self) -> std::borrow::Cow<'_, str> {
@@ -218,6 +214,25 @@ impl Prompt for FrostPrompt {
             "({prefix}reverse-search: {}) ",
             history_search.term
         ))
+    }
+}
+
+impl FrostPrompt {
+    fn mode_indicator(&self, mode: PromptEditMode) -> std::borrow::Cow<'_, str> {
+        match mode {
+            PromptEditMode::Vi(PromptViMode::Normal) => {
+                std::borrow::Cow::Borrowed(&self.vi_normal_indicator)
+            }
+            PromptEditMode::Vi(PromptViMode::Insert) => {
+                std::borrow::Cow::Borrowed(&self.vi_insert_indicator)
+            }
+            PromptEditMode::Emacs => std::borrow::Cow::Borrowed(&self.emacs_indicator),
+            // `Default` is reedline's pre-edit-mode-selection state and
+            // `Custom` belongs to an edit mode frost does not install;
+            // neither has a frost-authored indicator, so render nothing
+            // rather than mislabel the mode.
+            PromptEditMode::Default | PromptEditMode::Custom(_) => std::borrow::Cow::Borrowed(""),
+        }
     }
 }
 
@@ -417,6 +432,10 @@ impl ZleEngine {
         rps1: impl Into<String>,
     ) {
         self.prompt = FrostPrompt::new(ps1, ps2).with_rps1(rps1);
+    }
+
+    pub fn set_input_mark(&mut self, on: bool) {
+        self.prompt.input_mark = on;
     }
 
     /// Ask the terminal for the kitty keyboard protocol while a line is read

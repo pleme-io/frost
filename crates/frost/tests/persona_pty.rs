@@ -105,6 +105,16 @@ fn drive(
     total: Duration,
     rc: Option<&std::path::Path>,
 ) -> Option<Outcome> {
+    drive_env(persona, script, total, rc, &[])
+}
+
+fn drive_env(
+    persona: TerminalPersona,
+    script: &[Send],
+    total: Duration,
+    rc: Option<&std::path::Path>,
+    extra_env: &[&str],
+) -> Option<Outcome> {
     use nix::pty::ForkptyResult;
     use std::ffi::CString;
 
@@ -116,6 +126,9 @@ fn drive(
         CString::new(format!("HOME={}", home.path().display())).unwrap(),
         CString::new("PATH=/usr/bin:/bin").unwrap(),
     ];
+    for kv in extra_env {
+        envp.push(CString::new(*kv).unwrap());
+    }
     if let Some(rc) = rc {
         envp.push(CString::new(format!("FROSTRC={}", rc.display())).unwrap());
     }
@@ -842,8 +855,12 @@ fn plain(o: &Outcome) -> String {
                 }
             }
             Some(']') => {
-                for c in it.by_ref() {
+                while let Some(c) = it.next() {
                     if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' && it.peek() == Some(&'\\') {
+                        it.next();
                         break;
                     }
                 }
@@ -1030,5 +1047,119 @@ fn continuation_typeahead_behind_ctrl_c_survives() {
         1,
         "type-ahead behind ^C was lost: {}",
         tail(&o)
+    );
+}
+
+fn osc133_script() -> [Send; 2] {
+    [
+        Send {
+            at: Duration::from_millis(1200),
+            bytes: b"\r",
+        },
+        Send {
+            at: Duration::from_millis(3600),
+            bytes: b"echo hi there\r",
+        },
+    ]
+}
+
+fn position(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+#[test]
+fn command_emits_osc133_c_then_d_in_order() {
+    let Some(o) = drive(
+        persona(AnswerPolicy::Answer {
+            latency: Duration::from_millis(0),
+        }),
+        &osc133_script(),
+        Duration::from_secs(7),
+        None,
+    ) else {
+        return;
+    };
+    let c = position(
+        &o.transcript,
+        b"\x1b]133;C;cmdline_url=echo%20hi%20there\x1b\\",
+    );
+    let d = c.and_then(|c| position(&o.transcript[c..], b"\x1b]133;D;0\x1b\\"));
+    let a = position(&o.transcript, b"\x1b]133;A\x1b\\");
+    let b = position(&o.transcript, b"\x1b]133;B\x1b\\");
+    assert!(
+        a.is_some() && b.is_some() && c.is_some() && d.is_some() && o.alive_at_end,
+        "A/B/C/D out of order or missing: a={a:?} b={b:?} c={c:?} d={d:?} alive={}",
+        o.alive_at_end
+    );
+}
+
+#[test]
+fn osc133_env_veto_silences_every_mark() {
+    let Some(o) = drive_env(
+        persona(AnswerPolicy::Answer {
+            latency: Duration::from_millis(0),
+        }),
+        &osc133_script(),
+        Duration::from_secs(7),
+        None,
+        &["FROST_OSC133=0"],
+    ) else {
+        return;
+    };
+    assert!(
+        position(&o.transcript, b"\x1b]133;").is_none(),
+        "FROST_OSC133=0 must silence OSC 133"
+    );
+}
+
+fn notify_rc() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rc = dir.path().join("rc.lisp");
+    std::fs::write(
+        &rc,
+        "(defnotify :threshold-ms 0 :title \"t\" :message \"m\")\n",
+    )
+    .unwrap();
+    (dir, rc)
+}
+
+#[test]
+fn defnotify_yields_to_osc133_when_integration_is_active() {
+    let (_dir, rc) = notify_rc();
+    let Some(o) = drive(
+        persona(AnswerPolicy::Answer {
+            latency: Duration::from_millis(0),
+        }),
+        &osc133_script(),
+        Duration::from_secs(7),
+        Some(&rc),
+    ) else {
+        return;
+    };
+    assert!(
+        position(&o.transcript, b"\x1b]133;D;0").is_some()
+            && position(&o.transcript, b"]777;notify").is_none(),
+        "one command must make one notification: OSC 133 only"
+    );
+}
+
+#[test]
+fn defnotify_still_fires_when_integration_is_off() {
+    let (_dir, rc) = notify_rc();
+    let Some(o) = drive_env(
+        persona(AnswerPolicy::Answer {
+            latency: Duration::from_millis(0),
+        }),
+        &osc133_script(),
+        Duration::from_secs(7),
+        Some(&rc),
+        &["FROST_OSC133=0"],
+    ) else {
+        return;
+    };
+    assert!(
+        position(&o.transcript, b"]777;notify;t;").is_some()
+            && position(&o.transcript, b"\x1b]133;").is_none(),
+        "defnotify must work unchanged with integration off"
     );
 }

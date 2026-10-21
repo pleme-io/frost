@@ -1005,6 +1005,16 @@ fn run(input: &str, env: &mut frost_exec::ShellEnv) -> RunOutcome {
 /// enumerating every directory on `$PATH`: measured 2026-08-07 on this box,
 /// 92 `opendir` + 2304 `lstat`, ~17 ms. `run()` used to build that corpus
 /// *before* dispatching — speculatively, so it was on the SUCCESS path — and
+fn osc133_active(env: &frost_exec::ShellEnv) -> bool {
+    frost_zle::osc133::active(
+        env.is_option_set(frost_options::ShellOption::Osc133),
+        std::io::stdout().is_terminal(),
+        std::env::var(frost_zle::osc133::DISABLE_ENV)
+            .ok()
+            .as_deref(),
+    )
+}
+
 /// `run()` fires three times per interactive command (`__frost_hook_preexec`,
 /// the command itself, `__frost_hook_precmd`), so a shell that never
 /// mistyped anything paid ~50 ms per prompt for a corpus it always dropped.
@@ -1806,6 +1816,7 @@ fn interactive(
     // terminal genuinely never answers ESC[6n.
     const MAX_CPR_RETRIES: u32 = 200;
 
+    let mut command_ran = false;
     loop {
         // Drain and dispatch any signals delivered while we were
         // waiting / running. Fires `deftrap`-authored handlers.
@@ -1816,7 +1827,22 @@ fn interactive(
 
         // `precmd` hook — runs before the next prompt is drawn. Authored
         // via `(defhook :event "precmd" :body …)` in the rc file.
+        let osc133 = osc133_active(env);
+        if osc133 {
+            env.set_var("FROST_OSC133_ACTIVE", "1");
+            if command_ran {
+                frost_zle::osc133::emit(&frost_zle::osc133::Mark::CommandEnd {
+                    exit: env.exit_status,
+                });
+            }
+        } else {
+            env.unset_var("FROST_OSC133_ACTIVE");
+        }
+        command_ran = false;
         run_hook("__frost_hook_precmd", env);
+        if osc133 {
+            frost_zle::osc133::emit(&frost_zle::osc133::Mark::PromptStart);
+        }
 
         // Re-read PS1 / PS2 / RPS1 each iteration so variable changes
         // mid-session take effect on the next prompt, then run it
@@ -1853,6 +1879,7 @@ fn interactive(
             frost_prompt::render(&rps1_raw, &pe, prompt_subst)
         };
         zle.set_prompt_with_rps1(ps1, ps2, rps1);
+        zle.set_input_mark(osc133);
 
         // Honor `setopt vi` / `setopt emacs` on every iteration so
         // `bindkey -v` behavior changes mid-session.
@@ -1973,6 +2000,12 @@ fn interactive(
                                 // operator drives through a picker.
                                 frost_exec::record_command(&text);
                                 run_hook("__frost_hook_preexec", env);
+                                if osc133 {
+                                    frost_zle::osc133::emit(
+                                        &frost_zle::osc133::Mark::OutputStart { command: &text },
+                                    );
+                                }
+                                command_ran = true;
                                 match run(&text, env) {
                                     RunOutcome::Completed(_) => {}
                                     RunOutcome::Exit(code) => {
@@ -2042,6 +2075,12 @@ fn interactive(
                 zle.sync_history();
                 // `preexec` — after input is accepted, before execution.
                 run_hook("__frost_hook_preexec", env);
+                if osc133 {
+                    frost_zle::osc133::emit(&frost_zle::osc133::Mark::OutputStart {
+                        command: &to_run,
+                    });
+                }
+                command_ran = true;
                 match run(&to_run, env) {
                     RunOutcome::Completed(_) => {}
                     RunOutcome::Exit(code) => {
