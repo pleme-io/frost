@@ -6,8 +6,10 @@
 
 use std::ffi::CString;
 use std::os::fd::{IntoRawFd, RawFd};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use nix::fcntl::OFlag;
+use nix::sys::signal::{SigHandler, Signal, signal};
 use nix::sys::stat::Mode;
 use nix::sys::wait::{self, WaitPidFlag, WaitStatus};
 use nix::unistd::{self, ForkResult, Pid};
@@ -91,6 +93,19 @@ pub unsafe fn fork() -> Result<ForkOutcome, nix::errno::Errno> {
 
 // ── Exec ────────────────────────────────────────────────────────────
 
+static SHELL_IGNORES_SIGINT: AtomicBool = AtomicBool::new(false);
+
+pub fn ignore_sigint_in_shell() {
+    SHELL_IGNORES_SIGINT.store(true, Ordering::SeqCst);
+    let _ = unsafe { signal(Signal::SIGINT, SigHandler::SigIgn) };
+}
+
+fn give_child_default_sigint() {
+    if SHELL_IGNORES_SIGINT.load(Ordering::SeqCst) {
+        let _ = unsafe { signal(Signal::SIGINT, SigHandler::SigDfl) };
+    }
+}
+
 /// Replace the current process image with a new program.
 ///
 /// If `argv[0]` contains a `/`, uses it as a direct path. Otherwise
@@ -105,6 +120,7 @@ pub fn exec(argv: &[CString], envp: &[CString]) -> nix::errno::Errno {
     let Some(cmd) = argv.first() else {
         return nix::errno::Errno::ENOENT;
     };
+    give_child_default_sigint();
 
     if cmd.as_bytes().contains(&b'/') {
         // Direct path — exec immediately.

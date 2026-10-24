@@ -1716,9 +1716,7 @@ fn interactive(
 ) {
     // Ignore SIGINT in the shell process itself; reedline handles Ctrl-C
     // by aborting the current line buffer, not killing frost.
-    unsafe {
-        libc::signal(libc::SIGINT, libc::SIG_IGN);
-    }
+    frost_exec::sys::ignore_sigint_in_shell();
     install_signal_traps();
     // env already carries every rc-authored `(deftrap ...)` — load_rc
     // ran before interactive() was called.
