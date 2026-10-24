@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "cc803e319f15aaeca0cc654a9bc86a4d952c69e3c4f3ad79c0a72710b8e9f41f",
+  "cargo_lock_sha256": "fb374a26acdac9e111859ca8cafeb05246a871ad884c225004e8ed467b0a483d",
   "manifest_sha256": {
     "Cargo.toml": "558af23660575307ced23d6c7ac16063b99e28f67938b21d2acaa5bf0970a2cd",
     "crates/frost-builtins/Cargo.toml": "9c3f46cf0585359618f321ca7f27e1a17f8728b6247848a6936e3d85c8d998a7",
@@ -2189,7 +2189,7 @@
           },
           {
             "name": "shikumi",
-            "package_key": "shikumi-0.1.0",
+            "package_key": "shikumi-0.1.1083",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -3379,6 +3379,45 @@
         "build_dependencies": [],
         "features": []
       },
+      "gen-macros-0.1.52": {
+        "runtime_dependencies": [
+          {
+            "name": "proc_macro2",
+            "package_key": "proc-macro2-1.0.106",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "quote",
+            "package_key": "quote-1.0.45",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "syn",
+            "package_key": "syn-2.0.117",
+            "kind": "normal",
+            "features": [
+              "extra-traits",
+              "full"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "gen-platform-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": {
         "runtime_dependencies": [
           {
@@ -3447,7 +3486,157 @@
         "build_dependencies": [],
         "features": []
       },
+      "gen-platform-0.1.52": {
+        "runtime_dependencies": [
+          {
+            "name": "gen_macros",
+            "package_key": "gen-macros-0.1.52",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
+          },
+          {
+            "name": "gen_types",
+            "package_key": "gen-types-0.1.52",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "inventory",
+            "package_key": "inventory-0.3.24",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.150",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
       "gen-types-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": {
+        "runtime_dependencies": [
+          {
+            "name": "blake3",
+            "package_key": "blake3-1.8.5",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "chrono",
+            "package_key": "chrono-0.4.45",
+            "kind": "normal",
+            "features": [
+              "serde"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "indexmap",
+            "package_key": "indexmap-2.14.0",
+            "kind": "normal",
+            "features": [
+              "serde"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "inventory",
+            "package_key": "inventory-0.3.24",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde",
+            "package_key": "serde-1.0.228",
+            "kind": "normal",
+            "features": [
+              "derive"
+            ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.150",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "thiserror",
+            "package_key": "thiserror-2.0.18",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          }
+        ],
+        "build_dependencies": [],
+        "features": []
+      },
+      "gen-types-0.1.52": {
         "runtime_dependencies": [
           {
             "name": "blake3",
@@ -6634,7 +6823,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "shikumi-0.1.0": {
+      "shikumi-0.1.1083": {
         "runtime_dependencies": [
           {
             "name": "arc_swap",
@@ -6645,6 +6834,16 @@
             "optional": false,
             "target": null,
             "tree": "target"
+          },
+          {
+            "name": "async_trait",
+            "package_key": "async-trait-0.1.89",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "host"
           },
           {
             "name": "figment",
@@ -6661,8 +6860,50 @@
             "tree": "target"
           },
           {
+            "name": "gen_platform",
+            "package_key": "gen-platform-0.1.52",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "gen_types",
+            "package_key": "gen-types-0.1.52",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
             "name": "notify",
             "package_key": "notify-8.2.0",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": false,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "notify",
+            "package_key": "notify-8.2.0",
+            "kind": "normal",
+            "features": [
+              "macos_fsevent"
+            ],
+            "uses_default_features": false,
+            "optional": false,
+            "target": "cfg(target_os = \"macos\")",
+            "tree": "target"
+          },
+          {
+            "name": "schemars",
+            "package_key": "schemars-1.2.1",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -6677,6 +6918,26 @@
             "features": [
               "derive"
             ],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_json",
+            "package_key": "serde_json-1.0.150",
+            "kind": "normal",
+            "features": [],
+            "uses_default_features": true,
+            "optional": false,
+            "target": null,
+            "tree": "target"
+          },
+          {
+            "name": "serde_yaml",
+            "package_key": "serde_yaml-0.9.34+deprecated",
+            "kind": "normal",
+            "features": [],
             "uses_default_features": true,
             "optional": false,
             "target": null,
@@ -6704,7 +6965,9 @@
           }
         ],
         "build_dependencies": [],
-        "features": []
+        "features": [
+          "default"
+        ]
       },
       "shlex-2.0.1": {
         "runtime_dependencies": [],
@@ -8479,7 +8742,6 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "fsevent-sys",
               "macos_fsevent"
             ]
@@ -8902,7 +9164,6 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "fsevent-sys",
               "macos_fsevent"
             ]
@@ -9386,7 +9647,6 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "fsevent-sys",
               "macos_fsevent"
             ]
@@ -9789,7 +10049,6 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "fsevent-sys",
               "macos_fsevent"
             ]
@@ -10186,7 +10445,6 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "fsevent-sys",
               "macos_fsevent"
             ]
@@ -10644,7 +10902,6 @@
             ],
             "build_dependencies": [],
             "features": [
-              "default",
               "fsevent-sys",
               "macos_fsevent"
             ]
@@ -11278,10 +11535,20 @@
       "edition": "2024",
       "proc_macro": true
     },
+    "gen-macros-0.1.52": {
+      "edition": "2024",
+      "proc_macro": true
+    },
     "gen-platform-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": {
       "edition": "2024"
     },
+    "gen-platform-0.1.52": {
+      "edition": "2024"
+    },
     "gen-types-0.1.10-712c3466375ddb1d6876193f2afb0798d30efb70": {
+      "edition": "2024"
+    },
+    "gen-types-0.1.52": {
       "edition": "2024"
     },
     "generic-array-0.14.7": {
@@ -11629,7 +11896,7 @@
     "shigoto-types-0.1.7-1f37e3ee4d4859264a11b688644f801ca718d1a5": {
       "edition": "2024"
     },
-    "shikumi-0.1.0": {
+    "shikumi-0.1.1083": {
       "edition": "2024"
     },
     "shlex-2.0.1": {

@@ -566,7 +566,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -609,7 +609,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1071,12 +1071,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "gen-macros"
+version = "0.1.52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45aa54e78709c6e9644351c49be01154ea4e2ec8f52197e06312d594b3fc9b7b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "gen-platform"
 version = "0.1.10"
 source = "git+https://github.com/pleme-io/gen#712c3466375ddb1d6876193f2afb0798d30efb70"
 dependencies = [
- "gen-macros",
- "gen-types",
+ "gen-macros 0.1.10",
+ "gen-types 0.1.10",
+ "inventory",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "gen-platform"
+version = "0.1.52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bbe0fc580d799cdec0d3e87f0b70eac8958aaf5d5f2051652512aca3ea2c07b"
+dependencies = [
+ "gen-macros 0.1.52",
+ "gen-types 0.1.52",
  "inventory",
  "serde",
  "serde_json",
@@ -1087,6 +1112,21 @@ dependencies = [
 name = "gen-types"
 version = "0.1.10"
 source = "git+https://github.com/pleme-io/gen#712c3466375ddb1d6876193f2afb0798d30efb70"
+dependencies = [
+ "blake3",
+ "chrono",
+ "indexmap",
+ "inventory",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "gen-types"
+version = "0.1.52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a36de42423d45a3a53484df348c00d9691603252d6630dd3f980e01d560da7eb"
 dependencies = [
  "blake3",
  "chrono",
@@ -1565,7 +1605,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1926,7 +1966,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2199,8 +2239,8 @@ dependencies = [
  "async-trait",
  "blake3",
  "chrono",
- "gen-platform",
- "gen-types",
+ "gen-platform 0.1.10",
+ "gen-types 0.1.10",
  "hex",
  "schemars 0.8.22",
  "serde",
@@ -2210,14 +2250,20 @@ dependencies = [
 
 [[package]]
 name = "shikumi"
-version = "0.1.0"
+version = "0.1.1083"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a069b173b743266d8b24633f4c2178579223fe5483e79a871e4b98c487789a9"
+checksum = "253ee1f04558dcc476384a4be719428df4322816ad73c5e2e7731d3808cc5523"
 dependencies = [
  "arc-swap",
+ "async-trait",
  "figment",
+ "gen-platform 0.1.52",
+ "gen-types 0.1.52",
  "notify",
+ "schemars 1.2.1",
  "serde",
+ "serde_json",
+ "serde_yaml",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -2414,7 +2460,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2424,7 +2470,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2866,7 +2912,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
