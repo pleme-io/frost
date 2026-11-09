@@ -4,7 +4,7 @@
 //! `JobPhase::Running` past its per-Job timeout, not as "user sees an
 //! empty screen and we don't know which form deadlocked."
 //!
-//! Spec backdrop: `theory/SHIGOTO.md` §III.1–III.6 + ★★ Shigoto
+//! Spec backdrop: the ★★ Shigoto
 //! directive (org-level `pleme-io/CLAUDE.md`). Any work graph with ≥3
 //! typed steps, retry/budget concerns, and observability requirements
 //! expresses as a `shigoto::Dag` of `RecordingJob` impls — the
