@@ -14,7 +14,7 @@ The gloss is meant to let a reader guess the job without the doc: it is the
 **circuit**, not the shell and not the prompt. Family: motion/path, alongside
 `wadachi` (轍, the wheel-rut the shell wears into your directories) and `seki`
 (関, the gate the prompt is rendered at). Japanese, because this is foundational
-substrate rather than a place or a flow (NAMING.md L1). Collision-checked across
+substrate rather than a place or a flow. Collision-checked across
 `~/code/github/pleme-io`: zero hits.
 
 ---
