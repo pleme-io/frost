@@ -1094,6 +1094,37 @@ fn command_emits_osc133_c_then_d_in_order() {
 }
 
 #[test]
+fn osc133_prompt_start_is_painted_after_the_prompt_row_is_chosen() {
+    let Some(o) = drive(
+        persona(AnswerPolicy::Answer {
+            latency: Duration::from_millis(0),
+        }),
+        &osc133_script(),
+        Duration::from_secs(7),
+        None,
+    ) else {
+        return;
+    };
+    let a_mark: &[u8] = b"\x1b]133;A\x1b\\";
+    let b_mark: &[u8] = b"\x1b]133;B\x1b\\";
+    let mut starts = 0;
+    let mut at = 0;
+    while let Some(i) = position(&o.transcript[at..], a_mark) {
+        let from = at + i + a_mark.len();
+        let span = &o.transcript[from..];
+        let span = &span[..position(span, b_mark).unwrap_or(span.len())];
+        assert!(
+            position(span, b"\x1b[6n").is_none() && !span.contains(&b'\n'),
+            "133;A went out before reedline chose the prompt row: {:?}",
+            String::from_utf8_lossy(span)
+        );
+        starts += 1;
+        at = from;
+    }
+    assert!(starts >= 2 && o.alive_at_end, "saw {starts} prompt starts");
+}
+
+#[test]
 fn osc133_env_veto_silences_every_mark() {
     let Some(o) = drive_env(
         persona(AnswerPolicy::Answer {

@@ -1838,10 +1838,6 @@ fn interactive(
         }
         command_ran = false;
         run_hook("__frost_hook_precmd", env);
-        if osc133 {
-            frost_zle::osc133::emit(&frost_zle::osc133::Mark::PromptStart);
-        }
-
         // Re-read PS1 / PS2 / RPS1 each iteration so variable changes
         // mid-session take effect on the next prompt, then run it
         // through frost-prompt for zsh-style % and (optionally)
@@ -1877,7 +1873,7 @@ fn interactive(
             frost_prompt::render(&rps1_raw, &pe, prompt_subst)
         };
         zle.set_prompt_with_rps1(ps1, ps2, rps1);
-        zle.set_input_mark(osc133);
+        zle.set_prompt_marks(osc133);
 
         // Honor `setopt vi` / `setopt emacs` on every iteration so
         // `bindkey -v` behavior changes mid-session.

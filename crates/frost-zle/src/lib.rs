@@ -108,7 +108,7 @@ pub struct FrostPrompt {
     /// and blanks RPS1, so a pending quote/heredoc/loop is never drawn
     /// with the primary prompt.
     continuation: Option<String>,
-    input_mark: bool,
+    prompt_marks: bool,
 }
 
 /// Default vi NORMAL / vi INSERT indicators.
@@ -141,7 +141,7 @@ impl FrostPrompt {
             vi_insert_indicator: DEFAULT_VI_INSERT_INDICATOR.to_string(),
             emacs_indicator: String::new(),
             continuation: None,
-            input_mark: false,
+            prompt_marks: false,
         }
     }
 
@@ -177,6 +177,11 @@ impl Prompt for FrostPrompt {
     fn render_prompt_left(&self) -> std::borrow::Cow<'_, str> {
         match &self.continuation {
             Some(ps2) => std::borrow::Cow::Borrowed(ps2),
+            None if self.prompt_marks => std::borrow::Cow::Owned(format!(
+                "{}{}",
+                osc133::Mark::PromptStart.render(),
+                self.ps1
+            )),
             None => std::borrow::Cow::Borrowed(&self.ps1),
         }
     }
@@ -193,7 +198,7 @@ impl Prompt for FrostPrompt {
     /// for every mode) threw that signal away.
     fn render_prompt_indicator(&self, mode: PromptEditMode) -> std::borrow::Cow<'_, str> {
         let indicator = self.mode_indicator(mode);
-        if self.input_mark {
+        if self.prompt_marks {
             std::borrow::Cow::Owned(format!("{indicator}{}", osc133::Mark::InputStart.render()))
         } else {
             indicator
@@ -434,8 +439,8 @@ impl ZleEngine {
         self.prompt = FrostPrompt::new(ps1, ps2).with_rps1(rps1);
     }
 
-    pub fn set_input_mark(&mut self, on: bool) {
-        self.prompt.input_mark = on;
+    pub fn set_prompt_marks(&mut self, on: bool) {
+        self.prompt.prompt_marks = on;
     }
 
     /// Ask the terminal for the kitty keyboard protocol while a line is read
@@ -983,6 +988,18 @@ mod tests {
                 "indicator {s:?} contains a control character"
             );
         }
+    }
+
+    #[test]
+    fn prompt_start_mark_rides_the_painted_ps1() {
+        let mut p = FrostPrompt::new("main$ ", "> ");
+        p.prompt_marks = true;
+        assert_eq!(p.render_prompt_left(), "\x1b]133;A\x1b\\main$ ");
+        p.continuation = Some("quote> ".into());
+        assert_eq!(p.render_prompt_left(), "quote> ");
+        p.continuation = None;
+        p.prompt_marks = false;
+        assert_eq!(p.render_prompt_left(), "main$ ");
     }
 
     #[test]
